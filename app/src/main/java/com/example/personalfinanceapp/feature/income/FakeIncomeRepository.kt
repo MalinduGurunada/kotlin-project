@@ -1,0 +1,90 @@
+
+package com.example.personalfinanceapp.feature.income
+
+import com.example.personalfinanceapp.core.model.DocumentId
+import com.example.personalfinanceapp.core.model.Income
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.time.LocalDate
+
+class FakeIncomeRepository : IncomeRepository {
+
+    private val incomes = MutableStateFlow<List<Income>>(emptyList())
+
+    private val mutex = Mutex()
+
+    override fun observeIncomes(
+        startDate: LocalDate,
+        endDateExclusive: LocalDate
+    ): Flow<List<Income>> {
+
+        require(startDate.isBefore(endDateExclusive)) {
+            "Start date must be before end date"
+        }
+
+        return incomes.map { allIncomes ->
+
+            allIncomes.filter { income ->
+                !income.occurredDate.isBefore(startDate) &&
+                        income.occurredDate.isBefore(endDateExclusive)
+            }.sortedWith(
+                compareBy<Income> { it.occurredDate }
+                    .thenBy { it.id }
+            )
+
+        }.distinctUntilChanged()
+    }
+
+    override suspend fun saveIncome(
+        income: Income
+    ): Result<Unit> = mutex.withLock {
+
+        if (income.id.isBlank()) {
+            return@withLock Result.failure(
+                IllegalArgumentException("Income ID cannot be blank")
+            )
+        }
+
+        val current = incomes.value
+
+        val existingIndex = current.indexOfFirst {
+            it.id == income.id
+        }
+
+        incomes.value = if (existingIndex >= 0) {
+
+            current.toMutableList().apply {
+                set(existingIndex, income)
+            }
+
+        } else {
+
+            current + income
+        }
+
+        Result.success(Unit)
+    }
+
+    override suspend fun deleteIncome(
+        id: DocumentId
+    ): Result<Unit> = mutex.withLock {
+
+        val current = incomes.value
+
+        if (current.none { it.id == id }) {
+            return@withLock Result.failure(
+                NoSuchElementException("Income not found")
+            )
+        }
+
+        incomes.value = current.filter {
+            it.id != id
+        }
+
+        Result.success(Unit)
+    }
+}
