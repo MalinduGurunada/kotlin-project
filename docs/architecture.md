@@ -8,10 +8,15 @@ For setup and project status, see the [project README](../README.md). For persis
 
 The project follows a feature-based, MVVM-style direction within a single Android application module.
 
+### Scenario-to-design boundary
+
+The SE3092 assignment scenario requires support for Kavindu's irregular income from multiple sources, expense tracking, recurring commitments, outstanding freelance payments, and savings goals. The application design proposes `Income` records to distinguish sources, categorised `Expense` records, `RecurringExpense` templates, `Receivable` records that are not counted as received income, and `Goal` plus `Contribution` records. These mappings are proposed responses to the scenario, not evidence that the corresponding screens or production persistence are already implemented.
+
 - **Compose UI:** `MainActivity` installs the Material theme and calls `AppNavHost`. The navigation destinations currently render placeholder Compose content.
 - **ViewModels:** **Planned.** No class extending `ViewModel` exists in this branch. Feature ViewModels should own screen state, call repository contracts, and collect `Flow` values without placing data access in composables.
 - **Repository interfaces:** **Implemented.** Each finance feature exposes a small contract based on suspending commands and observable `Flow` queries.
 - **Data sources:** The current fake repositories are **implemented in-memory data sources**. Firebase-backed data sources and repository implementations are **planned** but absent.
+- **Preferences:** **Planned.** Raveen's allocation specifies UID-scoped preferences in Android DataStore. DataStore is the intended authoritative preference store unless the team explicitly approves cloud synchronization; no preferences implementation is present in this branch.
 - **Dependency injection:** Hilt is initialized through `@HiltAndroidApp` and `@AndroidEntryPoint`. Repository modules/bindings are **planned**; no Hilt module is present.
 
 MVVM is useful here because it separates rendering, state coordination, and persistence. Compose functions can stay declarative, ViewModels can survive configuration changes and expose stable UI state, and repositories can be exchanged without changing feature UI code.
@@ -27,6 +32,7 @@ flowchart TD
     E --> F[Fake repositories<br/>Implemented, in memory]
     E -. planned binding .-> G[Firebase repositories<br/>Not present]
     G -. planned SDK calls .-> H[Firebase Auth and Cloud Firestore]
+    D -. planned preferences access .-> P[UID-scoped Android DataStore<br/>Not present]
     I[Hilt application setup<br/>Implemented] -. future injection .-> D
     I -. future bindings .-> G
 ```
@@ -273,12 +279,18 @@ Interfaces keep domain consumers independent of storage technology. They allow i
 
 ### Firebase Authentication and Firestore
 
-Firebase is intended to provide identity, synchronized persistence, and offline-capable Android clients. Dependencies and Android configuration are present, but actual sign-in, user scoping, Firestore access, security rules, and indexes are not implemented on this branch. The proposed user-owned layout is documented in [firestore-schema.md](firestore-schema.md).
+Firebase is intended to provide identity and synchronized persistence for financial records through offline-capable Android clients. Dependencies and Android configuration are present, but actual sign-in, user scoping, Firestore access, security rules, and indexes are not implemented on this branch. The proposed user-owned layout is documented in [firestore-schema.md](firestore-schema.md).
+
+### UID-scoped preferences with DataStore
+
+Raveen's assigned preferences implementation will use Android DataStore and scope preference state to the active Firebase UID so one user's local settings cannot be shown to another user. This branch does not yet contain the DataStore dependency, a preferences model, or preference access code.
+
+DataStore is the intended authoritative store for preferences. The Firestore `users/{uid}/settings/preferences` document is only an optional cloud-synchronization proposal. It must not be implemented as a second authority or dual-written until the team explicitly approves synchronization semantics, including ownership, conflict resolution, migration, offline behaviour, and logout/user-switch handling.
 
 ### Decimal-safe financial values
 
-Binary floating-point values can introduce rounding errors that are unacceptable for finance. The models therefore preserve input amounts and rates as decimal strings and store converted LKR values as integer minor units. `Receivable` validation already uses `BigDecimal`; a shared conversion and rounding policy remains planned.
+Binary floating-point values can introduce rounding errors that are unacceptable for finance. The models therefore preserve input amounts and rates as decimal strings and store converted LKR values as integer minor units. `Receivable` validation already uses `BigDecimal`; the shared M02 validation/conversion logic and final rounding policy remain under implementation.
 
 ## Current limitations and intended next steps
 
-The architecture foundation should not be confused with a production-ready data path. The next integration steps are to add feature ViewModels and screens, define Hilt repository bindings, implement Firebase Authentication session handling, implement explicit Firestore mappers/repositories, add security rules and rule tests, and protect the app navigation graph. Those changes should preserve the existing repository contracts unless requirements force a reviewed contract change.
+The architecture foundation should not be confused with a production-ready data path. The next integration steps are to add feature ViewModels and screens, define Hilt repository bindings, implement Firebase Authentication session handling, implement explicit Firestore mappers/repositories, add UID-scoped DataStore preferences, add security rules and rule tests, and protect the app navigation graph. Those changes should preserve the existing repository contracts unless requirements force a reviewed contract change. Cloud synchronization of preferences remains a separate team decision.
