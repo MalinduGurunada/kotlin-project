@@ -36,7 +36,6 @@ users/{uid}
 ├── recurringExpenses/{recurringId}
 ├── goals/{goalId}
 │   └── contributions/{contributionId}
-└── settings/preferences
 ```
 
 ```mermaid
@@ -48,7 +47,6 @@ flowchart TD
     U --> RE[recurringExpenses / recurringId]
     U --> G[goals / goalId]
     G --> GC[contributions / contributionId]
-    U --> S[settings / preferences]
     I -. optional receivableId .-> R
     E -. categoryId .-> C
     RE -. categoryId .-> C
@@ -56,6 +54,8 @@ flowchart TD
 ```
 
 No recurring occurrence or skip subcollections are proposed here because the current models, repository contracts, and repository files contain no occurrence/skip contract. Add them only after the team defines lifecycle, idempotency, and expense-confirmation behaviour.
+
+Preferences are intentionally omitted from the proposed hierarchy above. Raveen's assigned implementation uses UID-scoped Android DataStore as the authoritative preference store. A possible Firestore preferences document is recorded later only for team consideration if cloud synchronization is approved.
 
 ## Shared storage conventions
 
@@ -196,6 +196,8 @@ Illustrative example:
   "note": "Illustrative settled invoice"
 }
 ```
+
+For this positive-value example, `baseAmountMinor` assumes exact decimal multiplication followed by `HALF_UP` rounding to the nearest LKR minor unit: `125.50 × 305.25 × 100 = 3,830,887.5`, which becomes `3,830,888`. This explains the illustrative number only; it is not the project's final rounding policy. The shared money validation/conversion logic and its rounding policy are still being implemented under M02.
 
 ### `users/{uid}/expenses/{expenseId}`
 
@@ -393,13 +395,13 @@ Illustrative example:
 }
 ```
 
-### `users/{uid}/settings/preferences`
+### Optional proposal: `users/{uid}/settings/preferences`
 
-**Purpose:** One well-known document for user-level application preferences.
+**Status and purpose:** This document is not part of the currently approved Firestore hierarchy. It is a possible cloud-synchronization document for user-level application preferences if the team later approves that capability.
 
 **Document ID:** Literal `preferences`.
 
-No preferences model or repository exists. Keep the initial schema deliberately small and add fields only when a feature contract is approved.
+Raveen's assigned implementation uses UID-scoped Android DataStore. DataStore remains the sole authoritative preference store unless the team explicitly decides how cloud synchronization will work. No preferences model, repository, DataStore implementation, or Firestore preferences implementation exists in this branch.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
@@ -408,7 +410,7 @@ No preferences model or repository exists. Keep the initial schema deliberately 
 
 **Relationships:** Owned by the user root; not a financial transaction.
 
-**Validation:** Only the exact `preferences` document ID should be accepted for this design. Restrict fields/types and currently allow only `LKR` because all base minor-unit fields are explicitly LKR. Additional preferences require a model, repository contract, and reviewed rule update.
+**Validation if approved:** Only the exact `preferences` document ID should be accepted for this design. Restrict fields/types and currently allow only `LKR` because all base minor-unit fields are explicitly LKR. Before implementation, the team must approve the source of truth, synchronization direction, conflict resolution, migration, offline behaviour, security rules, and logout/user-switch handling. Additional preferences require a model, access contract, and reviewed rule update.
 
 **Relevant model/repository:** No settings model or repository exists; `CurrencyCode` provides currency values but does not define user preferences.
 
@@ -493,5 +495,6 @@ Before this proposal becomes an implemented schema:
 7. Add only the indexes required by implemented queries and check their configuration into source control.
 8. Verify that savings, receivables, and recurring templates remain separate from confirmed cash-flow totals.
 9. Document any approved schema change here and in [architecture.md](architecture.md).
+10. Keep preferences in UID-scoped DataStore unless the team explicitly approves cloud synchronization and its source-of-truth rules.
 
 Until those steps are complete, the in-memory fake repositories—not Firestore—are the only implemented finance data layer in this branch.

@@ -8,6 +8,10 @@ The repository is currently at the **foundation stage**. Shared finance models, 
 
 Personal financial information is often split across notes, spreadsheets, banking applications, and memory. This makes it difficult to understand cash flow and plan upcoming commitments. This application is intended to provide a consistent record of financial activity while preserving the original currency and historical exchange-rate context of each transaction.
 
+### Assignment scenario and proposed response
+
+The SE3092 assignment describes Kavindu managing irregular income from multiple sources while needing to track expenses, recurring commitments, outstanding freelance payments, and savings goals. Those are the **scenario requirements**. Our **proposed solution** maps them to separate income records by source, categorised expense records, recurring-expense templates, receivables that remain distinct from received income, and savings goals with contribution history. These solution features are planned unless the status table below marks their supporting code as implemented.
+
 The main objectives are to:
 
 - record income and expenses using decimal-safe money representations;
@@ -34,7 +38,7 @@ Status in this table refers to the current branch, not to work that may exist on
 | Authentication | Planned on this branch | Firebase Auth dependency exists; no authentication service, screen logic, or session observer is present |
 | Firestore persistence | Planned on this branch | Firestore dependency and Android Firebase configuration exist; no Firestore repository or query is present |
 | Feature screens and ViewModels | Planned on this branch | No feature ViewModels or production feature screens are present |
-| Dashboard, history, goals, preferences, and reminders | Planned | Domain foundations exist for some areas; user-facing implementations are not present |
+| Dashboard, history, goals, UID-scoped preferences, and reminders | Planned | Domain foundations exist for some areas; Raveen's preferences implementation is assigned to Android DataStore, and user-facing implementations are not present |
 | Security rules and indexes | Not present | No `firestore.rules` or `firestore.indexes.json` exists in this branch |
 
 See [Architecture](docs/architecture.md) and [Firestore schema](docs/firestore-schema.md) for the verified design boundary and proposed next steps.
@@ -198,7 +202,7 @@ Create a focused branch from the agreed base, keep commits scoped to one concern
 | --- | --- |
 | Malindu | Android foundation, shared models, repository contracts, fake repositories, money rules, and income |
 | Himasha | Authentication, expenses, Firebase security, dashboard, and assigned features |
-| Raveen | Categories, preferences, history, goals, recurring expenses, and documentation |
+| Raveen | Categories, UID-scoped Android DataStore preferences, history, goals, recurring expenses, and documentation |
 
 These are team assignments, not claims that every listed feature is complete. The submission deadline is **30 October 2026**.
 
