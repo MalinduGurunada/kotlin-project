@@ -26,6 +26,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -34,7 +36,7 @@ import com.example.personalfinanceapp.core.model.Category
 import com.example.personalfinanceapp.core.model.SpendingClass
 import kotlinx.coroutines.launch
 
-sealed interface CategoryDialogState {
+sealed interface CategoryDialogState : java.io.Serializable {
     data object Add : CategoryDialogState
     data class Rename(val categoryId: String, val categoryName: String, val spendingClass: SpendingClass) : CategoryDialogState
 }
@@ -62,7 +64,9 @@ fun CategoryScreen(
                     if (activeDialog != null) {
                         dialogErrorMessage = event.message
                     } else {
-                        snackbarHostState.showSnackbar(event.message)
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar(event.message)
+                        }
                     }
                 }
             }
@@ -146,7 +150,10 @@ fun CategoryScreenContent(
                 title = { Text("Manage Categories") },
                 navigationIcon = {
                     if (onBack != null) {
-                        IconButton(onClick = onBack) {
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier.semantics { contentDescription = "Back" }
+                        ) {
                             Text(
                                 text = "←",
                                 style = MaterialTheme.typography.titleLarge
@@ -164,7 +171,9 @@ fun CategoryScreenContent(
             if (uiState is CategoryUiState.Success) {
                 FloatingActionButton(
                     onClick = onAddClick,
-                    modifier = Modifier.testTag("category_fab_add")
+                    modifier = Modifier
+                        .testTag("category_fab_add")
+                        .semantics { contentDescription = "Add category" }
                 ) {
                     Text(
                         text = "+",
