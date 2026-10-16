@@ -1,5 +1,6 @@
 package com.example.personalfinanceapp.feature.category
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,18 +12,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -143,31 +146,24 @@ fun ActiveCategoryRow(
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                AssistChip(
+                SuggestionChip(
                     onClick = { },
-                    label = { Text(text = spendingClassLabel) },
-                    enabled = false
+                    label = { Text(text = spendingClassLabel) }
                 )
             }
 
             Row {
-                IconButton(
+                TextButton(
                     onClick = onRenameClick,
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(height = 48.dp, width = 80.dp)
                 ) {
-                    Text(
-                        text = "✏️",
-                        style = MaterialTheme.typography.titleMedium
-                    )
+                    Text("Rename")
                 }
-                IconButton(
+                TextButton(
                     onClick = onArchiveClick,
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(height = 48.dp, width = 80.dp)
                 ) {
-                    Text(
-                        text = "📦",
-                        style = MaterialTheme.typography.titleMedium
-                    )
+                    Text("Archive")
                 }
             }
         }
@@ -180,12 +176,13 @@ fun ArchivedCategoryRow(
     onRestoreClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Card(
+    OutlinedCard(
         modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .testTag("category_row_archived_${category.id}"),
-        colors = CardDefaults.cardColors(
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.outlinedCardColors(
             containerColor = MaterialTheme.colorScheme.surface
         )
     ) {
@@ -226,14 +223,23 @@ fun SectionHeader(
     isExpanded: Boolean? = null,
     onToggleExpand: (() -> Unit)? = null
 ) {
-    Row(
-        modifier = modifier
+    val headerModifier = if (onToggleExpand != null) {
+        modifier
             .fillMaxWidth()
-            .then(
-                if (onToggleExpand != null) Modifier.clickable { onToggleExpand() }
-                else Modifier
+            .clickable(
+                role = Role.Button,
+                onClickLabel = if (isExpanded == true) "Collapse archived categories" else "Expand archived categories",
+                onClick = onToggleExpand
             )
-            .padding(vertical = 8.dp),
+            .padding(vertical = 8.dp)
+    } else {
+        modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+    }
+
+    Row(
+        modifier = headerModifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
