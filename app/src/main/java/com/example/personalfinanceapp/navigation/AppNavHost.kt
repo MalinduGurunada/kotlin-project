@@ -24,6 +24,8 @@ import com.example.personalfinanceapp.feature.auth.ui.AuthViewModel
 import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
 import com.example.personalfinanceapp.feature.auth.ui.PasswordResetScreen
 import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
+import com.example.personalfinanceapp.feature.expense.ui.ExpenseListScreen
+import com.example.personalfinanceapp.feature.expense.ui.ExpenseViewModel
 
 @Composable
 fun AppNavHost(
@@ -108,12 +110,34 @@ fun AppNavHost(
 
                 Button(
                     onClick = {
+                        navController.navigate(ExpenseList)
+                    }
+                ) {
+                    Text("Manage Expenses")
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
                         authViewModel.signOut()
                     }
                 ) {
                     Text("Sign Out")
                 }
             }
+        }
+
+        composable<ExpenseList> {
+            val expenseViewModel: ExpenseViewModel = hiltViewModel()
+            val expenseUiState by expenseViewModel.uiState.collectAsState()
+
+            ExpenseListScreen(
+                uiState = expenseUiState,
+                onSaveExpense = expenseViewModel::saveExpense,
+                onDeleteExpense = expenseViewModel::deleteExpense,
+                onClearError = expenseViewModel::clearError
+            )
         }
     }
 }
