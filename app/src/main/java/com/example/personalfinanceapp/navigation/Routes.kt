@@ -7,3 +7,6 @@ data object Login
 
 @Serializable
 data object Home
+
+@Serializable
+data object Category
