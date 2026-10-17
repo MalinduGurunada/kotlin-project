@@ -33,8 +33,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.Expense
+import com.example.personalfinanceapp.core.model.Money
+import com.example.personalfinanceapp.core.model.PaymentChannel
+import com.example.personalfinanceapp.core.model.RateSource
+import com.example.personalfinanceapp.core.model.SpendingClass
+import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
+import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,10 +52,10 @@ fun ExpenseListScreen(
         id: String?,
         categoryId: String,
         amountDecimal: String,
-        currency: com.example.personalfinanceapp.core.model.CurrencyCode,
-        paymentChannel: com.example.personalfinanceapp.core.model.PaymentChannel,
-        spendingClass: com.example.personalfinanceapp.core.model.SpendingClass,
-        occurredDate: java.time.LocalDate,
+        currency: CurrencyCode,
+        paymentChannel: PaymentChannel,
+        spendingClass: SpendingClass,
+        occurredDate: LocalDate,
         note: String?
     ) -> Unit,
     onDeleteExpense: (String) -> Unit,
@@ -221,7 +229,7 @@ fun ExpenseItemCard(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
-                if (expense.money.originalCurrency != com.example.personalfinanceapp.core.model.CurrencyCode.LKR) {
+                if (expense.money.originalCurrency != CurrencyCode.LKR) {
                     val baseLkr = expense.money.baseAmountMinor.toDouble() / 100.0
                     Text(
                         text = "(LKR ${String.format("%.2f", baseLkr)})",
@@ -240,5 +248,39 @@ fun ExpenseItemCard(
                 }
             }
         }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun ExpenseListScreenPreview() {
+    PersonalFinanceAppTheme {
+        val sampleExpense = Expense(
+            id = "exp-1",
+            categoryId = "food",
+            categoryNameSnapshot = "Food & Dining",
+            spendingClass = SpendingClass.DISCRETIONARY,
+            paymentChannel = PaymentChannel.CASH,
+            money = Money(
+                originalAmountDecimal = "2500.00",
+                originalCurrency = CurrencyCode.LKR,
+                rateLkrPerUnitDecimal = "1.00",
+                baseAmountMinor = 250_000L,
+                rateSource = RateSource.LKR_FIXED,
+                rateDate = LocalDate.now()
+            ),
+            occurredDate = LocalDate.now(),
+            note = "Team lunch at cafe"
+        )
+
+        ExpenseListScreen(
+            uiState = ExpenseUiState(
+                expenses = listOf(sampleExpense),
+                totalLkrMinor = 250_000L
+            ),
+            onSaveExpense = { _, _, _, _, _, _, _, _ -> },
+            onDeleteExpense = {},
+            onClearError = {}
+        )
     }
 }
