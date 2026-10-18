@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function checking if caller is authenticated and matches document owner
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // Helper function validating expense schema and preventing ownership forging
+    function isValidExpenseData(data, userId) {
+      return data.userId == userId &&
+             data.categoryId is string &&
+             data.categoryId.size() > 0 &&
+             data.categoryNameSnapshot is string &&
+             data.originalAmountDecimal is string &&
+             data.baseAmountMinor is int &&
+             data.baseAmountMinor >= 0 &&
+             data.spendingClass in ['COMMITTED', 'DISCRETIONARY'] &&
+             data.paymentChannel in ['CASH', 'CARD', 'BANK', 'OTHER'] &&
+             data.occurredDate is string;
+    }
+
+    // User document access
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      // Scoped expenses collection for signed-in user
+      match /expenses/{expenseId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidExpenseData(request.resource.data, userId);
+      }
+    }
+
+    // Fallback default deny for any unmatched path
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
