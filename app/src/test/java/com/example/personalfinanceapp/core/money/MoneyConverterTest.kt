@@ -257,4 +257,20 @@ class MoneyConverterTest {
 
         assertTrue(result.isFailure)
     }
+
+    @Test
+    fun rejectsUsdConversionThatRoundsToZeroMinorUnits() {
+        val result = MoneyConverter.fromUsd(
+            amountInput = "0.01",
+            rateLkrPerUsdInput = "0.01",
+            rateSource = RateSource.MANUAL_REFERENCE,
+            rateDate = transactionDate
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals(
+            "Converted amount is too small to represent in LKR cents",
+            result.exceptionOrNull()?.message
+        )
+    }
 }

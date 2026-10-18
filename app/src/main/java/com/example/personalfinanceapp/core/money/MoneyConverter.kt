@@ -104,6 +104,10 @@ object MoneyConverter {
                 .setScale(0, RoundingMode.HALF_UP)
                 .longValueExact()
 
+            require(baseAmountMinor > 0L) {
+                "Converted amount is too small to represent in LKR cents"
+            }
+
             Money(
                 originalAmountDecimal = amount.toPlainString(),
                 originalCurrency = currency,
