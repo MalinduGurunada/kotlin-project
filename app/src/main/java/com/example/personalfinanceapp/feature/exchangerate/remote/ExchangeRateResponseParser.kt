@@ -4,6 +4,7 @@ import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateException
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateProvider
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateQuote
+import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateQuoteValidator
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -48,7 +49,11 @@ class ExchangeRateResponseParser @Inject constructor(
         val providerUpdatedAt = root.requiredInstant(LAST_UPDATE_FIELD)
         val nextProviderUpdateAt = root.requiredInstant(NEXT_UPDATE_FIELD)
 
-        validateTimestamps(providerUpdatedAt, nextProviderUpdateAt, fetchedAt)
+        ExchangeRateQuoteValidator.requireFreshTimestamps(
+            providerUpdatedAt = providerUpdatedAt,
+            nextProviderUpdateAt = nextProviderUpdateAt,
+            observedAt = fetchedAt
+        )
 
         return ExchangeRateQuote(
             baseCurrency = CurrencyCode.USD,
@@ -98,33 +103,6 @@ class ExchangeRateResponseParser @Inject constructor(
         return normalized.stripTrailingZeros()
     }
 
-    private fun validateTimestamps(
-        providerUpdatedAt: Instant,
-        nextProviderUpdateAt: Instant,
-        fetchedAt: Instant
-    ) {
-        try {
-            if (!nextProviderUpdateAt.isAfter(providerUpdatedAt)) {
-                throw ExchangeRateException.MalformedResponse()
-            }
-            if (Duration.between(providerUpdatedAt, nextProviderUpdateAt) > MAX_PROVIDER_INTERVAL) {
-                throw ExchangeRateException.MalformedResponse()
-            }
-            if (providerUpdatedAt.isAfter(fetchedAt.plus(FUTURE_CLOCK_SKEW))) {
-                throw ExchangeRateException.MalformedResponse()
-            }
-            if (fetchedAt.isAfter(nextProviderUpdateAt.plus(NEXT_UPDATE_GRACE)) ||
-                fetchedAt.isAfter(providerUpdatedAt.plus(MAX_QUOTE_AGE))
-            ) {
-                throw ExchangeRateException.StaleQuote()
-            }
-        } catch (exception: DateTimeException) {
-            throw ExchangeRateException.MalformedResponse(exception)
-        } catch (exception: ArithmeticException) {
-            throw ExchangeRateException.MalformedResponse(exception)
-        }
-    }
-
     private fun JsonObject.requiredString(fieldName: String): String {
         val primitive = this[fieldName] as? JsonPrimitive
             ?: throw ExchangeRateException.MalformedResponse()
@@ -169,9 +147,8 @@ class ExchangeRateResponseParser @Inject constructor(
         private const val MIN_RATE_SCALE = -32
         private const val MAX_RATE_SCALE = 32
 
-        internal val FUTURE_CLOCK_SKEW: Duration = Duration.ofMinutes(5)
-        internal val NEXT_UPDATE_GRACE: Duration = Duration.ofHours(6)
-        internal val MAX_QUOTE_AGE: Duration = Duration.ofDays(7)
-        private val MAX_PROVIDER_INTERVAL: Duration = Duration.ofDays(7)
+        internal val FUTURE_CLOCK_SKEW: Duration = ExchangeRateQuoteValidator.FUTURE_CLOCK_SKEW
+        internal val NEXT_UPDATE_GRACE: Duration = ExchangeRateQuoteValidator.NEXT_UPDATE_GRACE
+        internal val MAX_QUOTE_AGE: Duration = ExchangeRateQuoteValidator.MAX_QUOTE_AGE
     }
 }
