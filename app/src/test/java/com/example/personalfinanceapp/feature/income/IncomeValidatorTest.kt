@@ -177,6 +177,21 @@ class IncomeValidatorTest {
     }
 
     @Test
+    fun acceptsAutomaticUsdSnapshot() {
+        val income = createIncome(
+            useUsd = true,
+            usdRateSource = RateSource.EXCHANGE_RATE_API_REFERENCE
+        )
+
+        assertNotEquals(income.occurredDate, income.money.rateDate)
+        assertEquals(
+            RateSource.EXCHANGE_RATE_API_REFERENCE,
+            income.money.rateSource
+        )
+        assertTrue(IncomeValidator.validate(income).isSuccess)
+    }
+
+    @Test
     fun acceptsOptionalMetadataFields() {
         val income = createIncome(
             source = IncomeSource.FREELANCE,
@@ -321,6 +336,22 @@ class IncomeValidatorTest {
     }
 
     @Test
+    fun rejectsAutomaticRateSourceForLkr() {
+        val income = createIncome().let { validIncome ->
+            validIncome.copy(
+                money = validIncome.money.copy(
+                    rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE
+                )
+            )
+        }
+
+        assertFailureMessage(
+            income,
+            "LKR requires the fixed exchange rate source"
+        )
+    }
+
+    @Test
     fun rejectsFixedRateSourceForUsd() {
         val income = createIncome(useUsd = true).let { validIncome ->
             validIncome.copy(
@@ -332,13 +363,32 @@ class IncomeValidatorTest {
 
         assertFailureMessage(
             income,
-            "USD requires a manual exchange rate source"
+            "USD requires a supported exchange rate source"
         )
     }
 
     @Test
     fun rejectsStoredAmountInconsistentWithCalculation() {
         val income = createIncome(useUsd = true).let { validIncome ->
+            validIncome.copy(
+                money = validIncome.money.copy(
+                    baseAmountMinor = validIncome.money.baseAmountMinor + 1L
+                )
+            )
+        }
+
+        assertFailureMessage(
+            income,
+            "Stored LKR minor-unit amount does not match the calculated amount"
+        )
+    }
+
+    @Test
+    fun rejectsManipulatedAutomaticUsdSnapshot() {
+        val income = createIncome(
+            useUsd = true,
+            usdRateSource = RateSource.EXCHANGE_RATE_API_REFERENCE
+        ).let { validIncome ->
             validIncome.copy(
                 money = validIncome.money.copy(
                     baseAmountMinor = validIncome.money.baseAmountMinor + 1L
