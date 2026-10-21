@@ -41,32 +41,33 @@ class FakeIncomeRepository : IncomeRepository {
 
     override suspend fun saveIncome(
         income: Income
-    ): Result<Unit> = mutex.withLock {
+    ): Result<Unit> {
+        val validationResult = IncomeValidator.validate(income)
 
-        if (income.id.isBlank()) {
-            return@withLock Result.failure(
-                IllegalArgumentException("Income ID cannot be blank")
-            )
+        if (validationResult.isFailure) {
+            return validationResult
         }
 
-        val current = incomes.value
+        return mutex.withLock {
+            val current = incomes.value
 
-        val existingIndex = current.indexOfFirst {
-            it.id == income.id
-        }
-
-        incomes.value = if (existingIndex >= 0) {
-
-            current.toMutableList().apply {
-                set(existingIndex, income)
+            val existingIndex = current.indexOfFirst {
+                it.id == income.id
             }
 
-        } else {
+            incomes.value = if (existingIndex >= 0) {
 
-            current + income
+                current.toMutableList().apply {
+                    set(existingIndex, income)
+                }
+
+            } else {
+
+                current + income
+            }
+
+            Result.success(Unit)
         }
-
-        Result.success(Unit)
     }
 
     override suspend fun deleteIncome(
