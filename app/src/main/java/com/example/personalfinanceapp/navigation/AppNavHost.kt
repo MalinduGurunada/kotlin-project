@@ -1,30 +1,27 @@
 package com.example.personalfinanceapp.navigation
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import com.example.personalfinanceapp.feature.auth.ui.AuthViewModel
 import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
 import com.example.personalfinanceapp.feature.auth.ui.PasswordResetScreen
 import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
-import com.example.personalfinanceapp.feature.expense.ui.ExpenseListScreen
+import com.example.personalfinanceapp.feature.dashboard.ui.ActivityScreen
+import com.example.personalfinanceapp.feature.dashboard.ui.DashboardViewModel
+import com.example.personalfinanceapp.feature.dashboard.ui.NavDestination
+import com.example.personalfinanceapp.feature.dashboard.ui.OverviewScreen
+import com.example.personalfinanceapp.feature.dashboard.ui.TransactionDetailScreen
+import com.example.personalfinanceapp.feature.expense.ui.ExpenseEditorDialog
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseViewModel
 
 @Composable
@@ -37,9 +34,11 @@ fun AppNavHost(
     val registerUiState by authViewModel.registerUiState.collectAsState()
     val resetUiState by authViewModel.passwordResetUiState.collectAsState()
 
+    var showRecordExpenseDialog by remember { mutableStateOf(false) }
+
     LaunchedEffect(authState) {
         if (authState != null) {
-            navController.navigate(Home) {
+            navController.navigate(Overview) {
                 popUpTo(Login) { inclusive = true }
             }
         } else {
@@ -84,59 +83,71 @@ fun AppNavHost(
             )
         }
 
-        composable<Home> {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    text = "Personal Finance Dashboard",
-                    style = MaterialTheme.typography.headlineMedium
-                )
+        composable<Overview> {
+            val dashboardViewModel: DashboardViewModel = hiltViewModel()
+            val uiState by dashboardViewModel.uiState.collectAsState()
 
-                if (authState != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Signed in as: $authState",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Button(
-                    onClick = {
-                        navController.navigate(ExpenseList)
+            OverviewScreen(
+                uiState = uiState,
+                currentNavDestination = NavDestination.OVERVIEW,
+                onNavDestinationSelected = { dest ->
+                    when (dest) {
+                        NavDestination.OVERVIEW -> {}
+                        NavDestination.ACTIVITY -> navController.navigate(Activity)
+                        NavDestination.GOALS -> {}
+                        NavDestination.MORE -> {}
                     }
-                ) {
-                    Text("Manage Expenses")
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Button(
-                    onClick = {
-                        authViewModel.signOut()
-                    }
-                ) {
-                    Text("Sign Out")
-                }
-            }
+                },
+                onNavigateToActivity = { navController.navigate(Activity) }
+            )
         }
 
-        composable<ExpenseList> {
+        composable<Activity> {
+            val dashboardViewModel: DashboardViewModel = hiltViewModel()
             val expenseViewModel: ExpenseViewModel = hiltViewModel()
+            val uiState by dashboardViewModel.uiState.collectAsState()
             val expenseUiState by expenseViewModel.uiState.collectAsState()
 
-            ExpenseListScreen(
-                uiState = expenseUiState,
-                onSaveExpense = expenseViewModel::saveExpense,
-                onDeleteExpense = expenseViewModel::deleteExpense,
-                onClearError = expenseViewModel::clearError
+            if (showRecordExpenseDialog) {
+                ExpenseEditorDialog(
+                    expenseToEdit = null,
+                    categories = expenseUiState.categories,
+                    onDismiss = { showRecordExpenseDialog = false },
+                    onSave = { id, categoryId, amountDecimal, currency, channel, spendingClass, date, note ->
+                        expenseViewModel.saveExpense(id, categoryId, amountDecimal, currency, channel, spendingClass, date, note)
+                        showRecordExpenseDialog = false
+                    }
+                )
+            }
+
+            ActivityScreen(
+                uiState = uiState,
+                currentNavDestination = NavDestination.ACTIVITY,
+                onNavDestinationSelected = { dest ->
+                    when (dest) {
+                        NavDestination.OVERVIEW -> navController.navigate(Overview)
+                        NavDestination.ACTIVITY -> {}
+                        NavDestination.GOALS -> {}
+                        NavDestination.MORE -> {}
+                    }
+                },
+                onSelectTransaction = { id ->
+                    navController.navigate(TransactionDetail(id))
+                },
+                onRecordExpenseClicked = {
+                    showRecordExpenseDialog = true
+                }
+            )
+        }
+
+        composable<TransactionDetail> { backStackEntry ->
+            val detailRoute: TransactionDetail = backStackEntry.toRoute()
+
+            TransactionDetailScreen(
+                transactionId = detailRoute.transactionId,
+                onBackClicked = { navController.popBackStack() },
+                onEditClicked = { },
+                onDeleteClicked = { navController.popBackStack() }
             )
         }
     }
