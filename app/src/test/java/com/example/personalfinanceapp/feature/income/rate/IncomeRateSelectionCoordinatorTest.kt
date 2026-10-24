@@ -2,6 +2,7 @@ package com.example.personalfinanceapp.feature.income.rate
 
 import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.RateSource
+import com.example.personalfinanceapp.core.money.MoneyConverter
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateException
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateProvider
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateQuote
@@ -480,6 +481,115 @@ class IncomeRateSelectionCoordinatorTest {
         assertEquals(30_000L, historicalSnapshot.baseAmountMinor)
         assertEquals("320", currentSnapshot.rateLkrPerUnitDecimal)
         assertEquals(32_000L, currentSnapshot.baseAmountMinor)
+    }
+
+    @Test
+    fun `hydrating historical API money preserves exact snapshot without network lookup`() = runTest {
+        val repository = ImmediateRepository(Result.success(validQuote(rate = "320")))
+        val coordinator = coordinator(repository)
+        val historical = MoneyConverter.fromUsd(
+            amountInput = "125.00",
+            rateLkrPerUsdInput = "305.123456",
+            rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
+            rateDate = HISTORICAL_RATE_DATE
+        ).getOrThrow()
+
+        assertTrue(coordinator.hydrateUsdMoney(historical, TRANSACTION_DATE).isSuccess)
+        val prepared = coordinator.prepareMoneySnapshot().getOrThrow()
+
+        assertEquals(historical, prepared)
+        assertEquals(IncomeRateSelectionMode.AUTOMATIC, coordinator.state.value.selectedRateMode)
+        assertEquals(0, repository.requestCount)
+    }
+
+    @Test
+    fun `reselecting hydrated USD and automatic mode repeatedly preserves exact snapshot`() = runTest {
+        val repository = ImmediateRepository(Result.success(validQuote(rate = "320")))
+        val coordinator = coordinator(repository)
+        val historical = MoneyConverter.fromUsd(
+            amountInput = "125.00",
+            rateLkrPerUsdInput = "305.123456",
+            rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
+            rateDate = HISTORICAL_RATE_DATE
+        ).getOrThrow()
+        coordinator.hydrateUsdMoney(historical, TRANSACTION_DATE).getOrThrow()
+
+        repeat(3) {
+            coordinator.selectCurrency(CurrencyCode.USD)
+            coordinator.selectRateMode(IncomeRateSelectionMode.AUTOMATIC)
+        }
+
+        assertEquals(0, repository.requestCount)
+        assertEquals(historical, coordinator.state.value.preservedUsdMoney)
+        assertEquals(historical, coordinator.state.value.estimatedMoney)
+        assertEquals(historical, coordinator.prepareMoneySnapshot().getOrThrow())
+    }
+
+    @Test
+    fun `historical amount change recalculates with preserved rate and rate date`() = runTest {
+        val repository = ImmediateRepository(Result.success(validQuote()))
+        val coordinator = coordinator(repository)
+        val historical = MoneyConverter.fromUsd(
+            amountInput = "10.00",
+            rateLkrPerUsdInput = "300.50",
+            rateSource = RateSource.MANUAL_TRANSFER,
+            rateDate = HISTORICAL_RATE_DATE
+        ).getOrThrow()
+        coordinator.hydrateUsdMoney(historical, TRANSACTION_DATE).getOrThrow()
+
+        coordinator.updateTransactionDate(TRANSACTION_DATE.plusDays(3))
+        assertEquals(historical, coordinator.prepareMoneySnapshot().getOrThrow())
+        coordinator.updateAmountInput("12.00")
+        val changed = coordinator.prepareMoneySnapshot().getOrThrow()
+
+        assertEquals("300.50", changed.rateLkrPerUnitDecimal)
+        assertEquals(RateSource.MANUAL_TRANSFER, changed.rateSource)
+        assertEquals(HISTORICAL_RATE_DATE, changed.rateDate)
+        assertEquals(360_600L, changed.baseAmountMinor)
+        assertEquals(0, repository.requestCount)
+    }
+
+    @Test
+    fun `explicit refresh replaces hydrated API snapshot with latest quote`() = runTest {
+        val repository = ImmediateRepository(Result.success(validQuote(rate = "320")))
+        val coordinator = coordinator(repository)
+        val historical = MoneyConverter.fromUsd(
+            amountInput = "10.00",
+            rateLkrPerUsdInput = "300",
+            rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
+            rateDate = HISTORICAL_RATE_DATE
+        ).getOrThrow()
+        coordinator.hydrateUsdMoney(historical, TRANSACTION_DATE).getOrThrow()
+
+        coordinator.requestAutomaticRate()
+        runCurrent()
+        val refreshed = coordinator.prepareMoneySnapshot().getOrThrow()
+
+        assertEquals(1, repository.requestCount)
+        assertEquals("320", refreshed.rateLkrPerUnitDecimal)
+        assertEquals(RATE_DATE, refreshed.rateDate)
+        assertEquals(RateSource.EXCHANGE_RATE_API_REFERENCE, refreshed.rateSource)
+    }
+
+    @Test
+    fun `failed refresh keeps hydrated historical snapshot available`() = runTest {
+        val failure = ExchangeRateException.NetworkFailure(IOException("offline"))
+        val repository = ImmediateRepository(Result.failure(failure))
+        val coordinator = coordinator(repository)
+        val historical = MoneyConverter.fromUsd(
+            amountInput = "10.00",
+            rateLkrPerUsdInput = "300",
+            rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
+            rateDate = HISTORICAL_RATE_DATE
+        ).getOrThrow()
+        coordinator.hydrateUsdMoney(historical, TRANSACTION_DATE).getOrThrow()
+
+        coordinator.requestAutomaticRate()
+        runCurrent()
+
+        assertSame(failure, coordinator.state.value.automaticRateError)
+        assertEquals(historical, coordinator.state.value.estimatedMoney)
+        assertEquals(historical, coordinator.prepareMoneySnapshot().getOrThrow())
     }
 
     private fun TestScope.coordinator(

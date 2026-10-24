@@ -1,7 +1,6 @@
 package com.example.personalfinanceapp.feature.income.ui
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -125,7 +124,7 @@ class IncomeListScreenTest {
     }
 
     @Test
-    fun addAndLkrEditActionsWorkWhileUsdEditHasClearExplanation() {
+    fun addAndLkrAndUsdEditActionsWork() {
         var added = false
         var editedId: String? = null
         val incomes = listOf(
@@ -156,15 +155,12 @@ class IncomeListScreenTest {
         composeRule.onNodeWithTag("edit-income-lkr", useUnmergedTree = true)
             .performScrollTo()
             .performClick()
-        composeRule.onNodeWithText(
-            "USD editing is not available yet.",
-            useUnmergedTree = true
-        ).performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("edit-income-usd", useUnmergedTree = true)
-            .assertIsNotEnabled()
+            .performScrollTo()
+            .performClick()
 
         assertTrue(added)
-        assertTrue(editedId == "lkr")
+        assertTrue(editedId == "usd")
     }
 
     private fun setContent(

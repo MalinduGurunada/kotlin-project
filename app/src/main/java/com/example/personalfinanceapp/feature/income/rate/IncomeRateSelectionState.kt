@@ -18,5 +18,6 @@ data class IncomeRateSelectionState(
     val isLoadingAutomaticRate: Boolean = false,
     val validationError: String? = null,
     val automaticRateError: ExchangeRateException? = null,
-    val estimatedMoney: Money? = null
+    val estimatedMoney: Money? = null,
+    val preservedUsdMoney: Money? = null
 )

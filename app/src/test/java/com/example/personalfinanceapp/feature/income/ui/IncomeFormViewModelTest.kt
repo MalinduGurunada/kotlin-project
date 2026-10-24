@@ -10,10 +10,17 @@ import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.core.money.MoneyConverter
 import com.example.personalfinanceapp.feature.auth.AuthRepository
+import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateQuote
+import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateRepository
+import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateException
+import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateProvider
 import com.example.personalfinanceapp.feature.income.IncomeRepository
+import com.example.personalfinanceapp.feature.income.rate.IncomeManualRateSource
+import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +29,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,6 +43,8 @@ import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
+import java.math.BigDecimal
+import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class IncomeFormViewModelTest {
@@ -47,6 +57,7 @@ class IncomeFormViewModelTest {
 
     private lateinit var repository: SavingIncomeRepository
     private lateinit var authRepository: FormAuthRepository
+    private lateinit var exchangeRateRepository: FormExchangeRateRepository
     private lateinit var viewModel: IncomeViewModel
 
     @Before
@@ -54,7 +65,13 @@ class IncomeFormViewModelTest {
         Dispatchers.setMain(dispatcher)
         repository = SavingIncomeRepository()
         authRepository = FormAuthRepository(USER_A)
-        viewModel = IncomeViewModel(repository, authRepository, clock)
+        exchangeRateRepository = FormExchangeRateRepository()
+        viewModel = IncomeViewModel(
+            repository,
+            authRepository,
+            exchangeRateRepository,
+            clock
+        )
         dispatcher.scheduler.runCurrent()
     }
 
@@ -201,6 +218,7 @@ class IncomeFormViewModelTest {
         assertEquals(123_456L, money.baseAmountMinor)
         assertEquals(RateSource.LKR_FIXED, money.rateSource)
         assertEquals(LocalDate.of(2026, 9, 30), money.rateDate)
+        assertEquals(0, exchangeRateRepository.requestCount)
     }
 
     @Test
@@ -380,16 +398,150 @@ class IncomeFormViewModelTest {
     }
 
     @Test
-    fun `existing USD record cannot open editor or be silently repriced`() = runTest {
+    fun `existing USD metadata edit preserves exact historical money without network`() = runTest {
         val existing = usdIncome("usd-income")
 
         viewModel.openIncomeForEdit(existing)
+        viewModel.updateIncomeNote("Updated note")
+        saveAndRun()
+
+        val saved = repository.saved.single()
+        assertEquals(existing.id, saved.id)
+        assertEquals(existing.money, saved.money)
+        assertEquals("Updated note", saved.note)
+        assertEquals(0, exchangeRateRepository.requestCount)
+    }
+
+    @Test
+    fun `metadata edit after repeated USD automatic reselection preserves exact historical money`() = runTest {
+        val historicalMoney = MoneyConverter.fromUsd(
+            amountInput = "100.00",
+            rateLkrPerUsdInput = "290.123456",
+            rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
+            rateDate = TODAY.minusDays(10)
+        ).getOrThrow()
+        val existing = usdIncome("historical-api").copy(money = historicalMoney)
+        viewModel.openIncomeForEdit(existing)
+
+        repeat(3) {
+            viewModel.updateIncomeCurrency(CurrencyCode.USD)
+            viewModel.updateRateMode(IncomeRateSelectionMode.AUTOMATIC)
+        }
+        viewModel.updateIncomeNote("Updated note")
+        saveAndRun()
+
+        val saved = repository.saved.single()
+        assertEquals(existing.id, saved.id)
+        assertEquals(historicalMoney, saved.money)
+        assertEquals("Updated note", saved.note)
+        assertEquals(0, exchangeRateRepository.requestCount)
+    }
+
+    @Test
+    fun `existing USD amount change uses preserved rate and date`() = runTest {
+        val existing = usdIncome("usd-income")
+        viewModel.openIncomeForEdit(existing)
+
+        viewModel.updateIncomeAmount("125.00")
+        saveAndRun()
+
+        val money = repository.saved.single().money
+        assertEquals("125.00", money.originalAmountDecimal)
+        assertEquals("305.25", money.rateLkrPerUnitDecimal)
+        assertEquals(existing.money.rateSource, money.rateSource)
+        assertEquals(existing.money.rateDate, money.rateDate)
+        assertEquals(3_815_625L, money.baseAmountMinor)
+        assertEquals(0, exchangeRateRepository.requestCount)
+    }
+
+    @Test
+    fun `automatic USD success exposes exact preview and saves API snapshot`() = runTest {
+        exchangeRateRepository.handler = { Result.success(quote("305.25")) }
+        openNewDraft()
+        viewModel.updateIncomeAmount("125.50")
+
+        viewModel.updateIncomeCurrency(CurrencyCode.USD)
+        dispatcher.scheduler.runCurrent()
+
+        val preview = requireNotNull(viewModel.formState.value?.estimatedMoney)
+        assertEquals(3_830_888L, preview.baseAmountMinor)
+        saveAndRun()
+        assertEquals(preview, repository.saved.single().money)
+        assertEquals(RateSource.EXCHANGE_RATE_API_REFERENCE, preview.rateSource)
+        assertEquals(1, exchangeRateRepository.requestCount)
+    }
+
+    @Test
+    fun `automatic failure preserves input and manual fallback validates then saves`() = runTest {
+        exchangeRateRepository.handler = {
+            Result.failure(ExchangeRateException.NetworkFailure(IOException("offline")))
+        }
+        openNewDraft()
+        viewModel.updateIncomeAmount("20.00")
+        viewModel.updateIncomeCurrency(CurrencyCode.USD)
+        dispatcher.scheduler.runCurrent()
+
+        val failed = requireNotNull(viewModel.formState.value)
+        assertEquals("20.00", failed.amountText)
+        assertTrue(failed.automaticRateError.orEmpty().contains("manual rate"))
+
+        viewModel.updateRateMode(IncomeRateSelectionMode.MANUAL)
+        viewModel.updateManualRateSource(IncomeManualRateSource.REFERENCE)
+        viewModel.updateManualRate("0")
+        viewModel.saveIncome()
+        assertNotNull(viewModel.formState.value?.errors?.rate)
+        assertTrue(repository.saved.isEmpty())
+
+        viewModel.updateManualRate("300")
+        saveAndRun()
+        val money = repository.saved.single().money
+        assertEquals(RateSource.MANUAL_REFERENCE, money.rateSource)
+        assertEquals(600_000L, money.baseAmountMinor)
+    }
+
+    @Test
+    fun `explicit refresh is the only network request while editing historical API money`() = runTest {
+        val existing = usdIncome("historical-api").copy(
+            money = MoneyConverter.fromUsd(
+                amountInput = "100",
+                rateLkrPerUsdInput = "290",
+                rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
+                rateDate = TODAY.minusDays(10)
+            ).getOrThrow()
+        )
+        exchangeRateRepository.handler = { Result.success(quote("310")) }
+
+        viewModel.openIncomeForEdit(existing)
+        assertEquals(0, exchangeRateRepository.requestCount)
+        viewModel.updateIncomeDate(TODAY.plusDays(1))
+        assertEquals(existing.money, viewModel.formState.value?.estimatedMoney)
+
+        viewModel.refreshAutomaticRate()
+        dispatcher.scheduler.runCurrent()
+
+        val refreshed = requireNotNull(viewModel.formState.value?.estimatedMoney)
+        assertEquals("310", refreshed.rateLkrPerUnitDecimal)
+        assertEquals(1, exchangeRateRepository.requestCount)
+    }
+
+    @Test
+    fun `account switch cancels pending rate and stale response cannot restore draft`() = runTest {
+        val gate = CompletableDeferred<Result<ExchangeRateQuote>>()
+        exchangeRateRepository.handler = {
+            withContext(NonCancellable) { gate.await() }
+        }
+        openNewDraft()
+        viewModel.updateIncomeAmount("10")
+        viewModel.updateIncomeCurrency(CurrencyCode.USD)
+        dispatcher.scheduler.runCurrent()
+
+        authRepository.setUser(USER_B)
+        dispatcher.scheduler.runCurrent()
+        gate.complete(Result.success(quote("320")))
+        dispatcher.scheduler.runCurrent()
 
         assertNull(viewModel.formState.value)
-        assertTrue(viewModel.userMessage.value.orEmpty().contains("USD"))
         assertTrue(repository.saved.isEmpty())
-        assertEquals(CurrencyCode.USD, existing.money.originalCurrency)
-        assertEquals("305.25", existing.money.rateLkrPerUnitDecimal)
     }
 
     private fun openNewDraft(): IncomeFormUiState {
@@ -501,4 +653,28 @@ class IncomeFormViewModelTest {
         const val USER_B = "user-b"
         val TODAY: LocalDate = LocalDate.of(2026, 10, 24)
     }
+
+    private class FormExchangeRateRepository : ExchangeRateRepository {
+        var requestCount = 0
+            private set
+        var handler: suspend () -> Result<ExchangeRateQuote> = {
+            Result.failure(AssertionError("Unexpected automatic exchange-rate request"))
+        }
+
+        override suspend fun getLatestUsdToLkr(): Result<ExchangeRateQuote> {
+            requestCount += 1
+            return handler()
+        }
+    }
+
+    private fun quote(rate: String): ExchangeRateQuote = ExchangeRateQuote(
+        baseCurrency = CurrencyCode.USD,
+        targetCurrency = CurrencyCode.LKR,
+        rate = BigDecimal(rate),
+        provider = ExchangeRateProvider.EXCHANGE_RATE_API_OPEN,
+        applicableDate = TODAY,
+        providerUpdatedAt = Instant.parse("2026-10-24T00:00:00Z"),
+        nextProviderUpdateAt = Instant.parse("2026-10-25T00:00:00Z"),
+        fetchedAt = Instant.parse("2026-10-24T12:00:00Z")
+    )
 }

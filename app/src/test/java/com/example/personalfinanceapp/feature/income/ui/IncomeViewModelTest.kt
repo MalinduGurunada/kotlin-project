@@ -10,6 +10,8 @@ import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.feature.auth.AuthRepository
+import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateQuote
+import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateRepository
 import com.example.personalfinanceapp.feature.income.IncomeRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -57,7 +59,12 @@ class IncomeViewModelTest {
         Dispatchers.setMain(testDispatcher)
         incomeRepository = ControlledIncomeRepository()
         authRepository = ControlledAuthRepository(initialUserId = USER_A)
-        viewModel = IncomeViewModel(incomeRepository, authRepository, fixedClock)
+        viewModel = IncomeViewModel(
+            incomeRepository,
+            authRepository,
+            UnusedExchangeRateRepository,
+            fixedClock
+        )
     }
 
     @After
@@ -500,5 +507,10 @@ class IncomeViewModelTest {
             startDate = LocalDate.of(2026, 11, 1),
             endDateExclusive = LocalDate.of(2026, 12, 1)
         )
+    }
+
+    private object UnusedExchangeRateRepository : ExchangeRateRepository {
+        override suspend fun getLatestUsdToLkr(): Result<ExchangeRateQuote> =
+            Result.failure(AssertionError("Exchange rates are not used by list tests"))
     }
 }

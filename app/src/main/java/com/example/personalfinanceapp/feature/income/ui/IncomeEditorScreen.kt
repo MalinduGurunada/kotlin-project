@@ -43,7 +43,12 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.personalfinanceapp.core.model.IncomeSource
+import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.PnlDirection
+import com.example.personalfinanceapp.core.model.RateSource
+import com.example.personalfinanceapp.feature.income.rate.IncomeManualRateSource
+import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionMode
+import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -56,6 +61,12 @@ fun IncomeEditorScreen(
     onSourceChanged: (IncomeSource) -> Unit,
     onAmountChanged: (String) -> Unit,
     onDateChanged: (LocalDate) -> Unit,
+    onCurrencyChanged: (CurrencyCode) -> Unit,
+    onRateModeChanged: (IncomeRateSelectionMode) -> Unit,
+    onManualRateChanged: (String) -> Unit,
+    onManualRateSourceChanged: (IncomeManualRateSource) -> Unit,
+    onManualRateDateChanged: (LocalDate) -> Unit,
+    onRefreshAutomaticRate: () -> Unit,
     onProjectReferenceChanged: (String) -> Unit,
     onAssetSymbolChanged: (String) -> Unit,
     onPnlDirectionChanged: (PnlDirection) -> Unit,
@@ -64,6 +75,7 @@ fun IncomeEditorScreen(
 ) {
     var sourceMenuExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showRateDatePicker by remember { mutableStateOf(false) }
 
     BackHandler {
         if (!uiState.isSaving) onBack()
@@ -89,6 +101,34 @@ fun IncomeEditorScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDatePicker = false }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            DatePicker(state = pickerState)
+        }
+    }
+
+    if (showRateDatePicker) {
+        val pickerState = rememberDatePickerState(
+            initialSelectedDateMillis = uiState.manualRateDate?.toUtcEpochMillis()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showRateDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pickerState.selectedDateMillis
+                            ?.toLocalDateUtc()
+                            ?.let(onManualRateDateChanged)
+                        showRateDatePicker = false
+                    }
+                ) {
+                    Text("Select")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRateDatePicker = false }) {
                     Text("Cancel")
                 }
             }
@@ -134,10 +174,28 @@ fun IncomeEditorScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
-                text = "All amounts in this form are recorded in LKR.",
+                text = "Choose LKR or USD. USD values are stored with their exchange-rate snapshot.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            Column(
+                modifier = Modifier.testTag("income-currency"),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text("Currency", style = MaterialTheme.typography.labelLarge)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CurrencyCode.entries.forEach { currency ->
+                        RadioButton(
+                            selected = uiState.selectedCurrency == currency,
+                            onClick = { onCurrencyChanged(currency) },
+                            enabled = !uiState.isSaving,
+                            modifier = Modifier.testTag("income-currency-${currency.name}")
+                        )
+                        Text(currency.name)
+                    }
+                }
+            }
 
             ExposedDropdownMenuBox(
                 expanded = sourceMenuExpanded,
@@ -181,11 +239,11 @@ fun IncomeEditorScreen(
                 value = uiState.amountText,
                 onValueChange = onAmountChanged,
                 enabled = !uiState.isSaving,
-                label = { Text("Amount (LKR)") },
-                supportingText = uiState.errors.amount?.let { error ->
+                label = { Text("Amount (${uiState.selectedCurrency.name})") },
+                supportingText = (uiState.errors.amount ?: uiState.amountValidationError)?.let { error ->
                     { Text(error) }
                 },
-                isError = uiState.errors.amount != null,
+                isError = uiState.errors.amount != null || uiState.amountValidationError != null,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Decimal,
@@ -195,6 +253,17 @@ fun IncomeEditorScreen(
                     .fillMaxWidth()
                     .testTag("income-amount")
             )
+
+            if (uiState.selectedCurrency == CurrencyCode.USD) {
+                UsdRateControls(
+                    uiState = uiState,
+                    onRateModeChanged = onRateModeChanged,
+                    onManualRateChanged = onManualRateChanged,
+                    onManualRateSourceChanged = onManualRateSourceChanged,
+                    onSelectManualRateDate = { showRateDatePicker = true },
+                    onRefreshAutomaticRate = onRefreshAutomaticRate
+                )
+            }
 
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Button(
@@ -315,7 +384,10 @@ fun IncomeEditorScreen(
                 }
                 Button(
                     onClick = onSave,
-                    enabled = !uiState.isSaving,
+                    enabled = !uiState.isSaving &&
+                        !uiState.isLoadingAutomaticRate &&
+                        (uiState.selectedCurrency == CurrencyCode.LKR ||
+                            uiState.estimatedMoney != null),
                     modifier = Modifier.testTag("income-save")
                 ) {
                     if (uiState.isSaving) {
@@ -341,6 +413,188 @@ fun IncomeEditorScreen(
         }
     }
 }
+
+@Composable
+private fun UsdRateControls(
+    uiState: IncomeFormUiState,
+    onRateModeChanged: (IncomeRateSelectionMode) -> Unit,
+    onManualRateChanged: (String) -> Unit,
+    onManualRateSourceChanged: (IncomeManualRateSource) -> Unit,
+    onSelectManualRateDate: () -> Unit,
+    onRefreshAutomaticRate: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("income-usd-rate-controls"),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text("USD/LKR exchange rate", style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RateModeOption(
+                label = "Automatic reference",
+                selected = uiState.selectedRateMode == IncomeRateSelectionMode.AUTOMATIC,
+                enabled = !uiState.isSaving,
+                tag = "income-rate-mode-automatic",
+                onClick = { onRateModeChanged(IncomeRateSelectionMode.AUTOMATIC) }
+            )
+            RateModeOption(
+                label = "Manual",
+                selected = uiState.selectedRateMode == IncomeRateSelectionMode.MANUAL,
+                enabled = !uiState.isSaving,
+                tag = "income-rate-mode-manual",
+                onClick = { onRateModeChanged(IncomeRateSelectionMode.MANUAL) }
+            )
+        }
+
+        if (uiState.selectedRateMode == IncomeRateSelectionMode.AUTOMATIC) {
+            Text(
+                "Automatic rates are reference suggestions and may differ from your transfer rate.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            if (uiState.isLoadingAutomaticRate) {
+                Row(
+                    modifier = Modifier.testTag("income-rate-loading"),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Loading USD/LKR reference rate")
+                }
+            }
+            uiState.automaticRateError?.let { error ->
+                Text(
+                    error,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.testTag("income-rate-network-error")
+                )
+            }
+            Button(
+                onClick = onRefreshAutomaticRate,
+                enabled = !uiState.isSaving && !uiState.isLoadingAutomaticRate,
+                modifier = Modifier.testTag("income-rate-refresh")
+            ) {
+                Text(if (uiState.automaticRateError == null) "Refresh reference rate" else "Retry rate")
+            }
+            if (uiState.automaticRateError != null) {
+                TextButton(
+                    onClick = { onRateModeChanged(IncomeRateSelectionMode.MANUAL) },
+                    enabled = !uiState.isSaving,
+                    modifier = Modifier.testTag("income-rate-manual-fallback")
+                ) {
+                    Text("Enter a manual rate")
+                }
+            }
+        } else if (uiState.selectedRateMode == IncomeRateSelectionMode.MANUAL) {
+            OutlinedTextField(
+                value = uiState.manualRateText,
+                onValueChange = onManualRateChanged,
+                enabled = !uiState.isSaving,
+                label = { Text("LKR per USD") },
+                supportingText = (uiState.errors.rate ?: uiState.rateValidationError)?.let { error ->
+                    { Text(error) }
+                },
+                isError = uiState.errors.rate != null || uiState.rateValidationError != null,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Decimal,
+                    imeAction = ImeAction.Next
+                ),
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("income-manual-rate")
+            )
+            Text("Manual rate type", style = MaterialTheme.typography.labelLarge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RateSourceOption(
+                    label = "Actual transfer",
+                    source = IncomeManualRateSource.ACTUAL_TRANSFER,
+                    uiState = uiState,
+                    onChanged = onManualRateSourceChanged
+                )
+                RateSourceOption(
+                    label = "Reference",
+                    source = IncomeManualRateSource.REFERENCE,
+                    uiState = uiState,
+                    onChanged = onManualRateSourceChanged
+                )
+            }
+            Button(
+                onClick = onSelectManualRateDate,
+                enabled = !uiState.isSaving,
+                modifier = Modifier.testTag("income-manual-rate-date")
+            ) {
+                Text("Rate date: ${uiState.manualRateDate ?: "Select date"}")
+            }
+        }
+
+        uiState.errors.rate?.takeIf {
+            uiState.selectedRateMode != IncomeRateSelectionMode.MANUAL
+        }?.let { error ->
+            Text(error, color = MaterialTheme.colorScheme.error)
+        }
+
+        uiState.estimatedMoney?.let { money ->
+            Column(
+                modifier = Modifier.testTag("income-conversion-preview"),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text("Selected rate: ${money.rateLkrPerUnitDecimal} LKR/USD")
+                Text("Converted amount: LKR ${formatMinorUnits(money.baseAmountMinor)}")
+                Text("Rate source: ${money.rateSource.displayName}")
+                Text("Rate date: ${money.rateDate}")
+            }
+        }
+    }
+}
+
+@Composable
+private fun RateModeOption(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    tag: String,
+    onClick: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(
+            selected = selected,
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier.testTag(tag)
+        )
+        Text(label)
+    }
+}
+
+@Composable
+private fun RateSourceOption(
+    label: String,
+    source: IncomeManualRateSource,
+    uiState: IncomeFormUiState,
+    onChanged: (IncomeManualRateSource) -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(
+            selected = uiState.manualRateSource == source,
+            onClick = { onChanged(source) },
+            enabled = !uiState.isSaving,
+            modifier = Modifier.testTag("income-manual-source-${source.name}")
+        )
+        Text(label)
+    }
+}
+
+private val RateSource.displayName: String
+    get() = when (this) {
+        RateSource.LKR_FIXED -> "LKR fixed"
+        RateSource.MANUAL_TRANSFER -> "Manual transfer"
+        RateSource.MANUAL_REFERENCE -> "Manual reference"
+        RateSource.EXCHANGE_RATE_API_REFERENCE -> "Automatic API reference"
+    }
+
+private fun formatMinorUnits(value: Long): String =
+    BigDecimal.valueOf(value, 2).toPlainString()
 
 private val IncomeSource.displayName: String
     get() = when (this) {

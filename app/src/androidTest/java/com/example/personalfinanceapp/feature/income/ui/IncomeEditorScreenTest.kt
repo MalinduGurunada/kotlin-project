@@ -20,8 +20,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.personalfinanceapp.core.model.Income
 import com.example.personalfinanceapp.core.model.IncomeEntryKind
 import com.example.personalfinanceapp.core.model.IncomeSource
+import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.PnlDirection
+import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.core.money.MoneyConverter
+import com.example.personalfinanceapp.feature.income.rate.IncomeManualRateSource
+import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionMode
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -42,7 +46,9 @@ class IncomeEditorScreenTest {
         setEditor()
 
         composeRule.onNodeWithText("Add Income").assertIsDisplayed()
-        composeRule.onNodeWithText("All amounts in this form are recorded in LKR.")
+        composeRule.onNodeWithText(
+            "Choose LKR or USD. USD values are stored with their exchange-rate snapshot."
+        )
             .assertIsDisplayed()
         composeRule.onNodeWithTag("income-source").assertIsDisplayed()
         composeRule.onNodeWithTag("income-amount").performTextInput("1250.50")
@@ -155,6 +161,83 @@ class IncomeEditorScreenTest {
         assertTrue(backed)
     }
 
+    @Test
+    fun automaticUsdStateShowsReferenceDetailsAndExactPreview() {
+        val money = usdMoney("125.50", "305.25", RateSource.EXCHANGE_RATE_API_REFERENCE)
+        setEditor(
+            addState().copy(
+                selectedCurrency = CurrencyCode.USD,
+                selectedRateMode = IncomeRateSelectionMode.AUTOMATIC,
+                amountText = "125.50",
+                estimatedMoney = money
+            )
+        )
+
+        composeRule.onNodeWithTag("income-usd-rate-controls").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(
+            "Automatic rates are reference suggestions and may differ from your transfer rate."
+        ).assertIsDisplayed()
+        composeRule.onNodeWithText("Selected rate: 305.25 LKR/USD").assertIsDisplayed()
+        composeRule.onNodeWithText("Converted amount: LKR 38308.88").assertIsDisplayed()
+        composeRule.onNodeWithText("Rate source: Automatic API reference").assertIsDisplayed()
+    }
+
+    @Test
+    fun automaticFailureOffersManualFallbackAndBlocksSave() {
+        setEditor(
+            addState().copy(
+                selectedCurrency = CurrencyCode.USD,
+                selectedRateMode = IncomeRateSelectionMode.AUTOMATIC,
+                amountText = "10",
+                automaticRateError = "Unable to load the USD/LKR reference rate.",
+                estimatedMoney = null
+            )
+        )
+
+        composeRule.onNodeWithTag("income-rate-network-error").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("income-rate-manual-fallback").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("income-manual-rate").assertIsDisplayed()
+        composeRule.onNodeWithTag("income-save").assertIsNotEnabled()
+    }
+
+    @Test
+    fun automaticUsdLoadingShowsProgressAndBlocksSave() {
+        setEditor(
+            addState().copy(
+                selectedCurrency = CurrencyCode.USD,
+                selectedRateMode = IncomeRateSelectionMode.AUTOMATIC,
+                amountText = "10",
+                isLoadingAutomaticRate = true,
+                estimatedMoney = null
+            )
+        )
+
+        composeRule.onNodeWithTag("income-rate-loading").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("income-save").assertIsNotEnabled()
+    }
+
+    @Test
+    fun manualUsdModeShowsRateSourceDateAndValidation() {
+        setEditor(
+            addState().copy(
+                selectedCurrency = CurrencyCode.USD,
+                selectedRateMode = IncomeRateSelectionMode.MANUAL,
+                amountText = "10",
+                manualRateText = "0",
+                manualRateSource = IncomeManualRateSource.REFERENCE,
+                manualRateDate = DATE,
+                rateValidationError = "Exchange rate must be greater than zero"
+            )
+        )
+
+        composeRule.onNodeWithTag("income-manual-rate").performScrollTo()
+            .assertTextContains("0")
+        composeRule.onNodeWithText("Exchange rate must be greater than zero").assertIsDisplayed()
+        composeRule.onNodeWithTag("income-manual-source-REFERENCE").assertIsDisplayed()
+        composeRule.onNodeWithText("Rate date: $DATE").assertIsDisplayed()
+        composeRule.onNodeWithTag("income-save").assertIsNotEnabled()
+    }
+
     private fun setEditor(
         initialState: IncomeFormUiState = addState(),
         onBack: () -> Unit = {},
@@ -188,6 +271,12 @@ class IncomeEditorScreenTest {
                     },
                     onAmountChanged = { state = state.copy(amountText = it) },
                     onDateChanged = { state = state.copy(transactionDate = it) },
+                    onCurrencyChanged = { state = state.copy(selectedCurrency = it) },
+                    onRateModeChanged = { state = state.copy(selectedRateMode = it) },
+                    onManualRateChanged = { state = state.copy(manualRateText = it) },
+                    onManualRateSourceChanged = { state = state.copy(manualRateSource = it) },
+                    onManualRateDateChanged = { state = state.copy(manualRateDate = it) },
+                    onRefreshAutomaticRate = {},
                     onProjectReferenceChanged = { state = state.copy(projectReference = it) },
                     onAssetSymbolChanged = { state = state.copy(assetSymbol = it) },
                     onPnlDirectionChanged = { state = state.copy(pnlDirection = it) },
@@ -219,6 +308,17 @@ class IncomeEditorScreenTest {
         money = MoneyConverter.fromLkr("500", DATE).getOrThrow(),
         occurredDate = DATE
     )
+
+    private fun usdMoney(
+        amount: String,
+        rate: String,
+        source: RateSource
+    ) = MoneyConverter.fromUsd(
+        amountInput = amount,
+        rateLkrPerUsdInput = rate,
+        rateSource = source,
+        rateDate = DATE
+    ).getOrThrow()
 
     private companion object {
         val DATE: LocalDate = LocalDate.of(2026, 10, 24)

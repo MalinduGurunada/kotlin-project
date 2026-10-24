@@ -37,7 +37,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.personalfinanceapp.core.model.Income
-import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.PnlDirection
 
@@ -334,14 +333,6 @@ private fun IncomeItemCard(
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
-                if (income.money.originalCurrency == CurrencyCode.USD) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "USD editing is not available yet.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
@@ -356,16 +347,9 @@ private fun IncomeItemCard(
                 )
                 TextButton(
                     onClick = onEdit,
-                    enabled = income.money.originalCurrency == CurrencyCode.LKR,
                     modifier = Modifier.testTag("edit-income-${income.id}")
                 ) {
-                    Text(
-                        if (income.money.originalCurrency == CurrencyCode.LKR) {
-                            "Edit"
-                        } else {
-                            "Edit unavailable"
-                        }
-                    )
+                    Text("Edit")
                 }
             }
         }

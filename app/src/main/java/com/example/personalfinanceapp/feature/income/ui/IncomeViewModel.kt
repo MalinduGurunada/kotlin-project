@@ -8,13 +8,20 @@ import com.example.personalfinanceapp.core.model.IncomeEntryKind
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.UserId
-import com.example.personalfinanceapp.core.money.MoneyConverter
+import com.example.personalfinanceapp.core.money.MoneyValidator
 import com.example.personalfinanceapp.feature.auth.AuthRepository
+import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateException
+import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateRepository
 import com.example.personalfinanceapp.feature.income.IncomeRepository
 import com.example.personalfinanceapp.feature.income.IncomeValidator
+import com.example.personalfinanceapp.feature.income.rate.IncomeManualRateSource
+import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionCoordinator
+import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionMode
+import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,6 +48,7 @@ import javax.inject.Inject
 class IncomeViewModel @Inject constructor(
     private val incomeRepository: IncomeRepository,
     private val authRepository: AuthRepository,
+    private val exchangeRateRepository: ExchangeRateRepository,
     private val clock: Clock
 ) : ViewModel() {
 
@@ -49,6 +57,9 @@ class IncomeViewModel @Inject constructor(
     private val retryVersion = MutableStateFlow(0L)
     private val authenticatedUserId = MutableStateFlow<UserId?>(null)
     private var authGeneration = 0L
+    private var rateCoordinator: IncomeRateSelectionCoordinator? = null
+    private var rateStateJob: Job? = null
+    private var rateDraftId: String? = null
 
     private val _formState = MutableStateFlow<IncomeFormUiState?>(null)
     val formState: StateFlow<IncomeFormUiState?> = _formState.asStateFlow()
@@ -66,6 +77,7 @@ class IncomeViewModel @Inject constructor(
                         val hadActiveDraft = _formState.value != null
                         authGeneration = nextGeneration(authGeneration)
                         authenticatedUserId.value = userId
+                        closeRateCoordinator()
                         _formState.value = null
                         if (previousUserId != null && hadActiveDraft) {
                             _userMessage.value = if (userId == null) {
@@ -112,18 +124,25 @@ class IncomeViewModel @Inject constructor(
             return
         }
 
+        val draftId = UUID.randomUUID().toString()
+        val transactionDate = LocalDate.now(clock)
         _formState.value = IncomeFormUiState(
             mode = IncomeEditorMode.ADD,
-            draftId = UUID.randomUUID().toString(),
+            draftId = draftId,
             ownerId = ownerId,
             originalIncome = null,
             selectedSource = IncomeSource.SALARY,
             amountText = "",
-            transactionDate = LocalDate.now(clock),
+            transactionDate = transactionDate,
             projectReference = "",
             assetSymbol = "",
             pnlDirection = null,
             note = ""
+        )
+        startRateCoordinator(
+            draftId = draftId,
+            transactionDate = transactionDate,
+            amountInput = ""
         )
         _userMessage.value = null
     }
@@ -134,11 +153,6 @@ class IncomeViewModel @Inject constructor(
             _userMessage.value = AUTH_REQUIRED_MESSAGE
             return
         }
-        if (income.money.originalCurrency != CurrencyCode.LKR) {
-            _userMessage.value = USD_EDIT_UNAVAILABLE_MESSAGE
-            return
-        }
-
         _formState.value = IncomeFormUiState(
             mode = IncomeEditorMode.EDIT,
             draftId = income.id,
@@ -152,11 +166,18 @@ class IncomeViewModel @Inject constructor(
             pnlDirection = income.pnlDirection,
             note = income.note.orEmpty()
         )
+        startRateCoordinator(
+            draftId = income.id,
+            transactionDate = income.occurredDate,
+            amountInput = income.money.originalAmountDecimal,
+            existingMoney = income.money
+        )
         _userMessage.value = null
     }
 
     fun closeIncomeEditor() {
         if (_formState.value?.isSaving == true) return
+        closeRateCoordinator()
         _formState.value = null
     }
 
@@ -175,21 +196,45 @@ class IncomeViewModel @Inject constructor(
         )
     }
 
-    fun updateIncomeAmount(amount: String) = updateForm { current ->
-        current.copy(
-            amountText = amount,
-            errors = current.errors.copy(amount = null, form = null),
-            saveError = null
-        )
+    fun updateIncomeAmount(amount: String) {
+        updateRateSelection { coordinator -> coordinator.updateAmountInput(amount) }
+        updateForm { current ->
+            current.copy(
+                amountText = amount,
+                errors = current.errors.copy(amount = null, rate = null, form = null),
+                saveError = null
+            )
+        }
     }
 
-    fun updateIncomeDate(date: LocalDate) = updateForm { current ->
-        current.copy(
-            transactionDate = date,
-            errors = current.errors.copy(transactionDate = null, form = null),
-            saveError = null
-        )
+    fun updateIncomeDate(date: LocalDate) {
+        updateRateSelection { coordinator -> coordinator.updateTransactionDate(date) }
+        updateForm { current ->
+            current.copy(
+                transactionDate = date,
+                errors = current.errors.copy(transactionDate = null, rate = null, form = null),
+                saveError = null
+            )
+        }
     }
+
+    fun updateIncomeCurrency(currency: CurrencyCode) =
+        updateRateSelection { coordinator -> coordinator.selectCurrency(currency) }
+
+    fun updateRateMode(mode: IncomeRateSelectionMode) =
+        updateRateSelection { coordinator -> coordinator.selectRateMode(mode) }
+
+    fun updateManualRate(rate: String) =
+        updateRateSelection { coordinator -> coordinator.updateManualRateInput(rate) }
+
+    fun updateManualRateSource(source: IncomeManualRateSource) =
+        updateRateSelection { coordinator -> coordinator.selectManualRateSource(source) }
+
+    fun updateManualRateDate(date: LocalDate) =
+        updateRateSelection { coordinator -> coordinator.selectManualRateDate(date) }
+
+    fun refreshAutomaticRate() =
+        updateRateSelection { coordinator -> coordinator.requestAutomaticRate() }
 
     fun updateProjectReference(reference: String) = updateForm { current ->
         current.copy(projectReference = reference, saveError = null)
@@ -259,6 +304,7 @@ class IncomeViewModel @Inject constructor(
 
             result.fold(
                 onSuccess = {
+                    closeRateCoordinator()
                     _formState.value = null
                     _userMessage.value = if (draft.mode == IncomeEditorMode.ADD) {
                         INCOME_ADDED_MESSAGE
@@ -286,6 +332,89 @@ class IncomeViewModel @Inject constructor(
         }
     }
 
+    private fun updateRateSelection(
+        action: (IncomeRateSelectionCoordinator) -> Unit
+    ) {
+        val draft = _formState.value ?: return
+        if (draft.isSaving || rateDraftId != draft.draftId) return
+        val coordinator = rateCoordinator ?: return
+        action(coordinator)
+        applyRateState(draft.draftId, coordinator.state.value)
+        _formState.update { current ->
+            if (current?.draftId == draft.draftId) {
+                current.copy(
+                    errors = current.errors.copy(rate = null, form = null),
+                    saveError = null
+                )
+            } else {
+                current
+            }
+        }
+    }
+
+    private fun startRateCoordinator(
+        draftId: String,
+        transactionDate: LocalDate,
+        amountInput: String,
+        existingMoney: com.example.personalfinanceapp.core.model.Money? = null
+    ) {
+        closeRateCoordinator()
+        val coordinator = IncomeRateSelectionCoordinator(
+            exchangeRateRepository = exchangeRateRepository,
+            clock = clock,
+            parentScope = viewModelScope,
+            initialTransactionDate = transactionDate
+        )
+        rateCoordinator = coordinator
+        rateDraftId = draftId
+
+        if (existingMoney?.originalCurrency == CurrencyCode.USD) {
+            coordinator.hydrateUsdMoney(existingMoney, transactionDate).getOrThrow()
+        } else if (amountInput.isNotBlank()) {
+            coordinator.updateAmountInput(amountInput)
+        }
+        applyRateState(draftId, coordinator.state.value)
+
+        rateStateJob = viewModelScope.launch {
+            coordinator.state.collect { state ->
+                if (rateCoordinator === coordinator && rateDraftId == draftId) {
+                    applyRateState(draftId, state)
+                }
+            }
+        }
+    }
+
+    private fun applyRateState(
+        draftId: String,
+        state: IncomeRateSelectionState
+    ) {
+        _formState.update { current ->
+            if (current?.draftId != draftId) return@update current
+            current.copy(
+                amountText = state.amountInput,
+                transactionDate = state.transactionDate,
+                selectedCurrency = state.selectedCurrency,
+                selectedRateMode = state.selectedRateMode,
+                manualRateText = state.manualRateInput,
+                manualRateSource = state.manualRateSource,
+                manualRateDate = state.manualRateDate,
+                estimatedMoney = state.estimatedMoney,
+                isLoadingAutomaticRate = state.isLoadingAutomaticRate,
+                amountValidationError = state.validationError?.takeIf { it.isAmountError() },
+                rateValidationError = state.validationError?.takeUnless { it.isAmountError() },
+                automaticRateError = state.automaticRateError?.toUserMessage()
+            )
+        }
+    }
+
+    private fun closeRateCoordinator() {
+        rateStateJob?.cancel()
+        rateStateJob = null
+        rateCoordinator?.close()
+        rateCoordinator = null
+        rateDraftId = null
+    }
+
     private fun prepareIncome(draft: IncomeFormUiState): PreparedIncome {
         var errors = IncomeFormErrors()
         val occurredDate = draft.transactionDate
@@ -296,21 +425,30 @@ class IncomeViewModel @Inject constructor(
             errors = errors.copy(pnlDirection = "Select gain or loss")
         }
 
-        val money = if (occurredDate == null) {
+        val amountFailure = MoneyValidator.parsePositiveAmount(draft.amountText).exceptionOrNull()
+        if (amountFailure != null) {
+            errors = errors.copy(amount = amountFailure.message ?: "Enter a valid amount")
+        }
+
+        val coordinator = rateCoordinator
+            ?.takeIf { rateDraftId == draft.draftId }
+        val moneyResult = if (occurredDate == null || amountFailure != null || coordinator == null) {
             null
         } else {
-            MoneyConverter.fromLkr(
-                amountInput = draft.amountText,
-                transactionDate = occurredDate
-            ).fold(
-                onSuccess = { it },
-                onFailure = { failure ->
-                    errors = errors.copy(
-                        amount = failure.message ?: "Enter a valid amount"
-                    )
-                    null
+            coordinator.prepareMoneySnapshot()
+        }
+        val money = moneyResult?.getOrNull()
+        moneyResult?.exceptionOrNull()?.let { failure ->
+            errors = errors.copy(
+                rate = if (failure is ExchangeRateException) {
+                    failure.toUserMessage()
+                } else {
+                    failure.message ?: "Enter valid exchange-rate details"
                 }
             )
+        }
+        if (coordinator == null) {
+            errors = errors.copy(form = "Income conversion is unavailable. Reopen the editor and try again.")
         }
 
         if (errors.hasErrors || occurredDate == null || money == null) {
@@ -460,8 +598,6 @@ class IncomeViewModel @Inject constructor(
             "The income editor was closed because you signed out."
         const val ACCOUNT_CHANGED_MESSAGE =
             "The income editor was closed because the account changed."
-        const val USD_EDIT_UNAVAILABLE_MESSAGE =
-            "USD income editing will be available in a later update. This record was not changed."
         const val SAVE_ERROR_MESSAGE =
             "Unable to save income. Check your connection and try again."
         const val INCOME_ADDED_MESSAGE = "Income saved."
@@ -478,4 +614,26 @@ class IncomeViewModel @Inject constructor(
             )
         }
     }
+
+    override fun onCleared() {
+        closeRateCoordinator()
+        super.onCleared()
+    }
 }
+
+private fun ExchangeRateException.toUserMessage(): String = when (this) {
+    is ExchangeRateException.NetworkFailure ->
+        "Unable to load the USD/LKR reference rate. Try again or enter a manual rate."
+    is ExchangeRateException.Timeout ->
+        "The USD/LKR rate request timed out. Try again or enter a manual rate."
+    is ExchangeRateException.RateLimited ->
+        "The rate service is temporarily busy. Try again later or enter a manual rate."
+    is ExchangeRateException.StaleQuote ->
+        "The USD/LKR reference rate expired. Refresh it or enter a manual rate."
+    else ->
+        "The USD/LKR reference rate is unavailable. Try again or enter a manual rate."
+}
+
+private fun String.isAmountError(): Boolean =
+    startsWith("Amount") || startsWith("Enter a valid amount") ||
+        startsWith("Converted amount")
