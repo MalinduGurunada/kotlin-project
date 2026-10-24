@@ -16,7 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -26,6 +26,9 @@ import com.example.personalfinanceapp.feature.auth.ui.PasswordResetScreen
 import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseListScreen
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseViewModel
+import com.example.personalfinanceapp.feature.income.ui.IncomeListScreen
+import com.example.personalfinanceapp.feature.income.ui.IncomeViewModel
+import com.example.personalfinanceapp.feature.income.ui.shiftIncomeMonth
 
 @Composable
 fun AppNavHost(
@@ -120,6 +123,16 @@ fun AppNavHost(
 
                 Button(
                     onClick = {
+                        navController.navigate(IncomeList)
+                    }
+                ) {
+                    Text("Manage Income")
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
                         authViewModel.signOut()
                     }
                 ) {
@@ -137,6 +150,37 @@ fun AppNavHost(
                 onSaveExpense = expenseViewModel::saveExpense,
                 onDeleteExpense = expenseViewModel::deleteExpense,
                 onClearError = expenseViewModel::clearError
+            )
+        }
+
+        composable<IncomeList> {
+            val incomeViewModel: IncomeViewModel = hiltViewModel()
+            val incomeUiState by incomeViewModel.uiState.collectAsState()
+            val previousMonth = shiftIncomeMonth(incomeUiState.dateRange, -1L)
+            val nextMonth = shiftIncomeMonth(incomeUiState.dateRange, 1L)
+
+            IncomeListScreen(
+                uiState = incomeUiState,
+                onBack = { navController.popBackStack() },
+                onRetry = incomeViewModel::retryObservation,
+                onPreviousMonth = {
+                    previousMonth?.let { range ->
+                        incomeViewModel.setDateRange(
+                            range.startDate,
+                            range.endDateExclusive
+                        )
+                    }
+                },
+                onNextMonth = {
+                    nextMonth?.let { range ->
+                        incomeViewModel.setDateRange(
+                            range.startDate,
+                            range.endDateExclusive
+                        )
+                    }
+                },
+                canNavigateToPreviousMonth = previousMonth != null,
+                canNavigateToNextMonth = nextMonth != null
             )
         }
     }
