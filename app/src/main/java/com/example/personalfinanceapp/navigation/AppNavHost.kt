@@ -27,6 +27,7 @@ import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseListScreen
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseViewModel
 import com.example.personalfinanceapp.feature.income.ui.IncomeListScreen
+import com.example.personalfinanceapp.feature.income.ui.IncomeEditorScreen
 import com.example.personalfinanceapp.feature.income.ui.IncomeViewModel
 import com.example.personalfinanceapp.feature.income.ui.shiftIncomeMonth
 
@@ -156,32 +157,54 @@ fun AppNavHost(
         composable<IncomeList> {
             val incomeViewModel: IncomeViewModel = hiltViewModel()
             val incomeUiState by incomeViewModel.uiState.collectAsState()
+            val incomeFormState by incomeViewModel.formState.collectAsState()
+            val incomeUserMessage by incomeViewModel.userMessage.collectAsState()
             val previousMonth = shiftIncomeMonth(incomeUiState.dateRange, -1L)
             val nextMonth = shiftIncomeMonth(incomeUiState.dateRange, 1L)
 
-            IncomeListScreen(
-                uiState = incomeUiState,
-                onBack = { navController.popBackStack() },
-                onRetry = incomeViewModel::retryObservation,
-                onPreviousMonth = {
-                    previousMonth?.let { range ->
-                        incomeViewModel.setDateRange(
-                            range.startDate,
-                            range.endDateExclusive
-                        )
-                    }
-                },
-                onNextMonth = {
-                    nextMonth?.let { range ->
-                        incomeViewModel.setDateRange(
-                            range.startDate,
-                            range.endDateExclusive
-                        )
-                    }
-                },
-                canNavigateToPreviousMonth = previousMonth != null,
-                canNavigateToNextMonth = nextMonth != null
-            )
+            val formState = incomeFormState
+            if (formState != null) {
+                IncomeEditorScreen(
+                    uiState = formState,
+                    onBack = incomeViewModel::closeIncomeEditor,
+                    onSourceChanged = incomeViewModel::updateIncomeSource,
+                    onAmountChanged = incomeViewModel::updateIncomeAmount,
+                    onDateChanged = incomeViewModel::updateIncomeDate,
+                    onProjectReferenceChanged = incomeViewModel::updateProjectReference,
+                    onAssetSymbolChanged = incomeViewModel::updateAssetSymbol,
+                    onPnlDirectionChanged = incomeViewModel::updatePnlDirection,
+                    onNoteChanged = incomeViewModel::updateIncomeNote,
+                    onSave = incomeViewModel::saveIncome
+                )
+            } else {
+                IncomeListScreen(
+                    uiState = incomeUiState,
+                    onBack = { navController.popBackStack() },
+                    onRetry = incomeViewModel::retryObservation,
+                    onPreviousMonth = {
+                        previousMonth?.let { range ->
+                            incomeViewModel.setDateRange(
+                                range.startDate,
+                                range.endDateExclusive
+                            )
+                        }
+                    },
+                    onNextMonth = {
+                        nextMonth?.let { range ->
+                            incomeViewModel.setDateRange(
+                                range.startDate,
+                                range.endDateExclusive
+                            )
+                        }
+                    },
+                    onAddIncome = incomeViewModel::openNewIncome,
+                    onEditIncome = incomeViewModel::openIncomeForEdit,
+                    userMessage = incomeUserMessage,
+                    onUserMessageShown = incomeViewModel::clearUserMessage,
+                    canNavigateToPreviousMonth = previousMonth != null,
+                    canNavigateToNextMonth = nextMonth != null
+                )
+            }
         }
     }
 }

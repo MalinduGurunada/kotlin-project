@@ -38,10 +38,36 @@ class FirestoreIncomeRepository internal constructor(
         endDateExclusive: LocalDate
     ): Flow<List<Income>> = observer.observeIncomes(startDate, endDateExclusive)
 
-    override suspend fun saveIncome(income: Income): Result<Unit> = repositoryResult {
+    override suspend fun saveIncome(income: Income): Result<Unit> =
+        saveIncomeInternal(income = income, expectedOwnerId = null)
+
+    override suspend fun saveIncomeForOwner(
+        expectedOwnerId: UserId,
+        income: Income
+    ): Result<Unit> {
+        if (expectedOwnerId.isBlank()) {
+            return Result.failure(
+                IllegalArgumentException("Expected income owner cannot be empty")
+            )
+        }
+        return saveIncomeInternal(
+            income = income,
+            expectedOwnerId = expectedOwnerId
+        )
+    }
+
+    private suspend fun saveIncomeInternal(
+        income: Income,
+        expectedOwnerId: UserId?
+    ): Result<Unit> = repositoryResult {
         IncomeValidator.validate(income).getOrThrow()
         val fields = IncomeFirestoreMapper.toFirestoreMap(income)
         val authenticatedUid = requireAuthenticatedUid()
+        if (expectedOwnerId != null) {
+            check(authenticatedUid == expectedOwnerId) {
+                "Authenticated user changed before income could be saved"
+            }
+        }
 
         writeGateway.setIncome(
             authenticatedUid = authenticatedUid,

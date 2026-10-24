@@ -1,6 +1,7 @@
 package com.example.personalfinanceapp.feature.income.ui
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -123,12 +124,57 @@ class IncomeListScreenTest {
         assertTrue(next)
     }
 
+    @Test
+    fun addAndLkrEditActionsWorkWhileUsdEditHasClearExplanation() {
+        var added = false
+        var editedId: String? = null
+        val incomes = listOf(
+            income(
+                id = "lkr",
+                source = IncomeSource.SALARY,
+                amount = "500.00",
+                currency = CurrencyCode.LKR
+            ),
+            income(
+                id = "usd",
+                source = IncomeSource.ADSENSE,
+                amount = "25.00",
+                currency = CurrencyCode.USD
+            )
+        )
+        setContent(
+            uiState = state(
+                status = IncomeObservationStatus.SUCCESS,
+                incomes = incomes,
+                totalLkrMinor = 500_00L
+            ),
+            onAddIncome = { added = true },
+            onEditIncome = { editedId = it.id }
+        )
+
+        composeRule.onNodeWithTag("add-income").performClick()
+        composeRule.onNodeWithTag("edit-income-lkr", useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
+        composeRule.onNodeWithText(
+            "USD editing is not available yet.",
+            useUnmergedTree = true
+        ).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("edit-income-usd", useUnmergedTree = true)
+            .assertIsNotEnabled()
+
+        assertTrue(added)
+        assertTrue(editedId == "lkr")
+    }
+
     private fun setContent(
         uiState: IncomeUiState,
         onBack: () -> Unit = {},
         onRetry: () -> Unit = {},
         onPreviousMonth: () -> Unit = {},
-        onNextMonth: () -> Unit = {}
+        onNextMonth: () -> Unit = {},
+        onAddIncome: () -> Unit = {},
+        onEditIncome: (Income) -> Unit = {}
     ) {
         composeRule.setContent {
             PersonalFinanceAppTheme(dynamicColor = false) {
@@ -137,7 +183,9 @@ class IncomeListScreenTest {
                     onBack = onBack,
                     onRetry = onRetry,
                     onPreviousMonth = onPreviousMonth,
-                    onNextMonth = onNextMonth
+                    onNextMonth = onNextMonth,
+                    onAddIncome = onAddIncome,
+                    onEditIncome = onEditIncome
                 )
             }
         }

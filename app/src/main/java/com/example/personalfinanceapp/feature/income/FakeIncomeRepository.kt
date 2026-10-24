@@ -3,6 +3,7 @@ package com.example.personalfinanceapp.feature.income
 
 import com.example.personalfinanceapp.core.model.DocumentId
 import com.example.personalfinanceapp.core.model.Income
+import com.example.personalfinanceapp.core.model.UserId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
@@ -40,6 +41,22 @@ class FakeIncomeRepository : IncomeRepository {
     }
 
     override suspend fun saveIncome(
+        income: Income
+    ): Result<Unit> = saveValidatedIncome(income)
+
+    override suspend fun saveIncomeForOwner(
+        expectedOwnerId: UserId,
+        income: Income
+    ): Result<Unit> {
+        if (expectedOwnerId.isBlank()) {
+            return Result.failure(
+                IllegalArgumentException("Expected income owner cannot be empty")
+            )
+        }
+        return saveValidatedIncome(income)
+    }
+
+    private suspend fun saveValidatedIncome(
         income: Income
     ): Result<Unit> {
         val validationResult = IncomeValidator.validate(income)

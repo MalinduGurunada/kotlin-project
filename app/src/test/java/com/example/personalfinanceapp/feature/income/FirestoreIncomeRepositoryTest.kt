@@ -57,7 +57,7 @@ class FirestoreIncomeRepositoryTest {
     }
 
     @Test
-    fun authenticatedSaveUsesCapturedUidStableIdAndCanonicalPayload() = runTest {
+    fun ownerBoundSaveUsesExpectedUserStableIdAndCanonicalPayload() = runTest {
         val authRepository = TestAuthRepository("user-a")
         val gateway = RecordingWriteGateway()
         val repository = repository(authRepository, gateway)
@@ -68,13 +68,72 @@ class FirestoreIncomeRepositoryTest {
             note = "October salary"
         )
 
-        val result = repository.saveIncome(income)
+        val result = repository.saveIncomeForOwner("user-a", income)
 
         assertSuccess(result)
         val call = gateway.setCalls.single()
         assertEquals("user-a", call.authenticatedUid)
         assertEquals("stable-income-id", call.incomeId)
         assertEquals(IncomeFirestoreMapper.toFirestoreMap(income), call.fields)
+    }
+
+    @Test
+    fun ownerChangeBeforeAuthenticationCaptureRejectsWithoutWritingToNewUser() = runTest {
+        val captureStarted = CompletableDeferred<Unit>()
+        val releaseCapture = CompletableDeferred<Unit>()
+        var uidAtCapture: UserId? = "user-a"
+        val authRepository = TestAuthRepository(
+            authFlow = flow {
+                captureStarted.complete(Unit)
+                releaseCapture.await()
+                emit(uidAtCapture)
+            }
+        )
+        val gateway = RecordingWriteGateway()
+        val repository = repository(authRepository, gateway)
+        val income = lkrIncome("stable-income-id")
+        val pendingSave = async {
+            repository.saveIncomeForOwner("user-a", income)
+        }
+
+        captureStarted.await()
+        uidAtCapture = "user-b"
+        releaseCapture.complete(Unit)
+        val result = pendingSave.await()
+
+        assertTrue(result.exceptionOrNull() is IllegalStateException)
+        assertTrue(gateway.setCalls.isEmpty())
+        assertFalse(gateway.documents.containsKey("user-b" to income.id))
+    }
+
+    @Test
+    fun signedOutOwnerBoundSaveRejectsWithoutPersistenceAttempt() = runTest {
+        val gateway = RecordingWriteGateway()
+        val repository = repository(TestAuthRepository(null), gateway)
+
+        val result = repository.saveIncomeForOwner("user-a", lkrIncome("income-a"))
+
+        assertTrue(result.exceptionOrNull() is IllegalStateException)
+        assertTrue(gateway.setCalls.isEmpty())
+        assertTrue(gateway.documents.isEmpty())
+    }
+
+    @Test
+    fun ownerValidationFailureCanRetryWithTheSameStableId() = runTest {
+        val authRepository = TestAuthRepository("user-b")
+        val gateway = RecordingWriteGateway()
+        val repository = repository(authRepository, gateway)
+        val income = lkrIncome("stable-retry-id")
+
+        val rejected = repository.saveIncomeForOwner("user-a", income)
+        authRepository.setUid("user-a")
+        val retried = repository.saveIncomeForOwner("user-a", income)
+
+        assertTrue(rejected.exceptionOrNull() is IllegalStateException)
+        assertSuccess(retried)
+        assertEquals(listOf("stable-retry-id"), gateway.setCalls.map { it.incomeId })
+        assertTrue(gateway.documents.containsKey("user-a" to "stable-retry-id"))
+        assertFalse(gateway.documents.containsKey("user-b" to "stable-retry-id"))
     }
 
     @Test
@@ -116,7 +175,7 @@ class FirestoreIncomeRepositoryTest {
         gateway.beforeSet = { releaseWrite.await() }
         val repository = repository(authRepository, gateway)
         val pendingSave = async {
-            repository.saveIncome(lkrIncome("income-a"))
+            repository.saveIncomeForOwner("user-a", lkrIncome("income-a"))
         }
 
         runCurrent()

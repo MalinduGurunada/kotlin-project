@@ -472,6 +472,12 @@ class IncomeViewModelTest {
         override suspend fun saveIncome(income: Income): Result<Unit> =
             Result.failure(UnsupportedOperationException("Not used by this test"))
 
+        override suspend fun saveIncomeForOwner(
+            expectedOwnerId: UserId,
+            income: Income
+        ): Result<Unit> =
+            Result.failure(UnsupportedOperationException("Not used by this test"))
+
         override suspend fun deleteIncome(id: DocumentId): Result<Unit> =
             Result.failure(UnsupportedOperationException("Not used by this test"))
 

@@ -17,13 +17,18 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -32,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.personalfinanceapp.core.model.Income
+import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.PnlDirection
 
@@ -43,9 +49,22 @@ fun IncomeListScreen(
     onRetry: () -> Unit,
     onPreviousMonth: () -> Unit,
     onNextMonth: () -> Unit,
+    onAddIncome: () -> Unit = {},
+    onEditIncome: (Income) -> Unit = {},
+    userMessage: String? = null,
+    onUserMessageShown: () -> Unit = {},
     canNavigateToPreviousMonth: Boolean = true,
     canNavigateToNextMonth: Boolean = true
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(userMessage) {
+        userMessage?.let { message ->
+            snackbarHostState.showSnackbar(message)
+            onUserMessageShown()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -61,7 +80,16 @@ fun IncomeListScreen(
                     navigationIconContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             )
-        }
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = onAddIncome,
+                modifier = Modifier.testTag("add-income")
+            ) {
+                Text("Add Income")
+            }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -83,7 +111,10 @@ fun IncomeListScreen(
                     message = uiState.errorMessage.orEmpty(),
                     onRetry = onRetry
                 )
-                IncomeObservationStatus.SUCCESS -> SuccessContent(uiState)
+                IncomeObservationStatus.SUCCESS -> SuccessContent(
+                    uiState = uiState,
+                    onEditIncome = onEditIncome
+                )
             }
         }
     }
@@ -191,7 +222,10 @@ private fun ErrorContent(
 }
 
 @Composable
-private fun SuccessContent(uiState: IncomeUiState) {
+private fun SuccessContent(
+    uiState: IncomeUiState,
+    onEditIncome: (Income) -> Unit
+) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 16.dp),
@@ -204,7 +238,10 @@ private fun SuccessContent(uiState: IncomeUiState) {
             items = uiState.incomes,
             key = { income -> "income:${income.id}" }
         ) { income ->
-            IncomeItemCard(income)
+            IncomeItemCard(
+                income = income,
+                onEdit = { onEditIncome(income) }
+            )
         }
     }
 }
@@ -238,7 +275,10 @@ private fun IncomeSummary(totalLkrMinor: Long) {
 }
 
 @Composable
-private fun IncomeItemCard(income: Income) {
+private fun IncomeItemCard(
+    income: Income,
+    onEdit: () -> Unit
+) {
     val isCryptoLoss = income.source == IncomeSource.CRYPTO &&
         income.pnlDirection == PnlDirection.LOSS
     Card(
@@ -294,17 +334,40 @@ private fun IncomeItemCard(income: Income) {
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
-            }
-            Text(
-                text = formatOriginalAmount(income.money),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = if (isCryptoLoss) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.primary
+                if (income.money.originalCurrency == CurrencyCode.USD) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "USD editing is not available yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-            )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = formatOriginalAmount(income.money),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isCryptoLoss) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    }
+                )
+                TextButton(
+                    onClick = onEdit,
+                    enabled = income.money.originalCurrency == CurrencyCode.LKR,
+                    modifier = Modifier.testTag("edit-income-${income.id}")
+                ) {
+                    Text(
+                        if (income.money.originalCurrency == CurrencyCode.LKR) {
+                            "Edit"
+                        } else {
+                            "Edit unavailable"
+                        }
+                    )
+                }
+            }
         }
     }
 }

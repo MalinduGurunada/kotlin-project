@@ -3,6 +3,7 @@ package com.example.personalfinanceapp.feature.income
 
 import com.example.personalfinanceapp.core.model.DocumentId
 import com.example.personalfinanceapp.core.model.Income
+import com.example.personalfinanceapp.core.model.UserId
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
 
@@ -14,6 +15,11 @@ interface IncomeRepository {
     ): Flow<List<Income>>
 
     suspend fun saveIncome(
+        income: Income
+    ): Result<Unit>
+
+    suspend fun saveIncomeForOwner(
+        expectedOwnerId: UserId,
         income: Income
     ): Result<Unit>
 
