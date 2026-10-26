@@ -53,7 +53,7 @@ fun IncomeListScreen(
     onPreviousMonth: () -> Unit,
     onNextMonth: () -> Unit,
     onAddIncome: () -> Unit = {},
-    onEditIncome: (Income) -> Unit = {},
+    onEditIncome: (Income, UserId?) -> Unit = { _, _ -> },
     onDeleteIncome: (Income, UserId?) -> Unit = { _, _ -> },
     onCancelDelete: () -> Unit = {},
     onConfirmDelete: () -> Unit = {},
@@ -243,7 +243,7 @@ private fun ErrorContent(
 private fun SuccessContent(
     uiState: IncomeUiState,
     deletingIncomeId: String?,
-    onEditIncome: (Income) -> Unit,
+    onEditIncome: (Income, UserId?) -> Unit,
     onDeleteIncome: (Income, UserId?) -> Unit
 ) {
     LazyColumn(
@@ -261,7 +261,7 @@ private fun SuccessContent(
             IncomeItemCard(
                 income = income,
                 isDeleting = deletingIncomeId == income.id,
-                onEdit = { onEditIncome(income) },
+                onEdit = { onEditIncome(income, uiState.ownerId) },
                 onDelete = { onDeleteIncome(income, uiState.ownerId) }
             )
         }

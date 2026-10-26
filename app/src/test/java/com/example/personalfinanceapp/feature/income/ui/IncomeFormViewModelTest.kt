@@ -230,9 +230,7 @@ class IncomeFormViewModelTest {
             note = "Original note"
         )
 
-        viewModel.openIncomeForEdit(existing)
-
-        val draft = requireNotNull(viewModel.formState.value)
+        val draft = openExistingDraft(existing)
         assertEquals(IncomeEditorMode.EDIT, draft.mode)
         assertEquals(existing, draft.originalIncome)
         assertEquals("existing", draft.draftId)
@@ -245,7 +243,7 @@ class IncomeFormViewModelTest {
             projectReference = "old-project",
             receivableId = "receivable-7"
         )
-        viewModel.openIncomeForEdit(existing)
+        openExistingDraft(existing)
         viewModel.updateIncomeAmount("800")
         viewModel.updateProjectReference("new-project")
 
@@ -259,7 +257,7 @@ class IncomeFormViewModelTest {
 
     @Test
     fun `changing source removes stale source-specific metadata`() = runTest {
-        viewModel.openIncomeForEdit(
+        openExistingDraft(
             income(id = "crypto", source = IncomeSource.CRYPTO).copy(
                 pnlDirection = PnlDirection.GAIN,
                 assetSymbol = "ETH"
@@ -402,7 +400,7 @@ class IncomeFormViewModelTest {
     fun `existing USD metadata edit preserves exact historical money without network`() = runTest {
         val existing = usdIncome("usd-income")
 
-        viewModel.openIncomeForEdit(existing)
+        openExistingDraft(existing)
         viewModel.updateIncomeNote("Updated note")
         saveAndRun()
 
@@ -422,7 +420,7 @@ class IncomeFormViewModelTest {
             rateDate = TODAY.minusDays(10)
         ).getOrThrow()
         val existing = usdIncome("historical-api").copy(money = historicalMoney)
-        viewModel.openIncomeForEdit(existing)
+        openExistingDraft(existing)
 
         repeat(3) {
             viewModel.updateIncomeCurrency(CurrencyCode.USD)
@@ -441,7 +439,7 @@ class IncomeFormViewModelTest {
     @Test
     fun `existing USD amount change uses preserved rate and date`() = runTest {
         val existing = usdIncome("usd-income")
-        viewModel.openIncomeForEdit(existing)
+        openExistingDraft(existing)
 
         viewModel.updateIncomeAmount("125.00")
         saveAndRun()
@@ -512,7 +510,7 @@ class IncomeFormViewModelTest {
         )
         exchangeRateRepository.handler = { Result.success(quote("310")) }
 
-        viewModel.openIncomeForEdit(existing)
+        openExistingDraft(existing)
         assertEquals(0, exchangeRateRepository.requestCount)
         viewModel.updateIncomeDate(TODAY.plusDays(1))
         assertEquals(existing.money, viewModel.formState.value?.estimatedMoney)
@@ -547,6 +545,13 @@ class IncomeFormViewModelTest {
 
     private fun openNewDraft(): IncomeFormUiState {
         viewModel.openNewIncome()
+        return requireNotNull(viewModel.formState.value)
+    }
+
+    private fun openExistingDraft(income: Income): IncomeFormUiState {
+        repository.setObservedIncomes(listOf(income))
+        dispatcher.scheduler.runCurrent()
+        viewModel.openIncomeForEdit(income, USER_A)
         return requireNotNull(viewModel.formState.value)
     }
 
@@ -614,6 +619,10 @@ class IncomeFormViewModelTest {
         val saved = mutableListOf<Income>()
         val savedOwnerIds = mutableListOf<UserId>()
         var saveBlock: suspend (Income) -> Result<Unit> = { Result.success(Unit) }
+
+        fun setObservedIncomes(records: List<Income>) {
+            incomes.value = records
+        }
 
         override fun observeIncomeSnapshots(
             startDate: LocalDate,

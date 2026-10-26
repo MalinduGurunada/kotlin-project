@@ -157,16 +157,24 @@ class IncomeViewModel @Inject constructor(
         _userMessage.value = null
     }
 
-    fun openIncomeForEdit(income: Income) {
-        val ownerId = authenticatedUserId.value
-        if (ownerId.isNullOrBlank()) {
+    fun openIncomeForEdit(income: Income, snapshotOwnerId: UserId?) {
+        if (snapshotOwnerId.isNullOrBlank()) {
             _userMessage.value = AUTH_REQUIRED_MESSAGE
+            return
+        }
+        val snapshot = uiState.value
+        if (
+            snapshot.observationStatus != IncomeObservationStatus.SUCCESS ||
+            snapshot.ownerId != snapshotOwnerId ||
+            authenticatedUserId.value != snapshotOwnerId ||
+            income !in snapshot.incomes
+        ) {
             return
         }
         _formState.value = IncomeFormUiState(
             mode = IncomeEditorMode.EDIT,
             draftId = income.id,
-            ownerId = ownerId,
+            ownerId = snapshotOwnerId,
             originalIncome = income,
             selectedSource = income.source,
             amountText = income.money.originalAmountDecimal,

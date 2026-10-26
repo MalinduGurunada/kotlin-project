@@ -34,6 +34,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.time.LocalDate
+import java.util.TimeZone
 
 @RunWith(AndroidJUnit4::class)
 class IncomeEditorScreenTest {
@@ -238,10 +239,62 @@ class IncomeEditorScreenTest {
         composeRule.onNodeWithTag("income-save").assertIsNotEnabled()
     }
 
+    @Test
+    fun transactionDatePickerPreservesDateAtPositiveTimezoneBoundary() {
+        val originalTimeZone = TimeZone.getDefault()
+        val boundaryDate = LocalDate.of(2026, 1, 1)
+        var selectedDate: LocalDate? = null
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Pacific/Kiritimati"))
+            setEditor(
+                initialState = addState().copy(transactionDate = boundaryDate),
+                onTransactionDateChanged = { selectedDate = it }
+            )
+
+            composeRule.onNodeWithTag("income-date").performClick()
+            composeRule.onNodeWithText("Select").performClick()
+            composeRule.waitForIdle()
+
+            assertEquals(boundaryDate, selectedDate)
+        } finally {
+            TimeZone.setDefault(originalTimeZone)
+        }
+    }
+
+    @Test
+    fun manualRateDatePickerPreservesDateAtNegativeTimezoneBoundary() {
+        val originalTimeZone = TimeZone.getDefault()
+        val boundaryDate = LocalDate.of(2026, 12, 31)
+        var selectedDate: LocalDate? = null
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Adak"))
+            setEditor(
+                initialState = addState().copy(
+                    selectedCurrency = CurrencyCode.USD,
+                    selectedRateMode = IncomeRateSelectionMode.MANUAL,
+                    manualRateDate = boundaryDate
+                ),
+                onManualRateDateChanged = { selectedDate = it }
+            )
+
+            composeRule.onNodeWithTag("income-manual-rate-date")
+                .performScrollTo()
+                .performClick()
+            composeRule.onNodeWithText("Select").performClick()
+            composeRule.waitForIdle()
+
+            assertEquals(boundaryDate, selectedDate)
+        } finally {
+            TimeZone.setDefault(originalTimeZone)
+        }
+    }
+
     private fun setEditor(
         initialState: IncomeFormUiState = addState(),
         onBack: () -> Unit = {},
-        onSave: () -> Unit = {}
+        onSave: () -> Unit = {},
+        onTransactionDateChanged: (LocalDate) -> Unit = {},
+        onManualRateDateChanged: (LocalDate) -> Unit = {}
     ) {
         composeRule.setContent {
             var state by remember { mutableStateOf(initialState) }
@@ -270,12 +323,18 @@ class IncomeEditorScreenTest {
                         )
                     },
                     onAmountChanged = { state = state.copy(amountText = it) },
-                    onDateChanged = { state = state.copy(transactionDate = it) },
+                    onDateChanged = {
+                        state = state.copy(transactionDate = it)
+                        onTransactionDateChanged(it)
+                    },
                     onCurrencyChanged = { state = state.copy(selectedCurrency = it) },
                     onRateModeChanged = { state = state.copy(selectedRateMode = it) },
                     onManualRateChanged = { state = state.copy(manualRateText = it) },
                     onManualRateSourceChanged = { state = state.copy(manualRateSource = it) },
-                    onManualRateDateChanged = { state = state.copy(manualRateDate = it) },
+                    onManualRateDateChanged = {
+                        state = state.copy(manualRateDate = it)
+                        onManualRateDateChanged(it)
+                    },
                     onRefreshAutomaticRate = {},
                     onProjectReferenceChanged = { state = state.copy(projectReference = it) },
                     onAssetSymbolChanged = { state = state.copy(assetSymbol = it) },

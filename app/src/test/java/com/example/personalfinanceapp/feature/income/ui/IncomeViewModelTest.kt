@@ -317,6 +317,132 @@ class IncomeViewModelTest {
     }
 
     @Test
+    fun `same-owner snapshot opens edit draft and saves for its owner`() = runTest {
+        startObservation()
+        val income = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+
+        viewModel.openIncomeForEdit(income, USER_A)
+        val draft = requireNotNull(viewModel.formState.value)
+        assertEquals(IncomeEditorMode.EDIT, draft.mode)
+        assertEquals(USER_A, draft.ownerId)
+        assertEquals(income, draft.originalIncome)
+
+        viewModel.saveIncome()
+        testDispatcher.scheduler.runCurrent()
+
+        assertEquals(1, incomeRepository.saveCalls.size)
+        assertEquals(USER_A, incomeRepository.saveCalls.single().ownerId)
+        assertEquals(income.id, incomeRepository.saveCalls.single().income.id)
+    }
+
+    @Test
+    fun `stale user A edit cannot target user B record with the same ID`() = runTest {
+        startObservation()
+        val userAIncome = receipt("shared-id", 100_00L)
+        incomeRepository.emit(0, listOf(userAIncome))
+        testDispatcher.scheduler.runCurrent()
+        val userASnapshotOwner = viewModel.uiState.value.ownerId
+
+        authRepository.setUser(USER_B)
+        testDispatcher.scheduler.runCurrent()
+        val userBIncome = receipt("shared-id", 900_00L, IncomeSource.ADSENSE)
+        incomeRepository.emit(1, listOf(userBIncome), ownerId = USER_B)
+        testDispatcher.scheduler.runCurrent()
+
+        viewModel.openIncomeForEdit(userAIncome, userASnapshotOwner)
+        viewModel.saveIncome()
+        testDispatcher.scheduler.runCurrent()
+
+        assertEquals(USER_B, viewModel.uiState.value.ownerId)
+        assertEquals(listOf(userBIncome), viewModel.uiState.value.incomes)
+        assertNull(viewModel.formState.value)
+        assertTrue(incomeRepository.saveCalls.isEmpty())
+    }
+
+    @Test
+    fun `mismatched or ownerless snapshot cannot open edit draft`() = runTest {
+        startObservation()
+        val income = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+
+        viewModel.openIncomeForEdit(income, USER_B)
+        assertNull(viewModel.formState.value)
+
+        incomeRepository.emit(0, emptyList(), ownerId = null)
+        testDispatcher.scheduler.runCurrent()
+        viewModel.openIncomeForEdit(income, null)
+
+        assertLoadingState(viewModel.uiState.value, OCTOBER_RANGE)
+        assertNull(viewModel.formState.value)
+        assertTrue(incomeRepository.saveCalls.isEmpty())
+    }
+
+    @Test
+    fun `record removed or replaced before edit selection is rejected`() = runTest {
+        startObservation()
+        val original = receipt("shared-id", 100_00L)
+        incomeRepository.emit(0, listOf(original))
+        testDispatcher.scheduler.runCurrent()
+
+        incomeRepository.emit(0, emptyList())
+        testDispatcher.scheduler.runCurrent()
+        viewModel.openIncomeForEdit(original, USER_A)
+        assertNull(viewModel.formState.value)
+
+        val replacement = receipt("shared-id", 900_00L, IncomeSource.ADSENSE)
+        incomeRepository.emit(0, listOf(replacement))
+        testDispatcher.scheduler.runCurrent()
+        viewModel.openIncomeForEdit(original, USER_A)
+
+        assertNull(viewModel.formState.value)
+        assertTrue(incomeRepository.saveCalls.isEmpty())
+    }
+
+    @Test
+    fun `account switch closes edit draft before it can save`() = runTest {
+        startObservation()
+        val income = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+        viewModel.openIncomeForEdit(income, USER_A)
+
+        authRepository.setUser(USER_B)
+        testDispatcher.scheduler.runCurrent()
+        viewModel.saveIncome()
+
+        assertNull(viewModel.formState.value)
+        assertTrue(incomeRepository.saveCalls.isEmpty())
+    }
+
+    @Test
+    fun `account switch during edit save cannot redirect write to user B`() = runTest {
+        startObservation()
+        val income = receipt("shared-id", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+        val releaseSave = CompletableDeferred<Result<Unit>>()
+        incomeRepository.saveBlock = { releaseSave.await() }
+        viewModel.openIncomeForEdit(income, USER_A)
+
+        viewModel.saveIncome()
+        testDispatcher.scheduler.runCurrent()
+        authRepository.setUser(USER_B)
+        testDispatcher.scheduler.runCurrent()
+        releaseSave.complete(Result.success(Unit))
+        testDispatcher.scheduler.runCurrent()
+
+        assertEquals(1, incomeRepository.saveCalls.size)
+        assertEquals(USER_A, incomeRepository.saveCalls.single().ownerId)
+        assertEquals(income.id, incomeRepository.saveCalls.single().income.id)
+        assertTrue(incomeRepository.saveCalls.none { it.ownerId == USER_B })
+        assertNull(viewModel.formState.value)
+        assertNotEquals("Income changes saved.", viewModel.userMessage.value)
+    }
+
+    @Test
     fun `account switch rejects selection from stale user A snapshot`() = runTest {
         startObservation()
         val userAIncome = receipt("income-a", 100_00L)
@@ -684,7 +810,9 @@ class IncomeViewModelTest {
 
     private class ControlledIncomeRepository : IncomeRepository {
         val observations = mutableListOf<Observation>()
+        val saveCalls = mutableListOf<SaveCall>()
         val deleteCalls = mutableListOf<DeleteCall>()
+        var saveBlock: suspend () -> Result<Unit> = { Result.success(Unit) }
         var deleteBlock: suspend () -> Result<Unit> = { Result.success(Unit) }
 
         override fun observeIncomeSnapshots(
@@ -737,8 +865,10 @@ class IncomeViewModelTest {
         override suspend fun saveIncomeForOwner(
             expectedOwnerId: UserId,
             income: Income
-        ): Result<Unit> =
-            Result.failure(UnsupportedOperationException("Not used by this test"))
+        ): Result<Unit> {
+            saveCalls += SaveCall(expectedOwnerId, income)
+            return saveBlock()
+        }
 
         override suspend fun deleteIncome(id: DocumentId): Result<Unit> =
             Result.failure(UnsupportedOperationException("Not used by this test"))
@@ -762,6 +892,11 @@ class IncomeViewModelTest {
     private data class DeleteCall(
         val ownerId: UserId,
         val incomeId: DocumentId
+    )
+
+    private data class SaveCall(
+        val ownerId: UserId,
+        val income: Income
     )
 
     private companion object {

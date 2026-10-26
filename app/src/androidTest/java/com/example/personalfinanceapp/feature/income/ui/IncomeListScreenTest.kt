@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.test.espresso.Espresso.pressBack
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.Income
@@ -17,6 +18,7 @@ import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -129,6 +131,7 @@ class IncomeListScreenTest {
     fun addAndLkrAndUsdEditActionsWork() {
         var added = false
         var editedId: String? = null
+        var editedOwnerId: UserId? = null
         val incomes = listOf(
             income(
                 id = "lkr",
@@ -150,7 +153,10 @@ class IncomeListScreenTest {
                 totalLkrMinor = 500_00L
             ),
             onAddIncome = { added = true },
-            onEditIncome = { editedId = it.id }
+            onEditIncome = { income, ownerId ->
+                editedId = income.id
+                editedOwnerId = ownerId
+            }
         )
 
         composeRule.onNodeWithTag("add-income").performClick()
@@ -163,6 +169,7 @@ class IncomeListScreenTest {
 
         assertTrue(added)
         assertTrue(editedId == "usd")
+        assertEquals("user-a", editedOwnerId)
     }
 
     @Test
@@ -224,6 +231,61 @@ class IncomeListScreenTest {
         composeRule.onNodeWithTag("income-delete-cancel").performClick()
 
         assertTrue(cancelled)
+    }
+
+    @Test
+    fun systemBackCancelsDeleteConfirmation() {
+        val income = income(
+            id = "salary",
+            source = IncomeSource.SALARY,
+            amount = "500.00",
+            currency = CurrencyCode.LKR
+        )
+        var cancelled = false
+        setContent(
+            uiState = state(
+                status = IncomeObservationStatus.SUCCESS,
+                incomes = listOf(income),
+                totalLkrMinor = 500_00L
+            ),
+            deleteUiState = IncomeDeleteUiState(income, "user-a"),
+            onCancelDelete = { cancelled = true }
+        )
+
+        pressBack()
+        composeRule.waitForIdle()
+
+        assertTrue(cancelled)
+    }
+
+    @Test
+    fun systemBackCannotCancelDeletionInProgress() {
+        val income = income(
+            id = "salary",
+            source = IncomeSource.SALARY,
+            amount = "500.00",
+            currency = CurrencyCode.LKR
+        )
+        var cancelled = false
+        setContent(
+            uiState = state(
+                status = IncomeObservationStatus.SUCCESS,
+                incomes = listOf(income),
+                totalLkrMinor = 500_00L
+            ),
+            deleteUiState = IncomeDeleteUiState(
+                selectedIncome = income,
+                ownerId = "user-a",
+                deletingIncomeId = income.id
+            ),
+            onCancelDelete = { cancelled = true }
+        )
+
+        pressBack()
+        composeRule.waitForIdle()
+
+        assertTrue(!cancelled)
+        composeRule.onNodeWithTag("income-delete-dialog").assertIsDisplayed()
     }
 
     @Test
@@ -311,7 +373,7 @@ class IncomeListScreenTest {
         onPreviousMonth: () -> Unit = {},
         onNextMonth: () -> Unit = {},
         onAddIncome: () -> Unit = {},
-        onEditIncome: (Income) -> Unit = {},
+        onEditIncome: (Income, UserId?) -> Unit = { _, _ -> },
         onDeleteIncome: (Income, UserId?) -> Unit = { _, _ -> },
         onCancelDelete: () -> Unit = {},
         onConfirmDelete: () -> Unit = {}
