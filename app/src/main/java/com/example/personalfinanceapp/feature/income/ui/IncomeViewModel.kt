@@ -13,6 +13,8 @@ import com.example.personalfinanceapp.feature.auth.AuthRepository
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateException
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateRepository
 import com.example.personalfinanceapp.feature.income.IncomeRepository
+import com.example.personalfinanceapp.feature.income.IncomeObservationSnapshot
+import com.example.personalfinanceapp.feature.income.IncomeDeleteException
 import com.example.personalfinanceapp.feature.income.IncomeValidator
 import com.example.personalfinanceapp.feature.income.rate.IncomeManualRateSource
 import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionCoordinator
@@ -55,7 +57,13 @@ class IncomeViewModel @Inject constructor(
     private val initialDateRange = currentMonthDateRange(clock)
     private val selectedDateRange = MutableStateFlow(initialDateRange)
     private val retryVersion = MutableStateFlow(0L)
-    private val authenticatedUserId = MutableStateFlow<UserId?>(null)
+    private val authenticatedUserId = authRepository.observeAuthState()
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = null
+        )
     private var authGeneration = 0L
     private var rateCoordinator: IncomeRateSelectionCoordinator? = null
     private var rateStateJob: Job? = null
@@ -67,27 +75,29 @@ class IncomeViewModel @Inject constructor(
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage: StateFlow<String?> = _userMessage.asStateFlow()
 
+    private val _deleteState = MutableStateFlow(IncomeDeleteUiState())
+    val deleteState: StateFlow<IncomeDeleteUiState> = _deleteState.asStateFlow()
+
     init {
         viewModelScope.launch {
-            authRepository.observeAuthState()
-                .distinctUntilChanged()
-                .collectLatest { userId ->
-                    val previousUserId = authenticatedUserId.value
-                    if (previousUserId != userId) {
-                        val hadActiveDraft = _formState.value != null
-                        authGeneration = nextGeneration(authGeneration)
-                        authenticatedUserId.value = userId
-                        closeRateCoordinator()
-                        _formState.value = null
-                        if (previousUserId != null && hadActiveDraft) {
-                            _userMessage.value = if (userId == null) {
-                                SIGNED_OUT_MESSAGE
-                            } else {
-                                ACCOUNT_CHANGED_MESSAGE
-                            }
+            var previousUserId: UserId? = null
+            authenticatedUserId.collectLatest { userId ->
+                if (previousUserId != userId) {
+                    val hadActiveDraft = _formState.value != null
+                    authGeneration = nextGeneration(authGeneration)
+                    closeRateCoordinator()
+                    _formState.value = null
+                    _deleteState.value = IncomeDeleteUiState()
+                    if (previousUserId != null && hadActiveDraft) {
+                        _userMessage.value = if (userId == null) {
+                            SIGNED_OUT_MESSAGE
+                        } else {
+                            ACCOUNT_CHANGED_MESSAGE
                         }
                     }
+                    previousUserId = userId
                 }
+            }
         }
     }
 
@@ -235,6 +245,95 @@ class IncomeViewModel @Inject constructor(
 
     fun refreshAutomaticRate() =
         updateRateSelection { coordinator -> coordinator.requestAutomaticRate() }
+
+    fun requestIncomeDeletion(income: Income, snapshotOwnerId: UserId?) {
+        if (snapshotOwnerId.isNullOrBlank()) {
+            _userMessage.value = AUTH_REQUIRED_DELETE_MESSAGE
+            return
+        }
+        if (_deleteState.value.selectedIncome != null) return
+        val snapshot = uiState.value
+        if (
+            snapshot.observationStatus != IncomeObservationStatus.SUCCESS ||
+            snapshot.ownerId != snapshotOwnerId ||
+            authenticatedUserId.value != snapshotOwnerId ||
+            income !in snapshot.incomes
+        ) {
+            return
+        }
+
+        _deleteState.value = IncomeDeleteUiState(
+            selectedIncome = income,
+            ownerId = snapshotOwnerId
+        )
+    }
+
+    fun cancelIncomeDeletion() {
+        if (_deleteState.value.isDeleting) return
+        _deleteState.value = IncomeDeleteUiState()
+    }
+
+    fun confirmIncomeDeletion() {
+        val deletion = _deleteState.value
+        val income = deletion.selectedIncome ?: return
+        val ownerId = deletion.ownerId ?: return
+        if (deletion.isDeleting) return
+        val snapshot = uiState.value
+        if (
+            authenticatedUserId.value != ownerId ||
+            snapshot.ownerId != ownerId
+        ) {
+            _deleteState.value = deletion.copy(errorMessage = AUTH_REQUIRED_DELETE_MESSAGE)
+            return
+        }
+        if (
+            snapshot.observationStatus != IncomeObservationStatus.SUCCESS ||
+            income !in snapshot.incomes
+        ) {
+            _deleteState.value = deletion.copy(errorMessage = STALE_DELETE_MESSAGE)
+            return
+        }
+
+        val deleteGeneration = authGeneration
+        _deleteState.value = deletion.copy(
+            deletingIncomeId = income.id,
+            errorMessage = null
+        )
+
+        viewModelScope.launch {
+            val result = try {
+                incomeRepository.deleteIncomeForOwner(
+                    expectedOwnerId = ownerId,
+                    id = income.id
+                )
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                Result.failure(exception)
+            }
+
+            val current = _deleteState.value
+            val sessionIsCurrent = authGeneration == deleteGeneration &&
+                authenticatedUserId.value == ownerId &&
+                current.ownerId == ownerId &&
+                current.selectedIncome?.id == income.id &&
+                current.deletingIncomeId == income.id
+            if (!sessionIsCurrent) return@launch
+
+            result.fold(
+                onSuccess = {
+                    _deleteState.value = IncomeDeleteUiState()
+                    _userMessage.value = INCOME_DELETED_MESSAGE
+                },
+                onFailure = { failure ->
+                    _deleteState.value = current.copy(
+                        deletingIncomeId = null,
+                        errorMessage = failure.toDeleteUserMessage()
+                    )
+                }
+            )
+        }
+    }
 
     fun updateProjectReference(reference: String) = updateForm { current ->
         current.copy(projectReference = reference, saveError = null)
@@ -495,13 +594,15 @@ class IncomeViewModel @Inject constructor(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun observeRequest(request: ObservationRequest): Flow<IncomeUiState> =
-        authRepository.observeAuthState()
-            .distinctUntilChanged()
+        authenticatedUserId
             .flatMapLatest { authenticatedUid ->
                 if (authenticatedUid == null) {
                     flowOf(IncomeUiState.empty(request.dateRange))
                 } else {
-                    observeAuthenticatedRange(request.dateRange)
+                    observeAuthenticatedRange(
+                        dateRange = request.dateRange,
+                        authenticatedUid = authenticatedUid
+                    )
                 }
             }
             .buffer(capacity = 0)
@@ -519,10 +620,17 @@ class IncomeViewModel @Inject constructor(
             }
 
     private fun observeAuthenticatedRange(
-        dateRange: IncomeDateRange
+        dateRange: IncomeDateRange,
+        authenticatedUid: UserId
     ): Flow<IncomeUiState> = incomeRepository
-        .observeIncomes(dateRange.startDate, dateRange.endDateExclusive)
-        .map { incomes -> loadedState(dateRange, incomes) }
+        .observeIncomeSnapshots(dateRange.startDate, dateRange.endDateExclusive)
+        .map { snapshot ->
+            stateForSnapshot(
+                dateRange = dateRange,
+                authenticatedUid = authenticatedUid,
+                snapshot = snapshot
+            )
+        }
         .onStart {
             emit(IncomeUiState.loading(dateRange))
         }
@@ -536,24 +644,44 @@ class IncomeViewModel @Inject constructor(
             )
         }
 
+    private fun stateForSnapshot(
+        dateRange: IncomeDateRange,
+        authenticatedUid: UserId,
+        snapshot: IncomeObservationSnapshot
+    ): IncomeUiState {
+        val snapshotOwnerId = snapshot.ownerId
+        if (
+            snapshotOwnerId == null ||
+            snapshotOwnerId != authenticatedUid ||
+            authenticatedUserId.value != authenticatedUid
+        ) {
+            return IncomeUiState.loading(dateRange)
+        }
+
+        return loadedState(dateRange, snapshotOwnerId, snapshot.incomes)
+    }
+
     private fun loadedState(
         dateRange: IncomeDateRange,
+        ownerId: UserId,
         incomes: List<Income>
     ): IncomeUiState {
         val immutableSnapshot = incomes.toList()
         if (immutableSnapshot.isEmpty()) {
-            return IncomeUiState.empty(dateRange)
+            return IncomeUiState.empty(dateRange, ownerId)
         }
 
         return try {
             IncomeUiState.success(
                 dateRange = dateRange,
+                ownerId = ownerId,
                 incomes = immutableSnapshot,
                 totalLkrMinor = calculateTotalLkrMinor(immutableSnapshot)
             )
         } catch (_: ArithmeticException) {
             IncomeUiState.error(
                 dateRange = dateRange,
+                ownerId = ownerId,
                 message = TOTAL_OVERFLOW_ERROR_MESSAGE
             )
         }
@@ -602,6 +730,11 @@ class IncomeViewModel @Inject constructor(
             "Unable to save income. Check your connection and try again."
         const val INCOME_ADDED_MESSAGE = "Income saved."
         const val INCOME_UPDATED_MESSAGE = "Income changes saved."
+        const val INCOME_DELETED_MESSAGE = "Income deleted."
+        const val AUTH_REQUIRED_DELETE_MESSAGE =
+            "Sign in again before deleting income."
+        const val STALE_DELETE_MESSAGE =
+            "This income is no longer in the current list. Refresh and try again."
 
         fun nextGeneration(current: Long): Long =
             if (current == Long.MAX_VALUE) 0L else current + 1L
@@ -637,3 +770,14 @@ private fun ExchangeRateException.toUserMessage(): String = when (this) {
 private fun String.isAmountError(): Boolean =
     startsWith("Amount") || startsWith("Enter a valid amount") ||
         startsWith("Converted amount")
+
+private fun Throwable.toDeleteUserMessage(): String = when (this) {
+    is NoSuchElementException ->
+        "This income no longer exists. Refresh the list and try again."
+    is IncomeDeleteException.PermissionDenied ->
+        "You do not have permission to delete this income."
+    is IncomeDeleteException.NetworkUnavailable ->
+        "Unable to delete income while offline. Check your connection and try again."
+    is IllegalStateException -> "Sign in again before deleting income."
+    else -> "Unable to delete income. Check your connection and try again."
+}

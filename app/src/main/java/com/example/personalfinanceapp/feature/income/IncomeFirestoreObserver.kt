@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import java.time.LocalDate
 
 /**
@@ -39,10 +40,10 @@ class IncomeFirestoreObserver internal constructor(
     ) : this(authRepository, FirebaseIncomeFirestoreSnapshotSource(firestore))
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    fun observeIncomes(
+    fun observeIncomeSnapshots(
         startDate: LocalDate,
         endDateExclusive: LocalDate
-    ): Flow<List<Income>> {
+    ): Flow<IncomeObservationSnapshot> {
         require(startDate.isBefore(endDateExclusive)) {
             "Start date must be before end date"
         }
@@ -54,9 +55,9 @@ class IncomeFirestoreObserver internal constructor(
             .flatMapLatest { identity ->
                 val uid = identity.uid
                 when {
-                    uid == null -> flowOf(emptyList())
+                    uid == null -> flowOf(IncomeObservationSnapshot.signedOut())
                     identity.mustClearPreviousUser -> flow {
-                        emit(emptyList())
+                        emit(IncomeObservationSnapshot.signedOut())
                         emitAll(
                             observeAuthenticatedUser(
                                 IncomeFirestoreQuery(
@@ -64,7 +65,9 @@ class IncomeFirestoreObserver internal constructor(
                                     startDateInclusiveIso = startDateInclusiveIso,
                                     endDateExclusiveIso = endDateExclusiveIso
                                 )
-                            )
+                            ).map { incomes ->
+                                IncomeObservationSnapshot.forOwner(uid, incomes)
+                            }
                         )
                     }
                     else -> observeAuthenticatedUser(
@@ -73,11 +76,19 @@ class IncomeFirestoreObserver internal constructor(
                             startDateInclusiveIso = startDateInclusiveIso,
                             endDateExclusiveIso = endDateExclusiveIso
                         )
-                    )
+                    ).map { incomes ->
+                        IncomeObservationSnapshot.forOwner(uid, incomes)
+                    }
                 }
             }
             .buffer(capacity = 0)
     }
+
+    fun observeIncomes(
+        startDate: LocalDate,
+        endDateExclusive: LocalDate
+    ): Flow<List<Income>> = observeIncomeSnapshots(startDate, endDateExclusive)
+        .map { snapshot -> snapshot.incomes }
 
     private fun observeIdentityChanges(): Flow<IdentityChange> = flow {
         var lastAuthenticatedUid: UserId? = null

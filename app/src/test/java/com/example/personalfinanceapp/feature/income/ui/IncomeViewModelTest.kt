@@ -13,9 +13,13 @@ import com.example.personalfinanceapp.feature.auth.AuthRepository
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateQuote
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateRepository
 import com.example.personalfinanceapp.feature.income.IncomeRepository
+import com.example.personalfinanceapp.feature.income.IncomeObservationSnapshot
+import com.example.personalfinanceapp.feature.income.IncomeDeleteException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -27,6 +31,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -118,6 +123,7 @@ class IncomeViewModelTest {
 
         val state = viewModel.uiState.value
         assertEquals(IncomeObservationStatus.SUCCESS, state.observationStatus)
+        assertEquals(USER_A, state.ownerId)
         assertEquals(listOf("salary"), state.incomes.map { it.id })
         assertEquals(125_00L, state.totalLkrMinor)
         assertNull(state.errorMessage)
@@ -280,6 +286,7 @@ class IncomeViewModelTest {
 
         val state = viewModel.uiState.value
         assertEquals(IncomeObservationStatus.EMPTY, state.observationStatus)
+        assertNull(state.ownerId)
         assertTrue(state.incomes.isEmpty())
         assertEquals(0L, state.totalLkrMinor)
         assertTrue(incomeRepository.observations[0].isCancelled)
@@ -297,10 +304,247 @@ class IncomeViewModelTest {
         assertEquals(2, incomeRepository.observations.size)
         assertTrue(incomeRepository.observations[0].isCancelled)
         assertLoadingState(viewModel.uiState.value, OCTOBER_RANGE)
+        assertNull(viewModel.uiState.value.ownerId)
 
-        incomeRepository.emit(1, listOf(receipt("user-b-income", 250_00L)))
+        incomeRepository.emit(
+            index = 1,
+            incomes = listOf(receipt("user-b-income", 250_00L)),
+            ownerId = USER_B
+        )
         testDispatcher.scheduler.runCurrent()
         assertEquals(listOf("user-b-income"), viewModel.uiState.value.incomes.map { it.id })
+        assertEquals(USER_B, viewModel.uiState.value.ownerId)
+    }
+
+    @Test
+    fun `account switch rejects selection from stale user A snapshot`() = runTest {
+        startObservation()
+        val userAIncome = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(userAIncome))
+        testDispatcher.scheduler.runCurrent()
+        val userASnapshotOwner = viewModel.uiState.value.ownerId
+
+        authRepository.setUser(USER_B)
+        testDispatcher.scheduler.runCurrent()
+
+        viewModel.requestIncomeDeletion(userAIncome, userASnapshotOwner)
+        viewModel.confirmIncomeDeletion()
+        testDispatcher.scheduler.runCurrent()
+
+        assertNull(viewModel.uiState.value.ownerId)
+        assertNull(viewModel.deleteState.value.selectedIncome)
+        assertTrue(incomeRepository.deleteCalls.isEmpty())
+    }
+
+    @Test
+    fun `same income ID for user B cannot turn stale user A selection into B deletion`() = runTest {
+        startObservation()
+        val userAIncome = receipt("shared-id", 100_00L)
+        incomeRepository.emit(0, listOf(userAIncome))
+        testDispatcher.scheduler.runCurrent()
+        val userASnapshotOwner = viewModel.uiState.value.ownerId
+
+        authRepository.setUser(USER_B)
+        testDispatcher.scheduler.runCurrent()
+        incomeRepository.emit(1, listOf(userAIncome), ownerId = USER_A)
+        testDispatcher.scheduler.runCurrent()
+
+        assertLoadingState(viewModel.uiState.value, OCTOBER_RANGE)
+        assertNull(viewModel.uiState.value.ownerId)
+        assertTrue(viewModel.uiState.value.incomes.isEmpty())
+        viewModel.requestIncomeDeletion(userAIncome, userASnapshotOwner)
+        viewModel.confirmIncomeDeletion()
+        assertTrue(incomeRepository.deleteCalls.isEmpty())
+
+        val userBIncome = receipt("shared-id", 900_00L, IncomeSource.ADSENSE)
+        incomeRepository.emit(1, listOf(userBIncome), ownerId = USER_B)
+        testDispatcher.scheduler.runCurrent()
+
+        viewModel.requestIncomeDeletion(userAIncome, userASnapshotOwner)
+        viewModel.confirmIncomeDeletion()
+        testDispatcher.scheduler.runCurrent()
+
+        assertEquals(USER_B, viewModel.uiState.value.ownerId)
+        assertEquals(listOf(userBIncome), viewModel.uiState.value.incomes)
+        assertNull(viewModel.deleteState.value.selectedIncome)
+        assertTrue(incomeRepository.deleteCalls.isEmpty())
+    }
+
+    @Test
+    fun `missing or mismatched snapshot owner cannot select income for deletion`() = runTest {
+        startObservation()
+        val income = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+        incomeRepository.emit(0, emptyList(), ownerId = null)
+        testDispatcher.scheduler.runCurrent()
+        assertLoadingState(viewModel.uiState.value, OCTOBER_RANGE)
+
+        viewModel.requestIncomeDeletion(income, null)
+        viewModel.requestIncomeDeletion(income, USER_B)
+        viewModel.confirmIncomeDeletion()
+        testDispatcher.scheduler.runCurrent()
+
+        assertNull(viewModel.deleteState.value.selectedIncome)
+        assertTrue(incomeRepository.deleteCalls.isEmpty())
+    }
+
+    @Test
+    fun `authentication change after selection prevents confirmation`() = runTest {
+        startObservation()
+        val income = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+
+        viewModel.requestIncomeDeletion(income, USER_A)
+        assertEquals(USER_A, viewModel.deleteState.value.ownerId)
+
+        authRepository.setUser(USER_B)
+        testDispatcher.scheduler.runCurrent()
+        viewModel.confirmIncomeDeletion()
+        testDispatcher.scheduler.runCurrent()
+
+        assertNull(viewModel.deleteState.value.selectedIncome)
+        assertTrue(incomeRepository.deleteCalls.isEmpty())
+    }
+
+    @Test
+    fun `record removed after selection is rejected at confirmation`() = runTest {
+        startObservation()
+        val income = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+
+        viewModel.requestIncomeDeletion(income, USER_A)
+        incomeRepository.emit(0, emptyList())
+        testDispatcher.scheduler.runCurrent()
+        viewModel.confirmIncomeDeletion()
+        testDispatcher.scheduler.runCurrent()
+
+        assertEquals(
+            "This income is no longer in the current list. Refresh and try again.",
+            viewModel.deleteState.value.errorMessage
+        )
+        assertTrue(incomeRepository.deleteCalls.isEmpty())
+    }
+
+    @Test
+    fun `delete confirmation can be cancelled without repository call`() = runTest {
+        startObservation()
+        val income = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+
+        viewModel.requestIncomeDeletion(income, USER_A)
+        assertEquals(income, viewModel.deleteState.value.selectedIncome)
+        assertEquals(USER_A, viewModel.deleteState.value.ownerId)
+
+        viewModel.cancelIncomeDeletion()
+
+        assertNull(viewModel.deleteState.value.selectedIncome)
+        assertTrue(incomeRepository.deleteCalls.isEmpty())
+    }
+
+    @Test
+    fun `successful owner-bound delete uses correct ID and waits for observation removal`() = runTest {
+        startObservation()
+        val income = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+
+        viewModel.requestIncomeDeletion(income, USER_A)
+        viewModel.confirmIncomeDeletion()
+        testDispatcher.scheduler.runCurrent()
+
+        assertEquals(listOf(DeleteCall(USER_A, "income-a")), incomeRepository.deleteCalls)
+        assertNull(viewModel.deleteState.value.selectedIncome)
+        assertEquals("Income deleted.", viewModel.userMessage.value)
+        assertEquals(listOf("income-a"), viewModel.uiState.value.incomes.map { it.id })
+
+        incomeRepository.emit(0, emptyList())
+        testDispatcher.scheduler.runCurrent()
+        assertTrue(viewModel.uiState.value.incomes.isEmpty())
+    }
+
+    @Test
+    fun `duplicate delete confirmation is ignored while repository call is active`() = runTest {
+        startObservation()
+        val income = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+        val releaseDelete = CompletableDeferred<Unit>()
+        incomeRepository.deleteBlock = {
+            releaseDelete.await()
+            Result.success(Unit)
+        }
+
+        viewModel.requestIncomeDeletion(income, USER_A)
+        viewModel.confirmIncomeDeletion()
+        testDispatcher.scheduler.runCurrent()
+        viewModel.confirmIncomeDeletion()
+
+        assertTrue(viewModel.deleteState.value.isDeleting)
+        assertEquals(listOf(DeleteCall(USER_A, "income-a")), incomeRepository.deleteCalls)
+
+        releaseDelete.complete(Unit)
+        testDispatcher.scheduler.runCurrent()
+        assertEquals(1, incomeRepository.deleteCalls.size)
+    }
+
+    @Test
+    fun `delete failures retain record and expose safe missing permission and network messages`() = runTest {
+        startObservation()
+        val income = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+        val failures = listOf(
+            NoSuchElementException("private missing detail") to
+                "This income no longer exists. Refresh the list and try again.",
+            IncomeDeleteException.PermissionDenied(
+                IllegalStateException("private permission detail")
+            ) to "You do not have permission to delete this income.",
+            IncomeDeleteException.NetworkUnavailable(
+                IllegalStateException("private network detail")
+            ) to "Unable to delete income while offline. Check your connection and try again."
+        )
+
+        failures.forEach { (failure, expectedMessage) ->
+            incomeRepository.deleteBlock = { Result.failure(failure) }
+            viewModel.requestIncomeDeletion(income, USER_A)
+            viewModel.confirmIncomeDeletion()
+            testDispatcher.scheduler.runCurrent()
+
+            assertEquals(expectedMessage, viewModel.deleteState.value.errorMessage)
+            assertFalse(viewModel.deleteState.value.errorMessage.orEmpty().contains("private"))
+            assertEquals(listOf("income-a"), viewModel.uiState.value.incomes.map { it.id })
+            viewModel.cancelIncomeDeletion()
+        }
+    }
+
+    @Test
+    fun `account switch clears pending delete and suppresses stale completion`() = runTest {
+        startObservation()
+        val income = receipt("income-a", 100_00L)
+        incomeRepository.emit(0, listOf(income))
+        testDispatcher.scheduler.runCurrent()
+        val releaseDelete = CompletableDeferred<Result<Unit>>()
+        incomeRepository.deleteBlock = {
+            withContext(NonCancellable) { releaseDelete.await() }
+        }
+
+        viewModel.requestIncomeDeletion(income, USER_A)
+        viewModel.confirmIncomeDeletion()
+        testDispatcher.scheduler.runCurrent()
+        authRepository.setUser(USER_B)
+        testDispatcher.scheduler.runCurrent()
+
+        assertNull(viewModel.deleteState.value.selectedIncome)
+        assertEquals(listOf(DeleteCall(USER_A, "income-a")), incomeRepository.deleteCalls)
+
+        releaseDelete.complete(Result.success(Unit))
+        testDispatcher.scheduler.runCurrent()
+        assertNotEquals("Income deleted.", viewModel.userMessage.value)
+        assertNull(viewModel.deleteState.value.selectedIncome)
     }
 
     @Test
@@ -320,7 +564,7 @@ class IncomeViewModelTest {
             viewModel.uiState.value.incomes.map { it.id }
         )
 
-        incomeRepository.emit(1, emptyList())
+        incomeRepository.emit(1, emptyList(), ownerId = USER_B)
         testDispatcher.scheduler.runCurrent()
         assertEquals(IncomeObservationStatus.EMPTY, viewModel.uiState.value.observationStatus)
     }
@@ -440,11 +684,13 @@ class IncomeViewModelTest {
 
     private class ControlledIncomeRepository : IncomeRepository {
         val observations = mutableListOf<Observation>()
+        val deleteCalls = mutableListOf<DeleteCall>()
+        var deleteBlock: suspend () -> Result<Unit> = { Result.success(Unit) }
 
-        override fun observeIncomes(
+        override fun observeIncomeSnapshots(
             startDate: LocalDate,
             endDateExclusive: LocalDate
-        ): Flow<List<Income>> = callbackFlow {
+        ): Flow<IncomeObservationSnapshot> = callbackFlow {
             val observation = Observation(
                 dateRange = IncomeDateRange(startDate, endDateExclusive)
             )
@@ -468,8 +714,17 @@ class IncomeViewModelTest {
             }
         }
 
-        suspend fun emit(index: Int, incomes: List<Income>) {
-            observations[index].events.send(Result.success(incomes))
+        suspend fun emit(
+            index: Int,
+            incomes: List<Income>,
+            ownerId: UserId? = USER_A
+        ) {
+            val snapshot = if (ownerId == null) {
+                IncomeObservationSnapshot.signedOut()
+            } else {
+                IncomeObservationSnapshot.forOwner(ownerId, incomes)
+            }
+            observations[index].events.send(Result.success(snapshot))
         }
 
         suspend fun fail(index: Int, exception: Throwable) {
@@ -488,12 +743,26 @@ class IncomeViewModelTest {
         override suspend fun deleteIncome(id: DocumentId): Result<Unit> =
             Result.failure(UnsupportedOperationException("Not used by this test"))
 
+        override suspend fun deleteIncomeForOwner(
+            expectedOwnerId: UserId,
+            id: DocumentId
+        ): Result<Unit> {
+            deleteCalls += DeleteCall(expectedOwnerId, id)
+            return deleteBlock()
+        }
+
         class Observation(
             val dateRange: IncomeDateRange,
-            val events: Channel<Result<List<Income>>> = Channel(Channel.UNLIMITED),
+            val events: Channel<Result<IncomeObservationSnapshot>> =
+                Channel(Channel.UNLIMITED),
             var isCancelled: Boolean = false
         )
     }
+
+    private data class DeleteCall(
+        val ownerId: UserId,
+        val incomeId: DocumentId
+    )
 
     private companion object {
         const val USER_A = "user-a"

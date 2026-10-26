@@ -15,6 +15,7 @@ import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateRepositor
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateException
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateProvider
 import com.example.personalfinanceapp.feature.income.IncomeRepository
+import com.example.personalfinanceapp.feature.income.IncomeObservationSnapshot
 import com.example.personalfinanceapp.feature.income.rate.IncomeManualRateSource
 import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionMode
 import kotlinx.coroutines.CompletableDeferred
@@ -614,14 +615,17 @@ class IncomeFormViewModelTest {
         val savedOwnerIds = mutableListOf<UserId>()
         var saveBlock: suspend (Income) -> Result<Unit> = { Result.success(Unit) }
 
-        override fun observeIncomes(
+        override fun observeIncomeSnapshots(
             startDate: LocalDate,
             endDateExclusive: LocalDate
-        ): Flow<List<Income>> = incomes.map { records ->
-            records.filter { record ->
-                !record.occurredDate.isBefore(startDate) &&
-                    record.occurredDate.isBefore(endDateExclusive)
-            }
+        ): Flow<IncomeObservationSnapshot> = incomes.map { records ->
+            IncomeObservationSnapshot.forOwner(
+                ownerId = USER_A,
+                incomes = records.filter { record ->
+                    !record.occurredDate.isBefore(startDate) &&
+                        record.occurredDate.isBefore(endDateExclusive)
+                }
+            )
         }
 
         override suspend fun saveIncome(income: Income): Result<Unit> =
@@ -646,6 +650,11 @@ class IncomeFormViewModelTest {
 
         override suspend fun deleteIncome(id: DocumentId): Result<Unit> =
             Result.failure(UnsupportedOperationException("Not used"))
+
+        override suspend fun deleteIncomeForOwner(
+            expectedOwnerId: UserId,
+            id: DocumentId
+        ): Result<Unit> = Result.failure(UnsupportedOperationException("Not used"))
     }
 
     private companion object {

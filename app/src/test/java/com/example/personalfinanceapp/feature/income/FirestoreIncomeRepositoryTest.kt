@@ -34,6 +34,18 @@ class FirestoreIncomeRepositoryTest {
     private val endDateExclusive = LocalDate.of(2026, 11, 1)
 
     @Test
+    fun incomeObservationSnapshotCopiesItsRecords() {
+        val income = lkrIncome("income-a")
+        val mutableRecords = mutableListOf(income)
+
+        val snapshot = IncomeObservationSnapshot.forOwner("user-a", mutableRecords)
+        mutableRecords.clear()
+
+        assertEquals("user-a", snapshot.ownerId)
+        assertEquals(listOf(income), snapshot.incomes)
+    }
+
+    @Test
     fun observeIncomesDelegatesToUidScopedObserver() = runTest {
         val authRepository = TestAuthRepository("user-a")
         val snapshotSource = RecordingSnapshotSource()
@@ -54,6 +66,25 @@ class FirestoreIncomeRepositoryTest {
         assertEquals(listOf(income), result.await())
         runCurrent()
         assertTrue(subscription.removed)
+    }
+
+    @Test
+    fun observeIncomeSnapshotsPreservesTheObserversAuthenticatedOwner() = runTest {
+        val authRepository = TestAuthRepository("user-a")
+        val snapshotSource = RecordingSnapshotSource()
+        val repository = repository(authRepository, RecordingWriteGateway(), snapshotSource)
+        val result = async(UnconfinedTestDispatcher(testScheduler)) {
+            repository.observeIncomeSnapshots(startDate, endDateExclusive).first()
+        }
+
+        runCurrent()
+        val subscription = snapshotSource.subscriptions.single()
+        val income = lkrIncome("income-a")
+        subscription.callback(Result.success(listOf(document(income))))
+
+        val snapshot = result.await()
+        assertEquals("user-a", snapshot.ownerId)
+        assertEquals(listOf(income), snapshot.incomes)
     }
 
     @Test
@@ -137,6 +168,84 @@ class FirestoreIncomeRepositoryTest {
     }
 
     @Test
+    fun ownerBoundDeleteUsesExpectedUsersCapturedPath() = runTest {
+        val gateway = RecordingWriteGateway().apply {
+            seed("user-a", lkrIncome("income-a"))
+            seed("user-b", lkrIncome("income-a"))
+        }
+        val repository = repository(TestAuthRepository("user-a"), gateway)
+
+        val result = repository.deleteIncomeForOwner("user-a", "income-a")
+
+        assertSuccess(result)
+        assertEquals(listOf("user-a" to "income-a"), gateway.deleteCalls)
+        assertFalse(gateway.documents.containsKey("user-a" to "income-a"))
+        assertTrue(gateway.documents.containsKey("user-b" to "income-a"))
+    }
+
+    @Test
+    fun ownerChangeBeforeDeleteAuthenticationCaptureRejectsWithoutDeletingNewUsersRecord() = runTest {
+        val captureStarted = CompletableDeferred<Unit>()
+        val releaseCapture = CompletableDeferred<Unit>()
+        var uidAtCapture: UserId? = "user-a"
+        val authRepository = TestAuthRepository(
+            authFlow = flow {
+                captureStarted.complete(Unit)
+                releaseCapture.await()
+                emit(uidAtCapture)
+            }
+        )
+        val gateway = RecordingWriteGateway().apply {
+            seed("user-a", lkrIncome("income-a"))
+            seed("user-b", lkrIncome("income-a"))
+        }
+        val repository = repository(authRepository, gateway)
+        val pendingDelete = async {
+            repository.deleteIncomeForOwner("user-a", "income-a")
+        }
+
+        captureStarted.await()
+        uidAtCapture = "user-b"
+        releaseCapture.complete(Unit)
+        val result = pendingDelete.await()
+
+        assertTrue(result.exceptionOrNull() is IllegalStateException)
+        assertTrue(gateway.deleteCalls.isEmpty())
+        assertTrue(gateway.documents.containsKey("user-a" to "income-a"))
+        assertTrue(gateway.documents.containsKey("user-b" to "income-a"))
+    }
+
+    @Test
+    fun signedOutAndMismatchedOwnerBoundDeletesFailBeforeGateway() = runTest {
+        val signedOutGateway = RecordingWriteGateway()
+        val mismatchedGateway = RecordingWriteGateway().apply {
+            seed("user-b", lkrIncome("income-a"))
+        }
+        val blankOwnerGateway = RecordingWriteGateway()
+
+        val signedOutResult = repository(
+            TestAuthRepository(null),
+            signedOutGateway
+        ).deleteIncomeForOwner("user-a", "income-a")
+        val mismatchedResult = repository(
+            TestAuthRepository("user-b"),
+            mismatchedGateway
+        ).deleteIncomeForOwner("user-a", "income-a")
+        val blankOwnerResult = repository(
+            TestAuthRepository("user-a"),
+            blankOwnerGateway
+        ).deleteIncomeForOwner("", "income-a")
+
+        assertTrue(signedOutResult.exceptionOrNull() is IllegalStateException)
+        assertTrue(mismatchedResult.exceptionOrNull() is IllegalStateException)
+        assertTrue(blankOwnerResult.exceptionOrNull() is IllegalArgumentException)
+        assertTrue(signedOutGateway.deleteCalls.isEmpty())
+        assertTrue(mismatchedGateway.deleteCalls.isEmpty())
+        assertTrue(blankOwnerGateway.deleteCalls.isEmpty())
+        assertTrue(mismatchedGateway.documents.containsKey("user-b" to "income-a"))
+    }
+
+    @Test
     fun signedOutSaveAndDeleteFailWithoutPersistenceAttempt() = runTest {
         val authRepository = TestAuthRepository(null)
         val gateway = RecordingWriteGateway()
@@ -201,7 +310,7 @@ class FirestoreIncomeRepositoryTest {
         gateway.beforeDelete = { releaseDelete.await() }
         val repository = repository(authRepository, gateway)
         val pendingDelete = async {
-            repository.deleteIncome("income-a")
+            repository.deleteIncomeForOwner("user-a", "income-a")
         }
 
         runCurrent()

@@ -159,6 +159,7 @@ fun AppNavHost(
             val incomeUiState by incomeViewModel.uiState.collectAsState()
             val incomeFormState by incomeViewModel.formState.collectAsState()
             val incomeUserMessage by incomeViewModel.userMessage.collectAsState()
+            val incomeDeleteState by incomeViewModel.deleteState.collectAsState()
             val previousMonth = shiftIncomeMonth(incomeUiState.dateRange, -1L)
             val nextMonth = shiftIncomeMonth(incomeUiState.dateRange, 1L)
 
@@ -185,6 +186,7 @@ fun AppNavHost(
             } else {
                 IncomeListScreen(
                     uiState = incomeUiState,
+                    deleteUiState = incomeDeleteState,
                     onBack = { navController.popBackStack() },
                     onRetry = incomeViewModel::retryObservation,
                     onPreviousMonth = {
@@ -205,6 +207,9 @@ fun AppNavHost(
                     },
                     onAddIncome = incomeViewModel::openNewIncome,
                     onEditIncome = incomeViewModel::openIncomeForEdit,
+                    onDeleteIncome = incomeViewModel::requestIncomeDeletion,
+                    onCancelDelete = incomeViewModel::cancelIncomeDeletion,
+                    onConfirmDelete = incomeViewModel::confirmIncomeDeletion,
                     userMessage = incomeUserMessage,
                     onUserMessageShown = incomeViewModel::clearUserMessage,
                     canNavigateToPreviousMonth = previousMonth != null,

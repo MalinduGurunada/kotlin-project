@@ -40,6 +40,14 @@ class FakeIncomeRepository : IncomeRepository {
         }.distinctUntilChanged()
     }
 
+    override fun observeIncomeSnapshots(
+        startDate: LocalDate,
+        endDateExclusive: LocalDate
+    ): Flow<IncomeObservationSnapshot> = observeIncomes(startDate, endDateExclusive)
+        .map { records ->
+            IncomeObservationSnapshot.forOwner(FAKE_OBSERVATION_OWNER_ID, records)
+        }
+
     override suspend fun saveIncome(
         income: Income
     ): Result<Unit> = saveValidatedIncome(income)
@@ -89,6 +97,22 @@ class FakeIncomeRepository : IncomeRepository {
 
     override suspend fun deleteIncome(
         id: DocumentId
+    ): Result<Unit> = deleteIncomeInternal(id)
+
+    override suspend fun deleteIncomeForOwner(
+        expectedOwnerId: UserId,
+        id: DocumentId
+    ): Result<Unit> {
+        if (expectedOwnerId.isBlank()) {
+            return Result.failure(
+                IllegalArgumentException("Expected income owner cannot be empty")
+            )
+        }
+        return deleteIncomeInternal(id)
+    }
+
+    private suspend fun deleteIncomeInternal(
+        id: DocumentId
     ): Result<Unit> = mutex.withLock {
 
         val current = incomes.value
@@ -104,5 +128,9 @@ class FakeIncomeRepository : IncomeRepository {
         }
 
         Result.success(Unit)
+    }
+
+    private companion object {
+        const val FAKE_OBSERVATION_OWNER_ID = "fake-income-owner"
     }
 }

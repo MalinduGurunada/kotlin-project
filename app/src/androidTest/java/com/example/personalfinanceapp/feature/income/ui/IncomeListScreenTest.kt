@@ -1,6 +1,7 @@
 package com.example.personalfinanceapp.feature.income.ui
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -14,6 +15,7 @@ import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.Money
 import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.RateSource
+import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -163,25 +165,171 @@ class IncomeListScreenTest {
         assertTrue(editedId == "usd")
     }
 
+    @Test
+    fun deleteButtonInvokesCallbackForCorrectRecord() {
+        val income = income(
+            id = "salary",
+            source = IncomeSource.SALARY,
+            amount = "500.00",
+            currency = CurrencyCode.LKR
+        )
+        var deletedId: String? = null
+        var deletedOwnerId: UserId? = null
+        setContent(
+            uiState = state(
+                status = IncomeObservationStatus.SUCCESS,
+                incomes = listOf(income),
+                totalLkrMinor = 500_00L
+            ),
+            onDeleteIncome = { selectedIncome, ownerId ->
+                deletedId = selectedIncome.id
+                deletedOwnerId = ownerId
+            }
+        )
+
+        composeRule.onNodeWithTag("delete-income-salary", useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
+
+        assertTrue(deletedId == "salary")
+        assertTrue(deletedOwnerId == "user-a")
+    }
+
+    @Test
+    fun confirmationDialogIdentifiesRecordAndCancelInvokesCallback() {
+        val income = income(
+            id = "salary",
+            source = IncomeSource.SALARY,
+            amount = "500.00",
+            currency = CurrencyCode.LKR
+        )
+        var cancelled = false
+        setContent(
+            uiState = state(
+                status = IncomeObservationStatus.SUCCESS,
+                incomes = listOf(income),
+                totalLkrMinor = 500_00L
+            ),
+            deleteUiState = IncomeDeleteUiState(
+                selectedIncome = income,
+                ownerId = "user-a"
+            ),
+            onCancelDelete = { cancelled = true }
+        )
+
+        composeRule.onNodeWithTag("income-delete-dialog").assertIsDisplayed()
+        composeRule.onNodeWithText("Record: Salary").assertIsDisplayed()
+        composeRule.onNodeWithText("Amount: LKR 500.00").assertIsDisplayed()
+        composeRule.onNodeWithText("Date: Oct 24, 2026").assertIsDisplayed()
+        composeRule.onNodeWithTag("income-delete-cancel").performClick()
+
+        assertTrue(cancelled)
+    }
+
+    @Test
+    fun confirmDeleteInvokesCallback() {
+        val income = income(
+            id = "salary",
+            source = IncomeSource.SALARY,
+            amount = "500.00",
+            currency = CurrencyCode.LKR
+        )
+        var confirmed = false
+        setContent(
+            uiState = state(
+                status = IncomeObservationStatus.SUCCESS,
+                incomes = listOf(income),
+                totalLkrMinor = 500_00L
+            ),
+            deleteUiState = IncomeDeleteUiState(income, "user-a"),
+            onConfirmDelete = { confirmed = true }
+        )
+
+        composeRule.onNodeWithTag("income-delete-confirm").performClick()
+
+        assertTrue(confirmed)
+    }
+
+    @Test
+    fun deletingStateShowsProgressAndDisablesRepeatedConfirmation() {
+        val income = income(
+            id = "salary",
+            source = IncomeSource.SALARY,
+            amount = "500.00",
+            currency = CurrencyCode.LKR
+        )
+        setContent(
+            uiState = state(
+                status = IncomeObservationStatus.SUCCESS,
+                incomes = listOf(income),
+                totalLkrMinor = 500_00L
+            ),
+            deleteUiState = IncomeDeleteUiState(
+                selectedIncome = income,
+                ownerId = "user-a",
+                deletingIncomeId = income.id
+            )
+        )
+
+        composeRule.onNodeWithTag("income-delete-progress", useUnmergedTree = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("income-delete-confirm").assertIsNotEnabled()
+        composeRule.onNodeWithTag("income-delete-cancel").assertIsNotEnabled()
+    }
+
+    @Test
+    fun deleteFailureDisplaysSafeErrorFeedback() {
+        val income = income(
+            id = "salary",
+            source = IncomeSource.SALARY,
+            amount = "500.00",
+            currency = CurrencyCode.LKR
+        )
+        setContent(
+            uiState = state(
+                status = IncomeObservationStatus.SUCCESS,
+                incomes = listOf(income),
+                totalLkrMinor = 500_00L
+            ),
+            deleteUiState = IncomeDeleteUiState(
+                selectedIncome = income,
+                ownerId = "user-a",
+                errorMessage = "Unable to delete income. Check your connection and try again."
+            )
+        )
+
+        composeRule.onNodeWithTag("income-delete-error").assertIsDisplayed()
+        composeRule.onNodeWithText("Unable to delete income. Check your connection and try again.")
+            .assertIsDisplayed()
+    }
+
     private fun setContent(
         uiState: IncomeUiState,
+        deleteUiState: IncomeDeleteUiState = IncomeDeleteUiState(),
         onBack: () -> Unit = {},
         onRetry: () -> Unit = {},
         onPreviousMonth: () -> Unit = {},
         onNextMonth: () -> Unit = {},
         onAddIncome: () -> Unit = {},
-        onEditIncome: (Income) -> Unit = {}
+        onEditIncome: (Income) -> Unit = {},
+        onDeleteIncome: (Income, UserId?) -> Unit = { _, _ -> },
+        onCancelDelete: () -> Unit = {},
+        onConfirmDelete: () -> Unit = {}
     ) {
         composeRule.setContent {
             PersonalFinanceAppTheme(dynamicColor = false) {
                 IncomeListScreen(
                     uiState = uiState,
+                    deleteUiState = deleteUiState,
                     onBack = onBack,
                     onRetry = onRetry,
                     onPreviousMonth = onPreviousMonth,
                     onNextMonth = onNextMonth,
                     onAddIncome = onAddIncome,
-                    onEditIncome = onEditIncome
+                    onEditIncome = onEditIncome,
+                    onDeleteIncome = onDeleteIncome,
+                    onCancelDelete = onCancelDelete,
+                    onConfirmDelete = onConfirmDelete
                 )
             }
         }
@@ -197,6 +345,7 @@ class IncomeListScreenTest {
             startDate = LocalDate.of(2026, 10, 1),
             endDateExclusive = LocalDate.of(2026, 11, 1)
         ),
+        ownerId = if (status == IncomeObservationStatus.SUCCESS) "user-a" else null,
         incomes = incomes,
         observationStatus = status,
         totalLkrMinor = totalLkrMinor,

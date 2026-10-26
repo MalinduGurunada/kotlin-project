@@ -339,6 +339,20 @@ class FakeIncomeRepositoryTest {
     }
 
     @Test
+    fun ownerBoundDeleteValidatesOwnerAndUsesExistingDeleteBehavior() = runTest {
+        val repository = FakeIncomeRepository()
+        val income = createLkrIncome()
+        repository.saveIncome(income).getOrThrow()
+
+        val invalidOwner = repository.deleteIncomeForOwner("", income.id)
+        val deleted = repository.deleteIncomeForOwner("user-a", income.id)
+
+        assertTrue(invalidOwner.exceptionOrNull() is IllegalArgumentException)
+        assertTrue(deleted.isSuccess)
+        assertTrue(repository.incomesIn().isEmpty())
+    }
+
+    @Test
     fun filtersByInclusiveStartExclusiveEndAndSortsByDateThenId() = runTest {
         val repository = FakeIncomeRepository()
         val startB = createLkrIncome(

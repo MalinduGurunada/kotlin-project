@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,23 +41,38 @@ import androidx.compose.ui.unit.dp
 import com.example.personalfinanceapp.core.model.Income
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.PnlDirection
+import com.example.personalfinanceapp.core.model.UserId
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IncomeListScreen(
     uiState: IncomeUiState,
+    deleteUiState: IncomeDeleteUiState = IncomeDeleteUiState(),
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onPreviousMonth: () -> Unit,
     onNextMonth: () -> Unit,
     onAddIncome: () -> Unit = {},
     onEditIncome: (Income) -> Unit = {},
+    onDeleteIncome: (Income, UserId?) -> Unit = { _, _ -> },
+    onCancelDelete: () -> Unit = {},
+    onConfirmDelete: () -> Unit = {},
     userMessage: String? = null,
     onUserMessageShown: () -> Unit = {},
     canNavigateToPreviousMonth: Boolean = true,
     canNavigateToNextMonth: Boolean = true
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
+
+    deleteUiState.selectedIncome?.let { income ->
+        IncomeDeleteConfirmationDialog(
+            income = income,
+            isDeleting = deleteUiState.isDeleting,
+            errorMessage = deleteUiState.errorMessage,
+            onCancel = onCancelDelete,
+            onConfirm = onConfirmDelete
+        )
+    }
 
     LaunchedEffect(userMessage) {
         userMessage?.let { message ->
@@ -112,7 +129,9 @@ fun IncomeListScreen(
                 )
                 IncomeObservationStatus.SUCCESS -> SuccessContent(
                     uiState = uiState,
-                    onEditIncome = onEditIncome
+                    deletingIncomeId = deleteUiState.deletingIncomeId,
+                    onEditIncome = onEditIncome,
+                    onDeleteIncome = onDeleteIncome
                 )
             }
         }
@@ -223,7 +242,9 @@ private fun ErrorContent(
 @Composable
 private fun SuccessContent(
     uiState: IncomeUiState,
-    onEditIncome: (Income) -> Unit
+    deletingIncomeId: String?,
+    onEditIncome: (Income) -> Unit,
+    onDeleteIncome: (Income, UserId?) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -239,7 +260,9 @@ private fun SuccessContent(
         ) { income ->
             IncomeItemCard(
                 income = income,
-                onEdit = { onEditIncome(income) }
+                isDeleting = deletingIncomeId == income.id,
+                onEdit = { onEditIncome(income) },
+                onDelete = { onDeleteIncome(income, uiState.ownerId) }
             )
         }
     }
@@ -276,7 +299,9 @@ private fun IncomeSummary(totalLkrMinor: Long) {
 @Composable
 private fun IncomeItemCard(
     income: Income,
-    onEdit: () -> Unit
+    isDeleting: Boolean,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
 ) {
     val isCryptoLoss = income.source == IncomeSource.CRYPTO &&
         income.pnlDirection == PnlDirection.LOSS
@@ -347,11 +372,88 @@ private fun IncomeItemCard(
                 )
                 TextButton(
                     onClick = onEdit,
+                    enabled = !isDeleting,
                     modifier = Modifier.testTag("edit-income-${income.id}")
                 ) {
                     Text("Edit")
                 }
+                TextButton(
+                    onClick = onDelete,
+                    enabled = !isDeleting,
+                    modifier = Modifier.testTag("delete-income-${income.id}")
+                ) {
+                    Text("Delete")
+                }
+                if (isDeleting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .testTag("deleting-income-${income.id}"),
+                        strokeWidth = 2.dp
+                    )
+                }
             }
         }
     }
+}
+
+@Composable
+private fun IncomeDeleteConfirmationDialog(
+    income: Income,
+    isDeleting: Boolean,
+    errorMessage: String?,
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = {
+            if (!isDeleting) onCancel()
+        },
+        title = { Text("Delete income?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("This action cannot be undone.")
+                Text("Record: ${incomeSourceLabel(income)}")
+                Text("Amount: ${formatOriginalAmount(income.money)}")
+                Text("Date: ${formatTransactionDate(income)}")
+                errorMessage?.let { message ->
+                    Text(
+                        text = message,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("income-delete-error")
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onCancel,
+                enabled = !isDeleting,
+                modifier = Modifier.testTag("income-delete-cancel")
+            ) {
+                Text("Cancel")
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                enabled = !isDeleting,
+                modifier = Modifier.testTag("income-delete-confirm")
+            ) {
+                if (isDeleting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .testTag("income-delete-progress"),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text("Deleting")
+                } else {
+                    Text("Delete")
+                }
+            }
+        },
+        modifier = Modifier.testTag("income-delete-dialog")
+    )
 }

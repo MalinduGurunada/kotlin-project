@@ -135,6 +135,64 @@ class IncomeFirestoreObserverTest {
     }
 
     @Test
+    fun ownerBoundSnapshotAssociatesRecordsWithTheProducingAuthenticationBranch() = runTest {
+        val authRepository = TestAuthRepository("user-a")
+        val source = TestIncomeFirestoreSnapshotSource()
+        val firstSnapshot = async(UnconfinedTestDispatcher(testScheduler)) {
+            observer(authRepository, source)
+                .observeIncomeSnapshots(startDate, endDateExclusive)
+                .first()
+        }
+
+        runCurrent()
+        val income = lkrIncome("income-a")
+        source.emitSuccess(
+            source.singleSubscription("user-a"),
+            listOf(document(income))
+        )
+
+        val snapshot = firstSnapshot.await()
+        assertEquals("user-a", snapshot.ownerId)
+        assertEquals(listOf(income), snapshot.incomes)
+    }
+
+    @Test
+    fun ownerBoundSnapshotClearsBeforePublishingNewAccountsRecords() = runTest {
+        val authRepository = TestAuthRepository("user-a")
+        val source = TestIncomeFirestoreSnapshotSource()
+        val emissions = mutableListOf<IncomeObservationSnapshot>()
+        val collection = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            observer(authRepository, source)
+                .observeIncomeSnapshots(startDate, endDateExclusive)
+                .collect(emissions::add)
+        }
+
+        runCurrent()
+        val incomeA = lkrIncome("shared-id", note = "user-a")
+        source.emitSuccess(
+            source.singleSubscription("user-a"),
+            listOf(document(incomeA))
+        )
+        runCurrent()
+
+        authRepository.emit("user-b")
+        runCurrent()
+        val incomeB = lkrIncome("shared-id", note = "user-b")
+        source.emitSuccess(
+            source.singleSubscription("user-b"),
+            listOf(document(incomeB))
+        )
+        runCurrent()
+
+        assertEquals(listOf("user-a", null, "user-b"), emissions.map { it.ownerId })
+        assertEquals(
+            listOf(listOf(incomeA), emptyList(), listOf(incomeB)),
+            emissions.map { it.incomes }
+        )
+        collection.cancel()
+    }
+
+    @Test
     fun authenticatedUidBuildsExpectedQueryAndDuplicateUidDoesNotRestart() = runTest {
         val authRepository = TestAuthRepository("user-a")
         val source = TestIncomeFirestoreSnapshotSource()

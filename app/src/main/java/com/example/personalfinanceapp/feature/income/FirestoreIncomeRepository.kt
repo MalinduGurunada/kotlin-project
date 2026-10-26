@@ -6,6 +6,7 @@ import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.feature.auth.AuthRepository
 import com.google.android.gms.tasks.Task
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -37,6 +38,12 @@ class FirestoreIncomeRepository internal constructor(
         startDate: LocalDate,
         endDateExclusive: LocalDate
     ): Flow<List<Income>> = observer.observeIncomes(startDate, endDateExclusive)
+
+    override fun observeIncomeSnapshots(
+        startDate: LocalDate,
+        endDateExclusive: LocalDate
+    ): Flow<IncomeObservationSnapshot> =
+        observer.observeIncomeSnapshots(startDate, endDateExclusive)
 
     override suspend fun saveIncome(income: Income): Result<Unit> =
         saveIncomeInternal(income = income, expectedOwnerId = null)
@@ -76,13 +83,45 @@ class FirestoreIncomeRepository internal constructor(
         )
     }
 
-    override suspend fun deleteIncome(id: DocumentId): Result<Unit> = repositoryResult {
-        validateIncomeDocumentId(id)
-        val authenticatedUid = requireAuthenticatedUid()
+    override suspend fun deleteIncome(id: DocumentId): Result<Unit> =
+        deleteIncomeInternal(id = id, expectedOwnerId = null)
 
-        writeGateway.deleteIncomeIfExists(
-            authenticatedUid = authenticatedUid,
-            incomeId = id
+    override suspend fun deleteIncomeForOwner(
+        expectedOwnerId: UserId,
+        id: DocumentId
+    ): Result<Unit> {
+        if (expectedOwnerId.isBlank()) {
+            return Result.failure(
+                IllegalArgumentException("Expected income owner cannot be empty")
+            )
+        }
+        return deleteIncomeInternal(
+            id = id,
+            expectedOwnerId = expectedOwnerId
+        )
+    }
+
+    private suspend fun deleteIncomeInternal(
+        id: DocumentId,
+        expectedOwnerId: UserId?
+    ): Result<Unit> {
+        val result = repositoryResult {
+            validateIncomeDocumentId(id)
+            val authenticatedUid = requireAuthenticatedUid()
+            if (expectedOwnerId != null) {
+                check(authenticatedUid == expectedOwnerId) {
+                    "Authenticated user changed before income could be deleted"
+                }
+            }
+
+            writeGateway.deleteIncomeIfExists(
+                authenticatedUid = authenticatedUid,
+                incomeId = id
+            )
+        }
+        return result.fold(
+            onSuccess = { Result.success(Unit) },
+            onFailure = { failure -> Result.failure(failure.asIncomeDeleteFailure()) }
         )
     }
 
@@ -216,3 +255,17 @@ private const val USERS_COLLECTION = "users"
 private const val INCOMES_COLLECTION = "incomes"
 private const val MAX_DOCUMENT_ID_BYTES = 1_500
 private val RESERVED_DOCUMENT_ID_PATTERN = Regex("__.*__")
+
+private fun Throwable.asIncomeDeleteFailure(): Throwable =
+    if (this is FirebaseFirestoreException) {
+        when (code) {
+            FirebaseFirestoreException.Code.PERMISSION_DENIED ->
+                IncomeDeleteException.PermissionDenied(this)
+            FirebaseFirestoreException.Code.UNAVAILABLE,
+            FirebaseFirestoreException.Code.DEADLINE_EXCEEDED ->
+                IncomeDeleteException.NetworkUnavailable(this)
+            else -> this
+        }
+    } else {
+        this
+    }
