@@ -1,184 +1,102 @@
-# Firestore Schema and Security Plan
+# Firestore Schema and Security
 
-This document separates the Firebase state verified in the current branch from a proposed Firestore design derived from the Kotlin model and repository contracts. It does not describe deployed infrastructure.
+This document distinguishes the implemented M03 Income persistence contract from schema ideas for features that still use in-memory repositories. A checked-in rule or index file is repository evidence only; deployment is not asserted here.
 
-For application structure and model rationale, see [Application Architecture](architecture.md). For development setup, see the [project README](../README.md).
+For application behavior, see [Application Architecture](architecture.md) and the [Income wireframe](wireframes/income-screen.md).
 
 ## Verified Firebase status
 
-| Item | Verified state in this branch |
+| Item | State in this branch |
 | --- | --- |
-| Google Services Gradle plugin | Configured |
-| Firebase BOM | Configured at 34.19.0 |
-| Firebase Authentication dependency | Declared |
-| Cloud Firestore dependency | Declared |
-| Android Firebase configuration | Present; package name matches the application ID |
-| Firebase SDK calls | None found |
-| Firebase-backed repositories | None found |
-| Implemented Firestore collections | None evidenced by source or configuration |
-| `firestore.rules` | Not present |
-| Security-rule tests | Not present |
-| `firestore.indexes.json` | Not present |
-| Rules/index deployment | Cannot be verified and is not claimed |
+| Firebase Authentication | Implemented through `FirebaseAuthRepository` and Hilt |
+| Cloud Firestore | Used by production Income and Expense repositories |
+| Income path | Implemented at `users/{uid}/incomes/{incomeId}` |
+| Income mapper | Explicit version-1 map conversion with exact fields and validation |
+| Income observation | Auth-aware date-range snapshot listener with owner-tagged snapshots |
+| Income writes/deletes | Stable document IDs and expected-owner checks before the UID-scoped path is used |
+| `firestore.rules` | Checked in; includes owner checks and Income schema validation |
+| Security-rule tests | Checked in at `test/firestore.rules.test.js` |
+| `firestore.indexes.json` | Checked in; currently contains Expense indexes |
+| Rules/index deployment | Not verifiable from this repository and not claimed |
 
-The Android configuration file proves only that the application has Firebase client configuration. It does not prove that Authentication providers, Firestore collections, security rules, or indexes have been created or deployed. Configuration values are intentionally omitted from this documentation.
-
-## Proposed document hierarchy
-
-Everything in this section is **Proposed Schema**. It is based on current model field names and the required user-owned layout; no corresponding Firestore implementation exists on this branch.
+## Document hierarchy
 
 ```text
 users/{uid}
-├── incomes/{incomeId}
-├── expenses/{expenseId}
-├── categories/{categoryId}
-├── receivables/{receivableId}
-├── recurringExpenses/{recurringId}
-├── goals/{goalId}
-│   └── contributions/{contributionId}
+|-- incomes/{incomeId}          implemented
+|-- expenses/{expenseId}        implemented repository/rules path
+|-- categories/{categoryId}     proposed Firestore path
+|-- receivables/{receivableId}  proposed Firestore path
+|-- recurringExpenses/{id}      proposed Firestore path
+`-- goals/{goalId}              proposed Firestore path
+    `-- contributions/{id}      proposed Firestore path
 ```
 
-```mermaid
-flowchart TD
-    U[users / uid] --> I[incomes / incomeId]
-    U --> E[expenses / expenseId]
-    U --> C[categories / categoryId]
-    U --> R[receivables / receivableId]
-    U --> RE[recurringExpenses / recurringId]
-    U --> G[goals / goalId]
-    G --> GC[contributions / contributionId]
-    I -. optional receivableId .-> R
-    E -. categoryId .-> C
-    RE -. categoryId .-> C
-    GC -. parent and goalId .-> G
-```
+The active Firebase Authentication UID is the ownership boundary. Income repository code does not accept an arbitrary UID as authority: owner-bound operations compare their expected owner with the current authenticated UID before writing below `users/{uid}`.
 
-No recurring occurrence or skip subcollections are proposed here because the current models, repository contracts, and repository files contain no occurrence/skip contract. Add them only after the team defines lifecycle, idempotency, and expense-confirmation behaviour.
-
-Preferences are intentionally omitted from the proposed hierarchy above. Raveen's assigned implementation uses UID-scoped Android DataStore as the authoritative preference store. A possible Firestore preferences document is recorded later only for team consideration if cloud synchronization is approved.
+Preferences are intentionally omitted. UID-scoped Android DataStore remains the intended authority unless a separate cloud-synchronization design is approved.
 
 ## Shared storage conventions
 
 ### IDs
 
-- Use the authenticated Firebase UID as `{uid}`.
-- Use the model's stable `DocumentId` as the Firestore document ID.
-- Store each entity's `id` field as well as using it in the path so direct model mapping remains explicit. Security rules should require the field to equal the path ID.
-- Do not silently generate a different ID during an update.
+- The path `{uid}` is the authenticated Firebase UID.
+- `{incomeId}` is the stable `Income.id`; the mapper requires the stored `id` to match the Firestore document ID.
+- Add generates one UUID before saving. Edit and retry retain the existing ID.
+- Income IDs must be non-blank valid Firestore document IDs and no longer than the Firestore UTF-8 limit enforced by the repository/mapper.
 
 ### Dates
 
-All domain dates are `LocalDate`, not instants. Store them as zero-padded ISO strings in `YYYY-MM-DD` form, for example `2026-10-16`. Lexicographic ordering then matches calendar ordering. This is a proposed mapping; no serializer currently exists.
+Income date-only values are stored as zero-padded ISO `YYYY-MM-DD` strings. `IncomeFirestoreMapper` parses them to `LocalDate` and rejects malformed or impossible dates. Lexicographic ordering therefore matches calendar ordering.
 
 ### Money
 
-For `Income` and `Expense`, preserve the Kotlin `Money` object as a map:
+Income stores `Money` as a nested map:
 
-| Field | Firestore type | Required | Rule |
-| --- | --- | --- | --- |
-| `originalAmountDecimal` | string | Yes | Valid canonical decimal string; never a floating-point field |
-| `originalCurrency` | string | Yes | Current enum: `LKR` or `USD` |
-| `rateLkrPerUnitDecimal` | string | Yes | Valid positive decimal string |
-| `baseAmountMinor` | integer | Yes | Signed 64-bit LKR minor units; meaning depends on the entry semantics |
-| `rateSource` | string | Yes | `LKR_FIXED`, `MANUAL_TRANSFER`, or `MANUAL_REFERENCE` |
-| `rateDate` | string | Yes | ISO date-only string |
+| Field | Firestore type | Contract |
+| --- | --- | --- |
+| `originalAmountDecimal` | string | Positive decimal with at most two fractional digits |
+| `originalCurrency` | string | `LKR` or `USD` |
+| `rateLkrPerUnitDecimal` | string | Positive decimal; USD supports at most six fractional digits |
+| `baseAmountMinor` | integer | Positive LKR minor units stored as a signed 64-bit value |
+| `rateSource` | string | `LKR_FIXED`, `MANUAL_TRANSFER`, `MANUAL_REFERENCE`, or `EXCHANGE_RATE_API_REFERENCE` |
+| `rateDate` | string | Historical ISO date associated with the stored rate |
 
-Original currency and historical rate data must not be replaced when exchange rates later change. Decimal strings should be parsed with decimal arithmetic such as `BigDecimal`; Firestore double values and Kotlin `Double`/`Float` must not be used for financial calculations. The shared calculation and rounding policy is not yet implemented.
+Financial values are never persisted as Firestore doubles. `MoneyConverter` uses `BigDecimal`, multiplies amount by the LKR-per-unit rate and `100`, rounds once to an integer minor unit with `HALF_UP`, and rejects `Long` overflow. For LKR, the rate is exactly `1`, the source is `LKR_FIXED`, and `rateDate` equals `occurredDate`.
 
-### Domain boundaries
+For USD, the saved rate can represent an actual transfer (`MANUAL_TRANSFER`), a manually entered reference (`MANUAL_REFERENCE`), or the supported automatic provider (`EXCHANGE_RATE_API_REFERENCE`). The automatic provider's full update timestamps are used to validate freshness before selection. Income persists the quote's applicable `rateDate`; the editor preview displays it, list rows do not, and `providerUpdatedAt` is neither persisted nor displayed.
 
-- A savings contribution changes goal allocation; it is not automatically an income or expense.
-- A receivable records money expected, not money received. Receipt requires a separate `Income`, optionally linked by `receivableId`.
-- A recurring expense is a template. It must not be included in confirmed expense totals until a real `Expense` is created.
-- Category name/class snapshots on expenses preserve transaction history even if the category later changes.
+Stored original amount/currency, rate, source, rate date, and LKR minor result form a historical snapshot. Editing an existing record does not replace that snapshot merely because a newer quote exists. `IncomeValidator` recalculates the LKR minor value and requires exact agreement before mapping or writing.
 
-## Proposed collections
-
-### `users/{uid}`
-
-**Purpose:** Root ownership boundary for one authenticated user's data. There is no `User` Kotlin model in this branch, so this is infrastructure metadata rather than a mapped domain entity.
-
-**Document ID:** Firebase Authentication UID. It must equal `request.auth.uid` for client access.
-
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `uid` | string | Yes | Must equal the document ID and authenticated UID |
-| `createdAt` | timestamp | Optional | Prefer a trusted server timestamp; not part of a current Kotlin model |
-
-**Relationships:** Parent of all other proposed data. Authentication is the identity source; this document must not be used as proof that a request is authenticated.
-
-**Validation:** Allow a user to access only their own document; restrict fields and types; do not accept an arbitrary UID in document data. Decide separately whether clients may create the root document or a trusted backend should do so.
-
-**Relevant model/repository:** `UserId` alias only; no user repository exists.
-
-Illustrative example:
-
-```json
-{
-  "uid": "example-auth-uid",
-  "createdAt": "<server timestamp>"
-}
-```
-
-### `users/{uid}/categories/{categoryId}`
-
-**Purpose:** User-defined spending categories and archive state.
-
-**Document ID:** Stable `Category.id` / `{categoryId}`.
-
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `id` | string | Yes | Must equal `{categoryId}` and be non-blank |
-| `name` | string | Yes | Trimmed, non-blank display name |
-| `defaultSpendingClass` | string | Yes | `COMMITTED` or `DISCRETIONARY` |
-| `archived` | boolean | Yes | Prefer archive over deletion when referenced |
-
-**Relationships:** Referenced by `expenses.categoryId` and `recurringExpenses.categoryId`. Existing expenses also keep a category-name snapshot.
-
-**Validation:** Enforce allowed fields/types, stable ID, valid enum, and non-blank bounded name. The fake repository rejects case-insensitive duplicate names, but Firestore rules cannot reliably enforce uniqueness by scanning a collection; the production repository needs an agreed transactional uniqueness strategy or must treat uniqueness as best-effort UI validation.
-
-**Relevant model/repository:** `Category`, `SpendingClass`, `CategoryRepository`; only `FakeCategoryRepository` exists.
-
-Illustrative example:
-
-```json
-{
-  "id": "food",
-  "name": "Food",
-  "defaultSpendingClass": "DISCRETIONARY",
-  "archived": false
-}
-```
+## Implemented Income collection
 
 ### `users/{uid}/incomes/{incomeId}`
 
-**Purpose:** Confirmed income receipts and realised profit/loss entries.
+**Status: IMPLEMENTED.** The production Income repository, mapper, observer, rules, and rule tests use this path and schema.
 
-**Document ID:** Stable `Income.id` / `{incomeId}`.
+**Purpose:** Confirmed Salary, Freelance, AdSense, and realised crypto profit/loss entries.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
+| `schemaVersion` | integer | Yes | Exactly `1` |
 | `id` | string | Yes | Must equal `{incomeId}` |
 | `source` | string | Yes | `SALARY`, `FREELANCE`, `ADSENSE`, or `CRYPTO` |
-| `entryKind` | string | Yes | `RECEIPT` or `REALIZED_PNL` |
-| `money` | map | Yes | Exact shape defined in Shared storage conventions |
+| `entryKind` | string | Yes | `RECEIPT` or `REALIZED_PNL`, constrained by source |
+| `money` | map | Yes | Exact six-field shape defined above |
 | `occurredDate` | string | Yes | ISO date-only string |
-| `pnlDirection` | string | Optional | `GAIN` or `LOSS`; applicable to realised P&L |
-| `projectReference` | string | Optional | Project/customer reference; non-blank if present |
-| `receivableId` | string | Optional | Related user-owned receivable ID |
-| `assetSymbol` | string | Optional | Asset identifier for applicable entries |
-| `note` | string | Optional | User note; apply a reasonable length limit |
+| `pnlDirection` | string | Conditional | `GAIN` or `LOSS`; required for Crypto and absent for regular receipts |
+| `projectReference` | string | Optional | Current UI exposes it for Freelance and stores blank input as absent |
+| `receivableId` | string | Optional | Domain link; not entered by the current Income editor |
+| `assetSymbol` | string | Optional | Optional Crypto asset symbol |
+| `note` | string | Optional | User note |
 
-**Relationships:** `receivableId`, when present, refers to `users/{uid}/receivables/{receivableId}`. This reference does not change the receivable automatically unless explicitly implemented as one coordinated operation.
+The mapper accepts only the required fields plus the documented optional fields and rejects unknown fields. It validates schema version, types, supported enum names, ISO dates, document/path ID equality, and the domain/money contract.
 
-**Validation:** Require a non-blank stable ID, allowed enums, a complete money map, and valid ISO dates. Define cross-field rules before implementation; for example, realised P&L should have a direction, while fields irrelevant to an entry kind should be absent. The fake repository currently validates only that the ID is non-blank.
-
-**Relevant model/repository:** `Income`, `Money`, related enums, `IncomeRepository`; only `FakeIncomeRepository` exists.
-
-Illustrative example:
+Example:
 
 ```json
 {
+  "schemaVersion": 1,
   "id": "income-example-001",
   "source": "FREELANCE",
   "entryKind": "RECEIPT",
@@ -192,64 +110,179 @@ Illustrative example:
   },
   "occurredDate": "2026-10-16",
   "projectReference": "example-project",
-  "receivableId": "receivable-example-001",
-  "note": "Illustrative settled invoice"
+  "note": "Settled invoice"
 }
 ```
 
-For this positive-value example, `baseAmountMinor` assumes exact decimal multiplication followed by `HALF_UP` rounding to the nearest LKR minor unit: `125.50 × 305.25 × 100 = 3,830,887.5`, which becomes `3,830,888`. This explains the illustrative number only; it is not the project's final rounding policy. The shared money validation/conversion logic and its rounding policy are still being implemented under M02.
+The stored minor amount follows exact decimal arithmetic: `125.50 * 305.25 * 100 = 3,830,887.5`, which is `3,830,888` after `HALF_UP` rounding.
+
+## Income observation and operations
+
+### Query
+
+`IncomeFirestoreObserver` listens below the authenticated user's Income collection with:
+
+- `occurredDate >= startDate`;
+- `occurredDate < endDateExclusive`;
+- ascending `occurredDate`; then
+- ascending document ID for deterministic ties.
+
+Authentication changes cancel the old listener. The observer emits `IncomeObservationSnapshot` values containing both the immutable owner and copied Income list; sign-out/account switching clears previous-owner data before a new owner's snapshot is exposed. Snapshot or mapping failures propagate as errors rather than being converted to an empty result.
+
+The current `firestore.indexes.json` contains Expense composite indexes and no explicit Income composite. If Firestore reports that the implemented Income query requires an additional composite index, add the generated exact definition and review it before deployment; do not document an unverified deployed index.
+
+### Save
+
+`saveIncomeForOwner(expectedOwnerId, income)`:
+
+1. Rejects a blank expected owner.
+2. Validates the complete Income and serializes the exact version-1 map.
+3. Reads the latest authenticated UID.
+4. Rejects the operation if that UID differs from the form's owner.
+5. Uses `set` on `users/{verifiedUid}/incomes/{stableIncomeId}`.
+
+This makes retries idempotent with respect to the document ID and prevents an authentication switch from redirecting an existing draft to another account.
+
+### Delete
+
+`deleteIncomeForOwner(expectedOwnerId, incomeId)` performs the same blank-owner, latest-authentication, and path checks. Its Firestore transaction fails when the document no longer exists and otherwise deletes the stable document. The ViewModel additionally requires the callback owner and exact selected record to belong to the current successful snapshot before opening Delete confirmation.
+
+### Edit ownership and history
+
+The Edit callback carries the owner of the observation snapshot that rendered the row. `IncomeViewModel` opens a draft only if the current state is successful, snapshot owner is valid and matches authentication, callback owner matches the snapshot, and the complete selected `Income` equals a current snapshot record. The draft retains that verified owner for save. Matching IDs alone are insufficient, so a stale User A row cannot target User B's same-ID document.
+
+## Firestore security
+
+### Checked-in rules
+
+`firestore.rules` requires a non-null authenticated user whose UID matches `{uid}`. Income reads are limited to that user's collection; create/update requires the exact supported field set, schema version 1, path/field ID agreement, allowed enums, positive typed money, valid rate-source/currency relationships, and source/entry-kind/P&L relationships. Delete is also owner-only. Unmatched paths are denied.
+
+Rules provide the server-enforced ownership and shape boundary. The Android converter, validator, mapper, ViewModel, and repository enforce stronger application invariants such as exact `BigDecimal` recalculation, actual calendar-date parsing, current-snapshot membership, and owner continuity.
+
+### Rule tests and deployment boundary
+
+`test/firestore.rules.test.js` exercises authenticated owner access, unauthenticated/cross-user denial, Income field/type/enum/money constraints, supported rate sources including `EXCHANGE_RATE_API_REFERENCE`, update validation, and delete ownership. Local rule tests and checked-in files do not prove deployment to a Firebase project.
+
+### Cross-feature security requirements and status
+
+The general client security contract is:
+
+- require a non-null Firebase Authentication identity and `request.auth.uid == uid` for every user-owned path;
+- query below the authenticated user's path, because rules authorize a query as a whole rather than filtering returned documents;
+- deny unmatched paths by default;
+- validate allowed fields, Firestore types, enum values, ID/path agreement, date formats, string bounds, and numeric ranges on creates and updates;
+- prevent cross-user reads, queries, writes, and forged ownership fields;
+- preserve append-only history where required, including Goal contribution reversals; and
+- keep privileged administration outside the Android client.
+
+| Area | Repository/rules status |
+| --- | --- |
+| Income ownership and schema | **IMPLEMENTED** in repository, mapper, rules, and local rule tests |
+| Expense ownership | **IMPLEMENTED** in repository path and rules; rule tests cover owner/cross-user access |
+| Expense schema validation | **PARTIAL**; current rules validate selected required fields but do not enforce an exact field set or the full `Money` contract |
+| Category, Receivable, Recurring, Goal, Contribution | **PROPOSED** Firestore schemas; unmatched paths remain denied and no Firebase repositories exist |
+| Rule/index deployment | **UNVERIFIED**; source-controlled files do not prove remote deployment |
+
+### Logout and switching
+
+Navigation returns a signed-out user to Login. Income listeners are cancelled/switched, prior owner data is cleared, and the ViewModel's authentication generation invalidates owner-specific drafts, delete state, and stale async completions. Firestore local-cache policy and deployed-environment verification remain release concerns, but cached records are not treated as authority for a different UID.
+
+## Implemented Expense collection
 
 ### `users/{uid}/expenses/{expenseId}`
 
+**Status: IMPLEMENTED, with the limitations below.** `FirestoreExpenseRepository` is the Hilt production binding and `firestore.rules` authorizes this owner-scoped path. Unlike Income, Expense has no dedicated versioned mapper and uses a flat document shape.
+
 **Purpose:** Confirmed expense transactions.
 
-**Document ID:** Stable `Expense.id` / `{expenseId}`.
-
-| Field | Type | Required | Notes |
+| Field | Firestore type | Written by current repository | Notes |
 | --- | --- | --- | --- |
-| `id` | string | Yes | Must equal `{expenseId}` |
-| `categoryId` | string | Yes | User-owned category reference |
-| `categoryNameSnapshot` | string | Yes | Category label at transaction time |
-| `spendingClass` | string | Yes | `COMMITTED` or `DISCRETIONARY` snapshot |
+| `id` | string | Yes | Stable `Expense.id`; current rules do not require equality with `{expenseId}` |
+| `userId` | string | Yes | Must equal `{uid}` under current create/update rules |
+| `categoryId` | string | Yes | Category reference; current rules require non-blank |
+| `categoryNameSnapshot` | string | Yes | Historical category label |
+| `spendingClass` | string | Yes | `COMMITTED` or `DISCRETIONARY` |
 | `paymentChannel` | string | Yes | `CASH`, `CARD`, `BANK`, or `OTHER` |
-| `money` | map | Yes | Exact shape defined above |
-| `occurredDate` | string | Yes | ISO date-only string |
-| `note` | string | Optional | User note |
-| `channelLabel` | string | Optional | Custom detail, especially for `OTHER` |
+| `originalAmountDecimal` | string | Yes | Flat `Money.originalAmountDecimal` value |
+| `originalCurrency` | string | Yes | `LKR` or `USD` in the Kotlin model |
+| `rateLkrPerUnitDecimal` | string | Yes | Flat historical rate value |
+| `baseAmountMinor` | integer | Yes | LKR minor units; current rules allow zero or positive values |
+| `rateSource` | string | Yes | Stored enum name |
+| `rateDate` | string | Yes | ISO date string written by the repository |
+| `occurredDate` | string | Yes | ISO date string |
+| `note` | string or null | Yes | Optional user note |
+| `channelLabel` | string or null | Yes | Optional payment-channel detail |
 
-**Relationships:** `categoryId` refers to `users/{uid}/categories/{categoryId}`. Snapshot fields keep old transactions readable after a category rename/archive.
+**Relationships:** `categoryId` identifies the intended user-owned Category. `categoryNameSnapshot` and `spendingClass` preserve the historical classification even if that Category later changes.
 
-**Validation:** Require a non-blank stable ID and category fields, valid enums, complete money map, and ISO date. Define whether `channelLabel` is required for `OTHER`. The fake repository currently validates only the ID and date-range arguments.
+**Current behavior and validation:** The repository scopes reads/writes to the current Firebase UID and rejects blank IDs on save. It listens to the entire Expense collection, maps documents permissively, drops records that cannot be parsed, and filters/sorts the requested date range in memory. Current rules verify owner, `userId`, selected required strings/enums, an integer non-negative `baseAmountMinor`, and string `occurredDate`; they do not validate the exact field set, complete rate/currency consistency, ISO calendar validity, or category existence. This is less strict than the Income persistence boundary and must not be documented as equivalent.
 
-**Relevant model/repository:** `Expense`, `Money`, `Category` enums, `ExpenseRepository`; only `FakeExpenseRepository` exists.
-
-Illustrative example:
+Example of the implemented flat shape:
 
 ```json
 {
   "id": "expense-example-001",
+  "userId": "example-auth-uid",
   "categoryId": "food",
   "categoryNameSnapshot": "Food",
   "spendingClass": "DISCRETIONARY",
   "paymentChannel": "CASH",
-  "money": {
-    "originalAmountDecimal": "1500.00",
-    "originalCurrency": "LKR",
-    "rateLkrPerUnitDecimal": "1",
-    "baseAmountMinor": 150000,
-    "rateSource": "LKR_FIXED",
-    "rateDate": "2026-10-16"
-  },
+  "originalAmountDecimal": "1500.00",
+  "originalCurrency": "LKR",
+  "rateLkrPerUnitDecimal": "1",
+  "baseAmountMinor": 150000,
+  "rateSource": "LKR_FIXED",
+  "rateDate": "2026-10-16",
   "occurredDate": "2026-10-16",
-  "note": "Illustrative lunch expense"
+  "note": "Lunch",
+  "channelLabel": null
+}
+```
+
+## Proposed collections
+
+The following sections preserve the model-aligned design for features without Firestore repositories. **PROPOSED** means no production mapper/repository or allow rule exists; the checked-in default deny therefore blocks these paths.
+
+### `users/{uid}`
+
+**Status: INFRASTRUCTURE PATH; application document shape UNVERIFIED.** The path is the parent ownership boundary. There is no Kotlin `User` model or repository, and current feature code does not require a root document to exist. Checked-in rules allow an owner to access their root document but do not enforce the illustrative fields below.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `uid` | string | Proposed | Would equal the document ID and authenticated UID |
+| `createdAt` | timestamp | Proposed | Prefer a trusted server timestamp if introduced |
+
+### `users/{uid}/categories/{categoryId}`
+
+**Status: PROPOSED.** Only `FakeCategoryRepository` exists.
+
+**Purpose:** User-defined spending categories and archive state.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | string | Yes | Must equal `{categoryId}` and be non-blank |
+| `name` | string | Yes | Trimmed, non-blank display name |
+| `defaultSpendingClass` | string | Yes | `COMMITTED` or `DISCRETIONARY` |
+| `archived` | boolean | Yes | Prefer archive over deletion when referenced |
+
+**Relationships:** Referenced by `expenses.categoryId` and proposed `recurringExpenses.categoryId`. Expense records preserve category-name and spending-class snapshots.
+
+**Validation if implemented:** Enforce the exact fields/types, path/field ID agreement, valid enum, and a bounded non-blank name. The fake rejects case-insensitive duplicate names; rules cannot establish collection-wide uniqueness by scanning, so a production design would need a transaction/uniqueness document or explicitly best-effort UI validation.
+
+```json
+{
+  "id": "food",
+  "name": "Food",
+  "defaultSpendingClass": "DISCRETIONARY",
+  "archived": false
 }
 ```
 
 ### `users/{uid}/receivables/{receivableId}`
 
-**Purpose:** Amounts expected from projects or other sources but not yet received.
+**Status: PROPOSED.** Only `FakeReceivableRepository` exists.
 
-**Document ID:** Stable `Receivable.id` / `{receivableId}`.
+**Purpose:** Money expected from a project or other source but not yet received.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
@@ -261,13 +294,9 @@ Illustrative example:
 | `expectedDate` | string | Yes | ISO date-only string |
 | `archived` | boolean | Yes | Archive/restore state |
 
-**Relationships:** An actual `Income` may refer back through `receivableId`. A receivable does not itself have a `Money` conversion snapshot and must not be included in received-income totals.
+**Relationships:** An Income may refer to a Receivable through `receivableId`. A Receivable has no `Money` conversion snapshot or LKR base amount and is not included in received-Income totals.
 
-**Validation:** Match the fake repository's non-blank ID/title/project requirements and positive `BigDecimal`-parseable amount, plus valid currency/date/type and reasonable string lengths.
-
-**Relevant model/repository:** `Receivable`, `CurrencyCode`, `ReceivableRepository`; only `FakeReceivableRepository` exists.
-
-Illustrative example:
+**Validation if implemented:** Preserve the fake repository's non-blank ID/title/project checks and positive `BigDecimal`-parseable amount, then add exact field/type, currency, date, length, and path/ID validation.
 
 ```json
 {
@@ -283,32 +312,28 @@ Illustrative example:
 
 ### `users/{uid}/recurringExpenses/{recurringId}`
 
-**Purpose:** Scheduling templates for expected recurring costs.
+**Status: PROPOSED.** Only `FakeRecurringRepository` exists.
 
-**Document ID:** Stable `RecurringExpense.id` / `{recurringId}`.
+**Purpose:** Scheduling templates for expected recurring costs, not confirmed Expense records.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `id` | string | Yes | Must equal `{recurringId}` |
 | `title` | string | Yes | Trimmed, non-blank title |
-| `categoryId` | string | Yes | User-owned category reference |
+| `categoryId` | string | Yes | User-owned Category reference |
 | `expectedAmountMinor` | integer | Yes | Positive LKR minor-unit estimate |
 | `frequency` | string | Yes | `WEEKLY`, `MONTHLY`, or `YEARLY` |
 | `intervalCount` | integer | Yes | Positive number of frequency units |
-| `anchorDate` | string | Yes | ISO date used to anchor recurrence |
+| `anchorDate` | string | Yes | ISO recurrence anchor date |
 | `startDate` | string | Yes | ISO first-active date |
-| `endDate` | string | Optional | ISO date, not before `startDate` |
-| `active` | boolean | Yes | Whether scheduling remains enabled |
-| `reminderEnabled` | boolean | Yes | Reminder preference for the template |
+| `endDate` | string | Optional | ISO date not before `startDate` |
+| `active` | boolean | Yes | Scheduling state |
+| `reminderEnabled` | boolean | Yes | Reminder preference |
 | `reminderLeadDays` | integer | Yes | Non-negative number of days |
 
-**Relationships:** `categoryId` refers to a user-owned category. A template has no automatic accounting relationship to an `Expense`; confirmation must create a separate expense record.
+**Relationships:** `categoryId` refers to a user-owned Category. A template has no automatic accounting relationship to Expense; confirmation would require a separate Expense record.
 
-**Validation:** Match the fake repository: non-blank ID/title/category, positive amount and interval, end date not before start date, and non-negative reminder lead days. Also validate enum/date types and define anchor behaviour for short months before production use.
-
-**Relevant model/repository:** `RecurringExpense`, `RecurrenceFrequency`, `RecurringRepository`; only `FakeRecurringRepository` exists.
-
-Illustrative example:
+**Validation if implemented:** Match the fake checks for non-blank ID/title/category, positive amount/interval, valid date order, and non-negative reminder lead time. Also enforce exact types/enums/dates and define short-month anchor behavior before use.
 
 ```json
 {
@@ -328,26 +353,22 @@ Illustrative example:
 
 ### `users/{uid}/goals/{goalId}`
 
-**Purpose:** Savings-goal definitions. Contribution history is stored beneath each goal.
+**Status: PROPOSED.** Only `FakeGoalRepository` exists.
 
-**Document ID:** Stable `Goal.id` / `{goalId}`.
+**Purpose:** Savings-goal definitions with Contribution history below each Goal.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `id` | string | Yes | Must equal `{goalId}` |
-| `name` | string | Yes | Non-blank goal name |
+| `name` | string | Yes | Non-blank Goal name |
 | `targetAmountMinor` | integer | Yes | Positive LKR minor-unit target |
 | `startDate` | string | Yes | ISO date-only string |
-| `targetDate` | string | Yes | ISO date, not before `startDate` |
+| `targetDate` | string | Yes | ISO date not before `startDate` |
 | `archived` | boolean | Yes | Archive state |
 
-**Relationships:** Parent of `contributions`. Progress is the sum of valid child contribution `amountMinor` values, including negative reversals. It is not a sum of income or expense records.
+**Relationships:** Parent of `contributions`. Progress is the sum of valid child `amountMinor` values, including negative reversals; it is not derived from Income or Expense records.
 
-**Validation:** Match fake repository checks for non-blank ID/name, positive target, and date ordering. Consider preventing hard deletion while contributions exist.
-
-**Relevant model/repository:** `Goal`, `GoalRepository`; only `FakeGoalRepository` exists.
-
-Illustrative example:
+**Validation if implemented:** Match the fake checks for non-blank ID/name, positive target, and date order; enforce exact fields/types/path ID; and decide deletion behavior when Contributions exist.
 
 ```json
 {
@@ -362,9 +383,7 @@ Illustrative example:
 
 ### `users/{uid}/goals/{goalId}/contributions/{contributionId}`
 
-**Purpose:** Append-only allocation and reversal history for one savings goal. This nested collection follows the repository relationship; there is no proposed top-level contributions collection.
-
-**Document ID:** Stable `Contribution.id` / `{contributionId}`.
+**Status: PROPOSED.** Contribution invariants currently exist only in `FakeGoalRepository`.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
@@ -373,16 +392,12 @@ Illustrative example:
 | `amountMinor` | integer | Yes | Positive for opening/allocation; exact negative inverse for reversal |
 | `kind` | string | Yes | `OPENING`, `ALLOCATION`, or `REVERSAL` |
 | `occurredDate` | string | Yes | ISO date-only string |
-| `reversesId` | string | Optional | Required for reversal; absent otherwise |
+| `reversesId` | string | Conditional | Required for reversal and absent otherwise |
 | `note` | string | Optional | User note |
 
-**Relationships:** Nested under and explicitly linked to its goal. `reversesId` refers to a non-reversal contribution in the same goal.
+**Relationships:** Nested below and explicitly linked to its Goal. `reversesId` refers to one non-reversal Contribution in the same Goal.
 
-**Validation:** Preserve append-only semantics. An identical create retry may be treated as idempotent by the repository, but rules normally see an existing document as an update; production design should deny mutation after creation. A reversal must be the exact negation of one existing non-reversal contribution and only one reversal may target it. Firestore rules alone may not enforce every cross-document invariant atomically; use a transaction and rule-readable documents, a deterministic reversal ID, or trusted backend logic. The fake repository enforces these invariants in memory.
-
-**Relevant model/repository:** `Contribution`, `ContributionKind`, `GoalRepository`; only `FakeGoalRepository` exists.
-
-Illustrative example:
+**Validation if implemented:** Preserve append-only history. The fake treats an identical create retry as idempotent, rejects conflicting ID reuse, requires a reversal to be the exact negative of its target, and allows only one reversal per target. Enforcing all cross-document invariants may require transactions, deterministic IDs, rule-readable documents, or trusted backend logic.
 
 ```json
 {
@@ -397,24 +412,16 @@ Illustrative example:
 
 ### Optional proposal: `users/{uid}/settings/preferences`
 
-**Status and purpose:** This document is not part of the currently approved Firestore hierarchy. It is a possible cloud-synchronization document for user-level application preferences if the team later approves that capability.
-
-**Document ID:** Literal `preferences`.
-
-Raveen's assigned implementation uses UID-scoped Android DataStore. DataStore remains the sole authoritative preference store unless the team explicitly decides how cloud synchronization will work. No preferences model, repository, DataStore implementation, or Firestore preferences implementation exists in this branch.
+**Status: PROPOSED AND NOT APPROVED FOR FIRESTORE.** No preferences model, repository, DataStore dependency, or Firestore implementation exists. UID-scoped Android DataStore remains the intended sole authority unless cloud synchronization is explicitly approved.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `baseCurrency` | string | Yes | Proposed fixed value `LKR` for the current model design |
-| `schemaVersion` | integer | Yes | Proposed positive integer for future preference migrations |
+| `baseCurrency` | string | Yes | Proposed fixed value `LKR` for the current model |
+| `schemaVersion` | integer | Yes | Proposed positive migration version |
 
-**Relationships:** Owned by the user root; not a financial transaction.
+**Relationships:** Owned by the user root and not a financial transaction.
 
-**Validation if approved:** Only the exact `preferences` document ID should be accepted for this design. Restrict fields/types and currently allow only `LKR` because all base minor-unit fields are explicitly LKR. Before implementation, the team must approve the source of truth, synchronization direction, conflict resolution, migration, offline behaviour, security rules, and logout/user-switch handling. Additional preferences require a model, access contract, and reviewed rule update.
-
-**Relevant model/repository:** No settings model or repository exists; `CurrencyCode` provides currency values but does not define user preferences.
-
-Illustrative example:
+**Validation if approved:** Accept only the literal `preferences` document, exact fields/types, and currently only base `LKR`. Before implementation, approve source-of-truth, synchronization direction, conflicts, migration, offline behavior, security rules, and logout/user-switch handling.
 
 ```json
 {
@@ -423,78 +430,29 @@ Illustrative example:
 }
 ```
 
-## Firestore security
-
-### Required ownership model
-
-The proposed trust boundary is the path `users/{uid}`. Every client operation should require a non-null Firebase Authentication identity and require `request.auth.uid == uid`. A UID supplied in document content is never a substitute for the authenticated UID.
-
-The rules design should:
-
-- deny all unmatched paths by default;
-- grant access only within the signed-in user's own `users/{uid}` tree;
-- validate the allowed field set, Firestore types, enum values, ID/path agreement, string lengths, date format, and numeric ranges for every write;
-- prevent cross-user reads, queries, writes, and references;
-- prevent contribution mutation when append-only history is required;
-- reject invalid partial updates as well as invalid creates; and
-- keep privileged administration out of the Android client.
-
-Ownership rules do not filter query results after reading. Client queries must be made under the authenticated user's path so the complete requested result set satisfies the rule.
-
-### Logout handling
-
-After logout, cancel user-specific Firestore listeners, clear ViewModel/repository state, remove protected destinations from the back stack, and return to the authentication graph. Firestore's local cache may retain data on disk; the team must choose an explicit cache policy and test user switching on shared devices. UI state must never continue displaying the previous user's data after the active UID changes.
-
-### Security implementation status
-
-| Security element | Status |
-| --- | --- |
-| Firebase Authentication ownership concept | Proposed |
-| User-scoped paths | Proposed |
-| Deny-by-default rules | Proposed |
-| Field/type validation rules | Proposed |
-| Cross-user isolation tests | Not implemented |
-| Firebase Emulator Suite rule tests | Not implemented |
-| Rules file in repository | Not implemented |
-| Rules deployment | Unknown; no repository evidence |
-
-Before release, add a reviewed `firestore.rules` file and automated Emulator Suite tests for unauthenticated denial, owner access, cross-user denial, invalid fields/types, immutable IDs, contribution constraints, and logout/user-switch behaviour. Deployment must be recorded separately; a local rules file alone does not prove deployment.
-
 ## Queries and indexes
 
-### Actual Firestore queries
+| Feature | Status | Query or proposed shape | Index status |
+| --- | --- | --- | --- |
+| Income history | **IMPLEMENTED** | Owner's `incomes`; half-open `occurredDate` range; ascending date then document ID | No explicit Income composite is checked in; add only if Firestore requests the exact index |
+| Expense history | **IMPLEMENTED IN MEMORY AFTER SNAPSHOT** | Listener reads the owner's Expense collection, then filters half-open date range and sorts by date/ID locally | Two Expense composite definitions are checked in but are not used by the current listener; deployment unverified |
+| Categories | **PROPOSED** | Filter `archived`, optionally order by `name` | Candidate `archived ASC, name ASC`; not checked in |
+| Receivables | **PROPOSED** | Filter `archived`, order by `expectedDate` | Candidate composite only |
+| Recurring templates | **PROPOSED** | Filter `active`, order by `anchorDate` | Candidate composite only |
+| Goals | **PROPOSED** | Filter `archived`, order by `targetDate` | Candidate composite only |
+| Contributions | **PROPOSED** | Goal child collection ordered by `occurredDate`, optionally document ID | Add a composite only if the final query requires it |
 
-There are **no Firestore queries** in the current source. Consequently, no composite index can be identified as required by implemented code. There is also no checked-in index configuration and no evidence of deployed indexes.
-
-The fake income and expense repositories perform in-memory half-open range filtering (`startDate <= occurredDate < endDateExclusive`) and sort by date then ID. This behaviour suggests future query shapes but is not a Firestore implementation.
-
-### Proposed query mapping
-
-| Feature | Proposed query | Index expectation |
-| --- | --- | --- |
-| Income history | User's `incomes`, range/order by `occurredDate`; use document ID as deterministic tie-breaker if needed | Single-field date index is normally automatic; an additional composite may be requested when combining filters/tie-break ordering |
-| Expense history | User's `expenses`, range/order by `occurredDate`; use document ID as tie-breaker if needed | Same as income |
-| Categories | Filter `archived`, optionally order by `name` | Proposed composite: `archived ASC, name ASC` |
-| Receivables | Filter `archived`, order by `expectedDate` | Proposed composite: `archived ASC, expectedDate ASC` |
-| Recurring templates | Filter `active`, order by `anchorDate` | Proposed composite: `active ASC, anchorDate ASC` |
-| Goals | Filter `archived`, order by `targetDate` | Proposed composite: `archived ASC, targetDate ASC` |
-| Contributions | Goal's child collection ordered by `occurredDate`, optionally document ID | Single-field date index is normally automatic; add a composite only if the final query requires it |
-
-These are planning suggestions, not existing index requirements. Implement the real queries first, use Firestore's generated missing-index guidance, review query scope and direction, and then check the exact definitions into `firestore.indexes.json`. Do not create speculative indexes in the Firebase console and describe them as deployed.
+Use implemented query shapes and Firestore's generated missing-index guidance before adding definitions. A checked-in definition still does not prove deployment.
 
 ## Implementation checklist
 
-Before this proposal becomes an implemented schema:
-
-1. Agree on decimal canonicalisation, scale, conversion rounding, and valid signed ranges.
-2. Add explicit Firestore DTOs/mappers instead of depending on accidental Kotlin object serialization.
-3. Decide all cross-field rules, including realised P&L and custom payment-channel requirements.
-4. Implement Firebase repositories behind the existing interfaces and scope every path by the active UID.
-5. Define logout, listener cancellation, cache, and user-switch behaviour.
-6. Add and test deny-by-default security rules with the Firebase Emulator Suite.
-7. Add only the indexes required by implemented queries and check their configuration into source control.
-8. Verify that savings, receivables, and recurring templates remain separate from confirmed cash-flow totals.
-9. Document any approved schema change here and in [architecture.md](architecture.md).
-10. Keep preferences in UID-scoped DataStore unless the team explicitly approves cloud synchronization and its source-of-truth rules.
-
-Until those steps are complete, the in-memory fake repositories—not Firestore—are the only implemented finance data layer in this branch.
+- [x] Define decimal amount/rate precision and `HALF_UP` minor-unit rounding.
+- [x] Implement `MoneyConverter`, `MoneyValidator`, and Income domain validation with boundary and overflow tests.
+- [x] Implement explicit versioned Income mapping with stable IDs and ISO dates.
+- [x] Implement authenticated, owner-tagged Income observation and account-switch clearing.
+- [x] Implement owner-bound Income save and delete beneath `users/{uid}`.
+- [x] Implement automatic/manual USD rates and preserved historical snapshots.
+- [x] Check in deny-by-default ownership/schema rules and Income rule tests.
+- [x] Check in index configuration for currently recorded indexes.
+- [ ] Verify rules and required indexes in each deployed Firebase environment.
+- [ ] Add Firestore implementations/rules only when the remaining proposed finance collections are implemented.

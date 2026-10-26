@@ -116,6 +116,26 @@ class MoneyConverterTest {
     }
 
     @Test
+    fun roundsBelowMinorUnitMidpointDownAndMidpointUp() {
+        val belowMidpoint = MoneyConverter.fromUsd(
+            amountInput = "1.00",
+            rateLkrPerUsdInput = "100.004999",
+            rateSource = RateSource.MANUAL_REFERENCE,
+            rateDate = transactionDate
+        ).getOrThrow()
+        val atMidpoint = MoneyConverter.fromUsd(
+            amountInput = "1.00",
+            rateLkrPerUsdInput = "100.005",
+            rateSource = RateSource.MANUAL_REFERENCE,
+            rateDate = transactionDate
+        ).getOrThrow()
+
+        // Exact BigDecimal minor values are 10,000.4999 and 10,000.5 respectively.
+        assertEquals(10000L, belowMidpoint.baseAmountMinor)
+        assertEquals(10001L, atMidpoint.baseAmountMinor)
+    }
+
+    @Test
     fun roundsHalfCentUpCorrectly() {
         val result = MoneyConverter.fromUsd(
             amountInput = "125.50",
