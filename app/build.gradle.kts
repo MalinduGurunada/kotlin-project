@@ -73,6 +73,10 @@ dependencies {
     implementation(libs.firebase.auth)
     implementation(libs.firebase.firestore)
 
+    implementation(libs.okhttp)
+    implementation(libs.kotlinx.serialization.json)
+
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockwebserver)
 
 }

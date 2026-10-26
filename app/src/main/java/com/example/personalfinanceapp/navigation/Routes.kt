@@ -16,3 +16,6 @@ data object Home
 
 @Serializable
 data object ExpenseList
+
+@Serializable
+data object IncomeList

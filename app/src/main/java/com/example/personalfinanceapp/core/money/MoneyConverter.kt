@@ -44,11 +44,12 @@ object MoneyConverter {
 
         if (
             rateSource != RateSource.MANUAL_TRANSFER &&
-            rateSource != RateSource.MANUAL_REFERENCE
+            rateSource != RateSource.MANUAL_REFERENCE &&
+            rateSource != RateSource.EXCHANGE_RATE_API_REFERENCE
         ) {
             return Result.failure(
                 IllegalArgumentException(
-                    "USD requires a manual exchange rate source"
+                    "USD requires a supported exchange rate source"
                 )
             )
         }

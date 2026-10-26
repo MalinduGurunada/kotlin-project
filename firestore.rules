@@ -21,6 +21,136 @@ service cloud.firestore {
              data.occurredDate is string;
     }
 
+    // Income documents use the exact v1 field set emitted by IncomeFirestoreMapper.
+    function hasValidIncomeFields(data) {
+      return data.keys().hasAll([
+               'schemaVersion',
+               'id',
+               'source',
+               'entryKind',
+               'money',
+               'occurredDate'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion',
+               'id',
+               'source',
+               'entryKind',
+               'money',
+               'occurredDate',
+               'pnlDirection',
+               'projectReference',
+               'receivableId',
+               'assetSymbol',
+               'note'
+             ]);
+    }
+
+    function isIsoDate(value) {
+      return value is string &&
+             value.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}');
+    }
+
+    function isPositiveAmountDecimal(value) {
+      return value is string &&
+             value.trim().matches('[0-9]+([.][0-9]{1,2})?') &&
+             !value.trim().matches('0+([.]0{1,2})?');
+    }
+
+    function isPositiveRateDecimal(value) {
+      return value is string &&
+             value.trim().matches('[0-9]+([.][0-9]{1,6})?') &&
+             !value.trim().matches('0+([.]0{1,6})?');
+    }
+
+    // Precision-safe subset of BigDecimal representations that equal one.
+    // Includes ordinary decimal forms, zero-exponent forms, and 10e-1 without float conversion.
+    function isLkrUnitRate(value) {
+      return value is string &&
+             value.trim().matches(
+               '[+]?0*(1([.]0*)?([eE][-+]?0+)?|10([.]0*)?[eE]-0*1)'
+             );
+    }
+
+    function hasValidMoneyFields(money) {
+      return money is map &&
+             money.keys().hasAll([
+               'originalAmountDecimal',
+               'originalCurrency',
+               'rateLkrPerUnitDecimal',
+               'baseAmountMinor',
+               'rateSource',
+               'rateDate'
+             ]) &&
+             money.keys().hasOnly([
+               'originalAmountDecimal',
+               'originalCurrency',
+               'rateLkrPerUnitDecimal',
+               'baseAmountMinor',
+               'rateSource',
+               'rateDate'
+             ]);
+    }
+
+    function hasValidMoneyTypes(money) {
+      return isPositiveAmountDecimal(money.originalAmountDecimal) &&
+             money.originalCurrency is string &&
+             money.rateLkrPerUnitDecimal is string &&
+             money.baseAmountMinor is int &&
+             money.baseAmountMinor > 0 &&
+             money.rateSource is string &&
+             isIsoDate(money.rateDate);
+    }
+
+    function hasValidCurrencyAndRate(data) {
+      return (data.money.originalCurrency == 'LKR' &&
+              data.money.rateSource == 'LKR_FIXED' &&
+              isLkrUnitRate(data.money.rateLkrPerUnitDecimal) &&
+              data.money.rateDate == data.occurredDate) ||
+             (data.money.originalCurrency == 'USD' &&
+              data.money.rateSource in [
+                'MANUAL_TRANSFER',
+                'MANUAL_REFERENCE',
+                'EXCHANGE_RATE_API_REFERENCE'
+              ] &&
+              isPositiveRateDecimal(data.money.rateLkrPerUnitDecimal));
+    }
+
+    function hasValidOptionalIncomeTypes(data) {
+      return (!('projectReference' in data) || data.projectReference is string) &&
+             (!('receivableId' in data) || data.receivableId is string) &&
+             (!('assetSymbol' in data) || data.assetSymbol is string) &&
+             (!('note' in data) || data.note is string);
+    }
+
+    function hasValidIncomeKind(data) {
+      return (data.source == 'CRYPTO' &&
+              data.entryKind == 'REALIZED_PNL' &&
+              'pnlDirection' in data &&
+              data.pnlDirection in ['GAIN', 'LOSS']) ||
+             (data.source in ['SALARY', 'FREELANCE', 'ADSENSE'] &&
+              data.entryKind == 'RECEIPT' &&
+              !('pnlDirection' in data));
+    }
+
+    function isValidIncomeData(data, incomeId) {
+      return hasValidIncomeFields(data) &&
+             data.schemaVersion is int &&
+             data.schemaVersion == 1 &&
+             data.id is string &&
+             data.id == incomeId &&
+             data.source is string &&
+             data.source in ['SALARY', 'FREELANCE', 'ADSENSE', 'CRYPTO'] &&
+             data.entryKind is string &&
+             data.entryKind in ['RECEIPT', 'REALIZED_PNL'] &&
+             isIsoDate(data.occurredDate) &&
+             hasValidMoneyFields(data.money) &&
+             hasValidMoneyTypes(data.money) &&
+             hasValidCurrencyAndRate(data) &&
+             hasValidOptionalIncomeTypes(data) &&
+             hasValidIncomeKind(data);
+    }
+
     // User document access
     match /users/{userId} {
       allow read, write: if isOwner(userId);
@@ -29,6 +159,14 @@ service cloud.firestore {
       match /expenses/{expenseId} {
         allow read, delete: if isOwner(userId);
         allow create, update: if isOwner(userId) && isValidExpenseData(request.resource.data, userId);
+      }
+
+      // UID-scoped income reads and complete-schema writes.
+      match /incomes/{incomeId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+                              isValidIncomeData(request.resource.data, incomeId);
+        allow delete: if isOwner(userId);
       }
     }
 
