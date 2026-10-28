@@ -20,7 +20,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 
 @Composable
 fun LoginScreen(
@@ -120,5 +122,23 @@ fun LoginScreen(
         TextButton(onClick = onNavigateToRegister) {
             Text("Don't have an account? Sign Up")
         }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun LoginScreenPreview() {
+    PersonalFinanceAppTheme {
+        LoginScreen(
+            uiState = LoginUiState(
+                emailInput = "himasha@example.com",
+                passwordInput = "password123"
+            ),
+            onEmailChanged = {},
+            onPasswordChanged = {},
+            onLoginClicked = {},
+            onNavigateToRegister = {},
+            onNavigateToPasswordReset = {}
+        )
     }
 }

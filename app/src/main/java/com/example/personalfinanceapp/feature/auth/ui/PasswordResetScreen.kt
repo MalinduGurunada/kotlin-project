@@ -19,7 +19,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 
 @Composable
 fun PasswordResetScreen(
@@ -108,5 +110,21 @@ fun PasswordResetScreen(
         TextButton(onClick = onNavigateToLogin) {
             Text("Back to Sign In")
         }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun PasswordResetScreenPreview() {
+    PersonalFinanceAppTheme {
+        PasswordResetScreen(
+            uiState = PasswordResetUiState(
+                emailInput = "user@example.com",
+                isSuccess = true
+            ),
+            onEmailChanged = {},
+            onResetClicked = {},
+            onNavigateToLogin = {}
+        )
     }
 }
