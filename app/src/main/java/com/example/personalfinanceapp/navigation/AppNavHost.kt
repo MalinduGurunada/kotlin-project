@@ -1,18 +1,31 @@
 package com.example.personalfinanceapp.navigation
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.example.personalfinanceapp.feature.auth.ui.AuthViewModel
+import com.example.personalfinanceapp.feature.auth.ui.AuthNavigationState
 import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
 import com.example.personalfinanceapp.feature.auth.ui.PasswordResetScreen
 import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
@@ -28,26 +41,68 @@ import com.example.personalfinanceapp.feature.income.ui.IncomeEditorScreen
 import com.example.personalfinanceapp.feature.income.ui.IncomeViewModel
 import com.example.personalfinanceapp.feature.income.ui.shiftIncomeMonth
 
+internal fun NavHostController.returnToSignIn() {
+    if (!popBackStack()) {
+        navigate(Login) { launchSingleTop = true }
+    }
+}
+
+@Composable
+internal fun HomeActionsScreen(
+    onManageIncome: () -> Unit,
+    onSignOut: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Button(onClick = onManageIncome) {
+            Text("Manage Income")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(onClick = onSignOut) {
+            Text("Sign Out")
+        }
+    }
+}
+
 @Composable
 fun AppNavHost(
     authViewModel: AuthViewModel = hiltViewModel()
 ) {
     val navController = rememberNavController()
-    val authState by authViewModel.authState.collectAsState()
+    val navigationState by authViewModel.navigationState.collectAsState()
     val loginUiState by authViewModel.loginUiState.collectAsState()
     val registerUiState by authViewModel.registerUiState.collectAsState()
     val resetUiState by authViewModel.passwordResetUiState.collectAsState()
 
     var showRecordExpenseDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(authState) {
-        if (authState != null) {
-            navController.navigate(Overview) {
-                popUpTo(Login) { inclusive = true }
+    LaunchedEffect(navigationState) {
+        when (navigationState) {
+            AuthNavigationState.Resolving -> Unit
+            AuthNavigationState.Unauthenticated -> {
+                navController.navigate(Login) {
+                    popUpTo(0) { inclusive = true }
+                    launchSingleTop = true
+                }
             }
-        } else {
-            navController.navigate(Login) {
-                popUpTo(0) { inclusive = true }
+            AuthNavigationState.RegistrationSetup -> {
+                navController.navigate(Register) {
+                    popUpTo(0) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+            is AuthNavigationState.Authenticated -> {
+                navController.navigate(Overview) {
+                    popUpTo(0) { inclusive = true }
+                    launchSingleTop = true
+                }
             }
         }
     }
@@ -70,11 +125,17 @@ fun AppNavHost(
         composable<Register> {
             RegisterScreen(
                 uiState = registerUiState,
+                onFullNameChanged = authViewModel::onRegisterFullNameChanged,
                 onEmailChanged = authViewModel::onRegisterEmailChanged,
                 onPasswordChanged = authViewModel::onRegisterPasswordChanged,
                 onConfirmPasswordChanged = authViewModel::onRegisterConfirmPasswordChanged,
                 onRegisterClicked = authViewModel::register,
-                onNavigateToLogin = { navController.navigate(Login) }
+                onNavigateToLogin = {
+                    if (registerUiState.isProfileUpdatePending) {
+                        authViewModel.abandonPendingRegistration()
+                    }
+                    navController.returnToSignIn()
+                }
             )
         }
 
@@ -83,7 +144,16 @@ fun AppNavHost(
                 uiState = resetUiState,
                 onEmailChanged = authViewModel::onResetEmailChanged,
                 onResetClicked = authViewModel::sendPasswordReset,
-                onNavigateToLogin = { navController.navigate(Login) }
+                onNavigateToLogin = {
+                    navController.returnToSignIn()
+                }
+            )
+        }
+
+        composable<Home> {
+            HomeActionsScreen(
+                onManageIncome = { navController.navigate(IncomeList) },
+                onSignOut = authViewModel::signOut
             )
         }
 
@@ -99,7 +169,7 @@ fun AppNavHost(
                         NavDestination.OVERVIEW -> {}
                         NavDestination.ACTIVITY -> navController.navigate(Activity)
                         NavDestination.GOALS -> {}
-                        NavDestination.MORE -> {}
+                        NavDestination.MORE -> navController.navigate(Home)
                     }
                 },
                 onNavigateToActivity = { navController.navigate(Activity) }
@@ -124,19 +194,15 @@ fun AppNavHost(
                 )
             }
 
-                Button(
-                    onClick = {
-                        navController.navigate(IncomeList)
-                    }
-                ) {
-                    Text("Manage Income")
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Button(
-                    onClick = {
-                        authViewModel.signOut()
+            ActivityScreen(
+                uiState = uiState,
+                currentNavDestination = NavDestination.ACTIVITY,
+                onNavDestinationSelected = { dest ->
+                    when (dest) {
+                        NavDestination.OVERVIEW -> navController.navigate(Overview)
+                        NavDestination.ACTIVITY -> {}
+                        NavDestination.GOALS -> {}
+                        NavDestination.MORE -> navController.navigate(Home)
                     }
                 },
                 onSelectTransaction = { id ->

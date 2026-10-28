@@ -2,6 +2,7 @@ package com.example.personalfinanceapp.feature.auth
 
 import com.example.personalfinanceapp.core.model.UserId
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.UserProfileChangeRequest
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -23,6 +24,15 @@ class FirebaseAuthRepository @Inject constructor(
             firebaseAuth.removeAuthStateListener(listener)
         }
     }.distinctUntilChanged()
+
+    override fun currentUserEmail(): String? = firebaseAuth.currentUser?.email
+
+    override fun currentUserId(): UserId? = firebaseAuth.currentUser?.uid
+
+    override fun currentUserSnapshot(): AuthUserSnapshot? {
+        val user = firebaseAuth.currentUser ?: return null
+        return AuthUserSnapshot(user.uid, user.email)
+    }
 
     override suspend fun login(
         email: String,
@@ -63,6 +73,29 @@ class FirebaseAuthRepository @Inject constructor(
                 continuation.resume(Result.failure(exception))
             }
     }
+
+    override suspend fun updateDisplayName(userId: UserId, fullName: String): Result<Unit> =
+        suspendCancellableCoroutine { continuation ->
+            val user = firebaseAuth.currentUser
+            if (user == null || user.uid != userId) {
+                continuation.resume(
+                    Result.failure(IllegalStateException("Authenticated user changed before profile update"))
+                )
+                return@suspendCancellableCoroutine
+            }
+
+            val profileUpdates = UserProfileChangeRequest.Builder()
+                .setDisplayName(fullName.trim())
+                .build()
+
+            user.updateProfile(profileUpdates)
+                .addOnSuccessListener {
+                    continuation.resume(Result.success(Unit))
+                }
+                .addOnFailureListener { exception ->
+                    continuation.resume(Result.failure(exception))
+                }
+        }
 
     override suspend fun sendPasswordReset(
         email: String
