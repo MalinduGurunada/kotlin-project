@@ -15,10 +15,7 @@ data object PasswordReset
 data object Home
 
 @Serializable
-data object Overview
+data object ExpenseList
 
 @Serializable
-data object Activity
-
-@Serializable
-data class TransactionDetail(val transactionId: String)
+data object IncomeList

@@ -1,86 +1,78 @@
 # Application Architecture
 
-This document describes the architecture visible in the current branch and the intended direction supplied by the project brief. Labels such as **Implemented**, **Prototype**, and **Planned** are used to avoid presenting design intentions as completed work.
+This document describes the architecture implemented in the current branch. Items that remain design proposals are labelled explicitly.
 
-For setup and project status, see the [project README](../README.md). For persistence design, see the [Firestore schema](firestore-schema.md).
+For setup and project status, see the [project README](../README.md). For persistence details, see the [Firestore schema](firestore-schema.md). The current Income screen is documented in the [Income wireframe](wireframes/income-screen.md).
 
 ## Architecture overview
 
-The project follows a feature-based, MVVM-style direction within a single Android application module.
+The application uses a single-activity, feature-based MVVM architecture with Jetpack Compose, Kotlin coroutines and Flow, Hilt, Firebase Authentication, and Cloud Firestore.
 
 ### Scenario-to-design boundary
 
-The SE3092 assignment scenario requires support for Kavindu's irregular income from multiple sources, expense tracking, recurring commitments, outstanding freelance payments, and savings goals. The application design proposes `Income` records to distinguish sources, categorised `Expense` records, `RecurringExpense` templates, `Receivable` records that are not counted as received income, and `Goal` plus `Contribution` records. These mappings are proposed responses to the scenario, not evidence that the corresponding screens or production persistence are already implemented.
+The shared models cover income, expenses, categories, recurring commitments, receivables, and savings goals. Implementation maturity differs by feature. M03 Income is complete through its Compose UI, ViewModel, exchange-rate integration, owner-bound repository, Firestore mapper/observer, rules, and tests. Expense also has a UI/ViewModel and Firestore repository. Several other finance features currently retain repository contracts and in-memory implementations only.
 
-- **Compose UI:** `MainActivity` installs the Material theme and calls `AppNavHost`. The navigation destinations currently render placeholder Compose content.
-- **ViewModels:** **Planned.** No class extending `ViewModel` exists in this branch. Feature ViewModels should own screen state, call repository contracts, and collect `Flow` values without placing data access in composables.
-- **Repository interfaces:** **Implemented.** Each finance feature exposes a small contract based on suspending commands and observable `Flow` queries.
-- **Data sources:** The current fake repositories are **implemented in-memory data sources**. Firebase-backed data sources and repository implementations are **planned** but absent.
-- **Preferences:** **Planned.** Raveen's allocation specifies UID-scoped preferences in Android DataStore. DataStore is the intended authoritative preference store unless the team explicitly approves cloud synchronization; no preferences implementation is present in this branch.
-- **Dependency injection:** Hilt is initialized through `@HiltAndroidApp` and `@AndroidEntryPoint`. Repository modules/bindings are **planned**; no Hilt module is present.
-
-MVVM is useful here because it separates rendering, state coordination, and persistence. Compose functions can stay declarative, ViewModels can survive configuration changes and expose stable UI state, and repositories can be exchanged without changing feature UI code.
+| Layer | Current implementation |
+| --- | --- |
+| Compose UI | Authentication, Home, Expense, and Income destinations are implemented. Income includes list, add/edit, delete confirmation, loading, empty, error, and retry states. |
+| ViewModels | Authentication, Expense, and Income ViewModels expose immutable observable state and execute repository operations. |
+| Repositories | Feature interfaces isolate UI/domain code from storage. Income is bound to `FirestoreIncomeRepository`; fakes support deterministic tests. |
+| Authentication | `FirebaseAuthRepository` exposes the active UID. Navigation returns signed-out users to the authentication graph. |
+| Exchange rates | A remote USD-to-LKR provider is bound through Hilt; the Income editor coordinates automatic quotes and manual fallback. |
+| Dependency injection | Hilt modules bind authentication, category, exchange-rate, expense, and income dependencies. |
+| Preferences | UID-scoped DataStore remains planned and is outside M03. |
 
 ### High-level application architecture
 
 ```mermaid
 flowchart TD
-    A[MainActivity<br/>Implemented] --> B[AppNavHost<br/>Prototype]
-    B --> C[Compose feature screens<br/>Planned]
-    C --> D[Feature ViewModels<br/>Planned]
-    D --> E[Repository interfaces<br/>Implemented]
-    E --> F[Fake repositories<br/>Implemented, in memory]
-    E -. planned binding .-> G[Firebase repositories<br/>Not present]
-    G -. planned SDK calls .-> H[Firebase Auth and Cloud Firestore]
-    D -. planned preferences access .-> P[UID-scoped Android DataStore<br/>Not present]
-    I[Hilt application setup<br/>Implemented] -. future injection .-> D
-    I -. future bindings .-> G
+    A[MainActivity] --> B[AppNavHost]
+    B --> C[Authentication screens]
+    B --> D[Income list and editor]
+    D --> E[IncomeViewModel]
+    E --> F[IncomeRepository]
+    F --> G[FirestoreIncomeRepository]
+    G --> H[users/uid/incomes]
+    E --> I[ExchangeRateRepository]
+    I --> J[Remote USD to LKR API]
+    C --> K[AuthViewModel]
+    K --> L[FirebaseAuthRepository]
+    L --> M[Firebase Authentication]
+    M --> E
 ```
 
-### Data flow
-
-The arrows below describe the intended runtime flow. The repository contract and fake implementation portions are already available; the feature UI and ViewModel portions are not.
+### Income data flow
 
 ```mermaid
 sequenceDiagram
-    participant UI as Compose UI (planned)
-    participant VM as ViewModel (planned)
-    participant Repo as Repository interface (implemented)
-    participant DS as Fake or Firebase data source
+    participant UI as Income Compose UI
+    participant VM as IncomeViewModel
+    participant Repo as IncomeRepository
+    participant FS as Cloud Firestore
 
-    UI->>VM: User action
-    VM->>Repo: Suspending command
-    Repo->>DS: Validate and read/write
-    DS-->>Repo: Result
-    Repo-->>VM: Result<Unit>
-    DS-->>Repo: Updated data stream
-    Repo-->>VM: Flow<List<Model>>
-    VM-->>UI: Immutable UI state
-    UI->>UI: Recompose
+    Repo-->>VM: owner-tagged snapshot Flow
+    VM-->>UI: immutable list state
+    UI->>VM: add, edit, delete, retry, or month action
+    VM->>VM: validate auth generation and snapshot owner
+    VM->>Repo: owner-bound save/delete
+    Repo->>Repo: re-check active UID
+    Repo->>FS: users/{verifiedUid}/incomes/{stableId}
+    FS-->>Repo: completion or failure
+    Repo-->>VM: Result
+    VM-->>UI: updated state/message
 ```
+
+The observation snapshot carries an immutable owner ID. Edit and delete accept that owner from the rendered row and require a successful current snapshot, a non-blank owner matching authentication, callback-owner equality, and exact record membership. This prevents a stale record from one account becoming a draft or operation for another account, including when both accounts use the same document ID.
 
 ### Authentication and protected navigation
 
-The current graph does **not** protect `Home`: it starts at `Login`, and a button navigates to `Home` without authenticating. The following diagram separates that prototype from the intended design.
+`AppNavHost` observes `AuthViewModel.authState`. A non-null UID navigates to Home and removes Login; a null UID navigates back to Login and clears the graph. Income observation switches by UID, emits a signed-out/empty snapshot when required, and cancels the previous Firestore listener through `flatMapLatest`.
 
-```mermaid
-flowchart LR
-    subgraph Current[Current prototype]
-        L1[Login placeholder] -->|Button click only| H1[Home placeholder]
-    end
-
-    subgraph Planned[Planned protected navigation]
-        S[Observe Firebase Auth session] --> Q{Authenticated?}
-        Q -->|No| L2[Authentication screens]
-        Q -->|Yes| H2[Protected app graph]
-        L2 -->|Successful sign-in| S
-        H2 -->|Logout and clear user state| S
-    end
-```
-
-The planned implementation should derive access from the active Firebase Authentication UID, clear user-specific in-memory state on logout, and prevent stale data from one user being displayed to another.
+`IncomeViewModel` also tracks an authentication generation. A user change clears owner-specific list, form, delete, and message state, and stale asynchronous observation, rate, save, or delete results cannot be applied to the new session. Repository writes independently compare the expected owner with the latest authenticated UID before using a Firestore path.
 
 ### Repository relationships
+
+The shared repository contracts remain storage-independent. Current implementations are shown explicitly; a missing Firestore implementation is not implied by the existence of a proposed schema.
 
 ```mermaid
 classDiagram
@@ -93,9 +85,9 @@ classDiagram
     }
     class IncomeRepository {
         <<interface>>
-        observeIncomes(startDate, endDateExclusive)
-        saveIncome(income)
-        deleteIncome(id)
+        observeIncomeSnapshots(startDate, endDateExclusive)
+        saveIncomeForOwner(ownerId, income)
+        deleteIncomeForOwner(ownerId, id)
     }
     class ExpenseRepository {
         <<interface>>
@@ -126,171 +118,197 @@ classDiagram
 
     CategoryRepository <|.. FakeCategoryRepository
     IncomeRepository <|.. FakeIncomeRepository
+    IncomeRepository <|.. FirestoreIncomeRepository
     ExpenseRepository <|.. FakeExpenseRepository
+    ExpenseRepository <|.. FirestoreExpenseRepository
     GoalRepository <|.. FakeGoalRepository
     RecurringRepository <|.. FakeRecurringRepository
     ReceivableRepository <|.. FakeReceivableRepository
-
-    CategoryRepository <|.. PlannedFirebaseCategoryRepository
-    IncomeRepository <|.. PlannedFirebaseIncomeRepository
-    ExpenseRepository <|.. PlannedFirebaseExpenseRepository
-    GoalRepository <|.. PlannedFirebaseGoalRepository
-    RecurringRepository <|.. PlannedFirebaseRecurringRepository
-    ReceivableRepository <|.. PlannedFirebaseReceivableRepository
 ```
-
-The `PlannedFirebase...` names are diagram labels, not classes that exist in the repository.
 
 ## Project structure and responsibilities
 
-The current production Kotlin sources are under `app/src/main/java/com/example/personalfinanceapp`.
+Production Kotlin sources are under `app/src/main/java/com/example/personalfinanceapp`.
 
-| Package or file | Status | Responsibility |
-| --- | --- | --- |
-| `core/model` | Implemented | Shared IDs, enums, money value, and finance entity contracts |
-| `feature/category` | Contract and fake implemented | Observe, create, rename, and archive categories |
-| `feature/income` | Contract and fake implemented | Observe income in a half-open date range, save/update, and delete |
-| `feature/expense` | Contract and fake implemented | Observe expenses in a half-open date range, save/update, and delete |
-| `feature/goal` | Contract and fake implemented | Manage goals and append contributions/reversals |
-| `feature/recurring` | Contract and fake implemented | Manage recurring expense templates and active state |
-| `feature/receivable` | Contract and fake implemented | Manage expected payments and archive state |
-| `navigation` | Prototype | Serializable `Login`/`Home` routes and root Compose `NavHost` |
-| `ui/theme` | Implemented foundation | Material 3 colours, typography, and application theme |
-| `FinanceApplication.kt` | Implemented foundation | Hilt-enabled Android `Application` |
-| `MainActivity.kt` | Implemented foundation | Single activity, edge-to-edge setup, theme, and navigation host |
-
-There is no feature package containing Compose screens or ViewModels beyond the placeholder content inside `AppNavHost`. There are also no dedicated `validation`, `calculation`, `data`, `firebase`, or dependency-injection module packages in this branch. Money rules currently exist only as model conventions and limited validation inside fake repositories.
-
-### Feature package notes
-
-- **Category:** seeds `Food`, `Transport`, and `Bills` in memory. It rejects blank IDs/names and case-insensitive duplicate names, and supports rename/archive operations.
-- **Income:** stores entries in memory, upserts by stable ID, deletes by ID, and observes entries where `startDate <= occurredDate < endDateExclusive`, sorted by date then ID.
-- **Expense:** mirrors income's in-memory upsert/delete/date-range behaviour for expenses.
-- **Goal:** stores goals and contributions separately in memory. Contributions are append-only by ID; an identical retry is idempotent, while a changed record with the same ID fails. A reversal must negate one existing non-reversal contribution and may occur only once.
-- **Recurring:** stores templates in memory, validates positive amount and interval, date order, and non-negative reminder lead time, and supports pause/reactivation.
-- **Receivable:** stores expected payments in memory, trims text fields, validates a positive decimal amount with `BigDecimal`, and supports archive/restore.
+| Package or file | Responsibility |
+| --- | --- |
+| `core/model` | IDs, enums, `Money`, and finance entities |
+| `core/money` | Decimal validation and LKR/USD conversion |
+| `feature/auth` | Firebase authentication repository, ViewModel, and screens |
+| `feature/exchangerate` | Validated USD/LKR quote retrieval and provider metadata |
+| `feature/income` | Income contracts, validation, Firestore mapping/observation/repository, rate coordination, ViewModel, and Compose UI |
+| `feature/expense` | Expense repository, Firestore implementation, ViewModel, and UI |
+| `feature/category`, `feature/goal`, `feature/recurring`, `feature/receivable` | Domain contracts and current in-memory fake implementations for their respective features |
+| `navigation` | Authentication-aware Compose navigation |
+| `ui/theme` | Material 3 theme |
 
 ## Shared model contracts
 
-All current IDs are Kotlin type aliases over `String`. The aliases improve domain readability but do not add runtime validation.
-
 ### IDs and dates
 
-- `UserId` and `DocumentId` are both aliases of `String`.
-- Stable, non-blank document IDs are expected by repository operations. The fake repositories enforce this for saved entities; category seed IDs are readable slugs.
-- Domain dates use `java.time.LocalDate`, available because the minimum SDK is 26.
-- The proposed Firestore mapping serializes date-only values as ISO `YYYY-MM-DD` strings so device time zones cannot change the calendar date.
+- `UserId` and `DocumentId` are Kotlin aliases of `String`.
+- A persisted Income has a stable, non-blank ID. Editing reuses the original ID; only Add creates a new UUID.
+- Domain dates use `LocalDate` and are stored as ISO `YYYY-MM-DD` strings. This avoids device-time-zone changes to date-only values.
 
 ### Money
 
-`Money` captures both the original transaction and its LKR conversion:
+`Money` preserves both the original transaction and its historical LKR conversion:
 
 | Field | Kotlin type | Meaning |
 | --- | --- | --- |
-| `originalAmountDecimal` | `String` | Exact user-entered amount in the original currency |
+| `originalAmountDecimal` | `String` | Exact normalized amount in the selected currency; at most two fractional digits |
 | `originalCurrency` | `CurrencyCode` | `LKR` or `USD` |
-| `rateLkrPerUnitDecimal` | `String` | Historical LKR-per-unit exchange rate |
-| `baseAmountMinor` | `Long` | Converted LKR amount in minor units (cents) |
-| `rateSource` | `RateSource` | `LKR_FIXED`, `MANUAL_TRANSFER`, or `MANUAL_REFERENCE` |
-| `rateDate` | `LocalDate` | Date associated with the preserved rate |
+| `rateLkrPerUnitDecimal` | `String` | Exact LKR-per-unit rate; at most six fractional digits |
+| `baseAmountMinor` | `Long` | Converted LKR amount in cents |
+| `rateSource` | `RateSource` | `LKR_FIXED`, `MANUAL_TRANSFER`, `MANUAL_REFERENCE`, or `EXCHANGE_RATE_API_REFERENCE` |
+| `rateDate` | `LocalDate` | Date associated with the stored historical rate |
 
-Decimal strings avoid binary floating-point loss. Calculations should parse them with `BigDecimal`, apply an agreed rounding policy, and persist the resulting LKR minor-unit `Long`; that calculation/rounding implementation is not present in this branch.
+`MoneyConverter` parses decimal strings with `BigDecimal`, rejects non-positive or over-precision inputs, multiplies the original amount by the LKR-per-unit rate and `100`, then rounds once to an integer minor unit with `RoundingMode.HALF_UP`. `longValueExact()` rejects values outside `Long`. LKR uses rate `1`, source `LKR_FIXED`, and the transaction date as the rate date.
+
+An automatic quote includes full provider timestamps for freshness validation, but Income persists only the applicable `rateDate`. The Income editor's conversion preview displays the stored rate date, not the provider's update timestamp; list rows do not display rate metadata.
 
 ### Category
 
-`Category` has `id`, `name`, `defaultSpendingClass`, and `archived`. `SpendingClass` is either `COMMITTED` or `DISCRETIONARY`. Expenses copy both the category ID and name snapshot so historical labels need not change when a category is renamed.
+`Category` has `id`, `name`, `defaultSpendingClass`, and `archived`. `SpendingClass` is either `COMMITTED` or `DISCRETIONARY`. Expenses copy both the category ID and name snapshot so historical labels do not have to change when a category is renamed.
+
+`FakeCategoryRepository` seeds Food, Transport, and Bills. It trims names, rejects blank IDs/names and case-insensitive duplicate names, and supports rename and archive/restore operations. Category persistence remains in-memory; no Category Firestore repository or rules are implemented.
 
 ### Income
 
-`Income` has `id`, `source`, `entryKind`, `money`, and `occurredDate`, with optional `pnlDirection`, `projectReference`, `receivableId`, `assetSymbol`, and `note`.
+`Income` contains `id`, `source`, `entryKind`, `money`, `occurredDate`, and optional source-specific metadata.
 
-- Sources: `SALARY`, `FREELANCE`, `ADSENSE`, `CRYPTO`.
-- Entry kinds: `RECEIPT`, `REALIZED_PNL`.
-- P&L direction: `GAIN` or `LOSS` when applicable.
+- `SALARY`, `FREELANCE`, and `ADSENSE` are receipt entries.
+- `FREELANCE` exposes an optional project reference; blank input is stored as `null`.
+- `CRYPTO` is realised P&L and requires `GAIN` or `LOSS`; an asset symbol is optional.
+- Optional notes are supported. `receivableId` remains a domain/persistence field but is not entered by the current Income UI.
 
-A receivable reference can connect a later receipt to an expected payment. The receivable itself is not income until an income record is created.
+`IncomeValidator` checks source/entry-kind/P&L relationships and recalculates the exact expected LKR minor value. A stored amount, rate, date, source, or minor-unit value that violates the money contract is rejected by the ViewModel, mapper, repository, and rules at their applicable boundaries.
 
 ### Expense
 
-`Expense` has `id`, `categoryId`, `categoryNameSnapshot`, `spendingClass`, `paymentChannel`, `money`, `occurredDate`, and optional `note` and `channelLabel`. Payment channels are `CASH`, `CARD`, `BANK`, and `OTHER`.
+`Expense` has `id`, `categoryId`, `categoryNameSnapshot`, `spendingClass`, `paymentChannel`, `money`, `occurredDate`, and optional `note` and `channelLabel`. Payment channels are `CASH`, `CARD`, `BANK`, and `OTHER`. Category and spending-class snapshots preserve the transaction's original classification.
+
+Both `FakeExpenseRepository` and `FirestoreExpenseRepository` exist; Hilt binds the Firestore implementation. The current Firestore mapper is implemented directly in that repository and uses a flat document shape rather than the nested Income `money` map. Expense observation listens to the signed-in user's collection, then applies the half-open date filter and date/ID ordering in memory. It does not yet use Income's owner-tagged snapshot or authentication-generation protections.
 
 ### Goal and contribution
 
 `Goal` has `id`, `name`, `targetAmountMinor`, `startDate`, `targetDate`, and `archived`. The target is represented in LKR minor units.
 
-`Contribution` has `id`, `goalId`, `amountMinor`, `kind`, `occurredDate`, and optional `reversesId` and `note`. Kinds are `OPENING`, `ALLOCATION`, and `REVERSAL`. Contributions model allocation to a goal; they are not automatically an income or expense. Reversals preserve history by adding a negative record rather than editing the original.
+`Contribution` has `id`, `goalId`, `amountMinor`, `kind`, `occurredDate`, and optional `reversesId` and `note`. Kinds are `OPENING`, `ALLOCATION`, and `REVERSAL`. Contributions model allocation to a goal; they are not automatically Income or Expense. Reversals preserve history by adding a negative record rather than editing the original.
+
+Only `FakeGoalRepository` exists. It validates goal IDs/names, positive targets, and date order. Contributions are append-only by stable ID: an identical retry is idempotent, a conflicting reuse fails, and a reversal must exactly negate one unreversed non-reversal contribution in the same goal.
 
 ### Recurring expense
 
 `RecurringExpense` has `id`, `title`, `categoryId`, `expectedAmountMinor`, `frequency`, `intervalCount`, `anchorDate`, `startDate`, optional `endDate`, `active`, `reminderEnabled`, and `reminderLeadDays`. Frequencies are `WEEKLY`, `MONTHLY`, and `YEARLY`.
 
-It is a scheduling template, not a confirmed expense. No occurrence-generation, skip, notification, or template-to-expense code exists in this branch.
+It is a scheduling template, not a confirmed Expense. `FakeRecurringRepository` validates non-blank identity/title/category, positive amount and interval, date order, and non-negative reminder lead time. No Firestore repository, occurrence generation, skip handling, notification delivery, or template-to-Expense conversion is implemented.
 
 ### Receivable
 
-`Receivable` has `id`, `title`, `projectReference`, `expectedOriginalDecimal`, `currency`, `expectedDate`, and `archived`. It records an expectation only. It does not include an exchange-rate snapshot or LKR base amount and must not be counted as received income.
+`Receivable` has `id`, `title`, `projectReference`, `expectedOriginalDecimal`, `currency`, `expectedDate`, and `archived`. It records an expectation only. It has no exchange-rate snapshot or LKR base amount and must not be counted as received Income.
+
+`FakeReceivableRepository` trims and validates its text fields, parses the positive amount with `BigDecimal`, and supports archive/restore. No Receivable UI or Firestore repository is implemented. An actual receipt requires a separate Income, optionally linked by `receivableId`.
+
+## Income feature behavior
+
+### List, Add/Edit, and Delete
+
+The Income list observes a half-open monthly range, shows the stored entries and net LKR total, supports previous/next month navigation, and exposes Add, Edit, and Delete actions. Loading, empty, observation-error/retry, delete-progress, and operation messages are represented explicitly.
+
+Add starts a fresh stable ID with Salary, LKR, and today's date. Edit hydrates the selected stored record, including its original currency and historical exchange-rate snapshot. Closing an editor with Back or Cancel is immediate when no save is in progress; there is no dirty-form discard confirmation.
+
+Delete requires confirmation. The ViewModel validates the snapshot owner and exact selected record before opening the confirmation, then calls `deleteIncomeForOwner`. Failure leaves the list intact and provides a retryable user operation.
+
+### Currency and exchange-rate selection
+
+- LKR is fixed at rate `1`, source `LKR_FIXED`, with rate date equal to transaction date.
+- USD Automatic mode requests a validated USD-to-LKR reference quote. It provides loading, refresh, retry, and an explicit switch to manual entry when retrieval fails.
+- USD Manual mode accepts a positive rate with at most six fractional digits, a rate date, and either `MANUAL_TRANSFER` or `MANUAL_REFERENCE`.
+- A validated automatic quote is stored as `EXCHANGE_RATE_API_REFERENCE` with its applicable date.
+- Existing USD Income opens without a network request. Saving an otherwise unchanged historical record preserves its amount, rate, source, rate date, and LKR minor snapshot. Changing the amount reuses the preserved rate until the user explicitly refreshes or replaces it.
+
+### Saving
+
+The form validates fields and shows inline errors. Saving disables form actions while the owner-bound request is active. Add and Edit both call `saveIncomeForOwner` using the owner captured when the form was created, never a newly looked-up UID. On success the editor closes; on failure it remains open with an error. Stable IDs make retried writes update the same document rather than creating duplicates.
 
 ## Repository architecture
 
-All observable methods return `Flow<List<T>>`; all commands return `Result<Unit>`. This allows a future data layer to stream database changes and report expected operation failures without binding callers to Firebase APIs.
+`IncomeRepository` exposes owner-tagged observation snapshots plus compatibility list observation, and both general and explicitly owner-bound save/delete methods. Production UI uses the owner-bound operations.
 
-| Interface | Query methods | Command methods | Current implementation |
+| Implementation | Purpose |
+| --- | --- |
+| `FirestoreIncomeRepository` | Validates Income, re-checks the active UID, maps schema version 1, and writes/deletes beneath the verified user's path |
+| `IncomeFirestoreObserver` | Switches authenticated listeners, clears old-account data, maps snapshots, and propagates errors |
+| `FakeIncomeRepository` | Deterministic, owner-aware process-local storage for unit tests |
+
+The Firestore observer queries `users/{uid}/incomes` with `startDate <= occurredDate < endDateExclusive` and orders by `occurredDate` then document ID. Mapping requires exact supported field sets, path/field ID equality, valid enum/date types, and domain-valid money.
+
+| Interface | Observable methods | Commands | Implemented storage |
 | --- | --- | --- | --- |
-| `CategoryRepository` | `observeCategories()` | `addCategory`, `renameCategory`, `setCategoryArchived` | `FakeCategoryRepository` |
-| `IncomeRepository` | `observeIncomes(startDate, endDateExclusive)` | `saveIncome`, `deleteIncome` | `FakeIncomeRepository` |
-| `ExpenseRepository` | `observeExpenses(startDate, endDateExclusive)` | `saveExpense`, `deleteExpense` | `FakeExpenseRepository` |
-| `GoalRepository` | `observeGoals()`, `observeContributions(goalId)` | `saveGoal`, `setGoalArchived`, `addContribution` | `FakeGoalRepository` |
-| `RecurringRepository` | `observeRecurringExpenses()` | `saveRecurringExpense`, `setRecurringExpenseActive` | `FakeRecurringRepository` |
-| `ReceivableRepository` | `observeReceivables()` | `saveReceivable`, `setReceivableArchived` | `FakeReceivableRepository` |
+| `CategoryRepository` | `observeCategories()` | add, rename, archive | In-memory fake only |
+| `IncomeRepository` | owner-tagged/list date-range observation | save/delete, including owner-bound variants | Firestore production binding plus in-memory fake |
+| `ExpenseRepository` | date-range observation | save/delete | Firestore production binding plus in-memory fake |
+| `GoalRepository` | goals and contributions by goal | save/archive goal, add contribution | In-memory fake only |
+| `RecurringRepository` | recurring templates | save, activate/pause | In-memory fake only |
+| `ReceivableRepository` | receivables | save, archive/restore | In-memory fake only |
 
-The fake repositories use `MutableStateFlow` as process-local storage and `Mutex` to serialize writes. Their state disappears when the repository instance or application process is discarded. They support deterministic unit tests and parallel UI development without network access, but they do not implement authentication, persistence, offline Firestore caching, cross-device synchronization, or security enforcement.
-
-**No repository currently uses Firebase.** Firebase Authentication and Firestore are build dependencies only. There are no production repository implementations, Firebase SDK calls, data-transfer objects, mappers, snapshot listeners, or DI bindings in this branch.
+Fake repositories use `MutableStateFlow` and `Mutex` for deterministic process-local behavior. Their contents disappear with the repository instance/process and do not provide cloud persistence, cross-device synchronization, or server-side security.
 
 ## Architecture decisions
 
 ### Kotlin
 
-Kotlin provides null safety, data classes, sealed/serializable route support, coroutines, and concise Android APIs. It is fully configured and used throughout the project.
+Kotlin supplies null safety, data classes, sealed/serializable routes, coroutines, and concise Android APIs. Domain models and finance calculations use Kotlin throughout; financial decimals deliberately use `BigDecimal` rather than binary floating point.
 
 ### Jetpack Compose and Material 3
 
-Compose supplies declarative UI and integrates with observable state; Material 3 provides the design system. The theme and placeholder destinations are implemented, while complete feature screens are planned.
+Compose renders immutable state declaratively, while Material 3 provides the design system. Authentication, Home, Expense, and Income screens are implemented; the existence of shared models does not imply screens for Category, Goal, Recurring Expense, or Receivable.
 
 ### Single-activity architecture
 
-One `MainActivity` hosts the Compose tree and navigation graph. This centralises app-level theming and navigation and avoids fragment/activity transitions for individual features. This structure is implemented.
+One `MainActivity` hosts the Compose tree and `AppNavHost`. This centralizes app-level theme, authentication routing, and feature navigation without per-feature activities or fragments.
 
 ### MVVM
 
-MVVM is the intended separation between Compose rendering, lifecycle-aware state holders, and repositories. It reduces UI/data coupling and makes state logic testable. Repository contracts exist, but the ViewModel layer is not implemented, so the current branch is not yet a complete MVVM implementation.
+ViewModels coordinate lifecycle-aware state and asynchronous work while repositories isolate persistence. This separation is implemented for Authentication, Expense, and Income; features with only fake repositories do not yet have a complete UI/ViewModel path.
 
 ### Hilt
 
-Hilt is intended to construct ViewModels and select fake or Firebase repository implementations. Application/activity integration is present. Modules, scopes, and bindings are not yet present.
+`FinanceApplication` and `MainActivity` enable Hilt. Modules currently bind Authentication, Category, Exchange Rate, Expense, and Income dependencies. Income and Expense select Firestore repositories; Category selects its fake; no modules claim Firebase persistence for the remaining proposed features.
 
 ### Coroutines and Flow
 
-Suspending commands avoid blocking the main thread, while `Flow` supports continuously updated lists. The fake repositories implement these patterns now. Future Firestore snapshot listeners should be adapted into cold or callback-based flows with correct cancellation and error handling.
+Suspending repository commands avoid blocking the main thread and `Flow` streams authentication and list state. Income adapts Firestore listeners with cancellation on UID or date-range changes. Fake repositories use Flow for deterministic in-process observation.
 
 ### Repository interfaces
 
-Interfaces keep domain consumers independent of storage technology. They allow in-memory implementations for tests and Firebase implementations for production, and create a clear boundary for validation and mapping. The interfaces and fakes are implemented.
-
-### Firebase Authentication and Firestore
-
-Firebase is intended to provide identity and synchronized persistence for financial records through offline-capable Android clients. Dependencies and Android configuration are present, but actual sign-in, user scoping, Firestore access, security rules, and indexes are not implemented on this branch. The proposed user-owned layout is documented in [firestore-schema.md](firestore-schema.md).
-
-### UID-scoped preferences with DataStore
-
-Raveen's assigned preferences implementation will use Android DataStore and scope preference state to the active Firebase UID so one user's local settings cannot be shown to another user. This branch does not yet contain the DataStore dependency, a preferences model, or preference access code.
-
-DataStore is the intended authoritative store for preferences. The Firestore `users/{uid}/settings/preferences` document is only an optional cloud-synchronization proposal. It must not be implemented as a second authority or dual-written until the team explicitly approves synchronization semantics, including ownership, conflict resolution, migration, offline behaviour, and logout/user-switch handling.
+Interfaces keep domain consumers independent of Firebase and allow in-memory test implementations. Observable methods return `Flow`; commands return `Result<Unit>` for expected failures. Income extends this pattern with immutable owner-tagged snapshots and explicit owner-bound commands.
 
 ### Decimal-safe financial values
 
-Binary floating-point values can introduce rounding errors that are unacceptable for finance. The models therefore preserve input amounts and rates as decimal strings and store converted LKR values as integer minor units. `Receivable` validation already uses `BigDecimal`; the shared M02 validation/conversion logic and final rounding policy remain under implementation.
+No financial calculation uses `Double` or `Float`. Decimal strings preserve input and rate precision, `BigDecimal` performs conversion, and LKR totals use integer minor units. The rounding policy and boundary/overflow behavior are covered by JVM tests.
 
-## Current limitations and intended next steps
+### Firebase ownership
 
-The architecture foundation should not be confused with a production-ready data path. The next integration steps are to add feature ViewModels and screens, define Hilt repository bindings, implement Firebase Authentication session handling, implement explicit Firestore mappers/repositories, add UID-scoped DataStore preferences, add security rules and rule tests, and protect the app navigation graph. Those changes should preserve the existing repository contracts unless requirements force a reviewed contract change. Cloud synchronization of preferences remains a separate team decision.
+Income data is stored below `users/{uid}/incomes/{incomeId}`. The client uses three reinforcing boundaries: authentication-aware observation, ViewModel snapshot/auth-generation checks, and repository expected-owner checks. Checked-in Firestore rules require the authenticated UID to match the user path and validate the Income schema. Local files do not prove that those rules or indexes are deployed.
+
+### General security architecture
+
+- Firebase Authentication is the identity authority; a UID supplied by UI state or document content is never authentication proof.
+- Firestore client access is scoped below `users/{uid}`, and checked-in rules require `request.auth.uid == uid` for implemented Income and Expense paths.
+- Unmatched rule paths are denied. Proposed Category, Receivable, Recurring, Goal, Contribution, and preference paths are therefore not client-accessible merely because they are documented.
+- Income additionally verifies owner continuity in its observer, ViewModel callbacks/drafts, authentication generation, and repository commands. The current Expense implementation does not yet claim those Income-specific safeguards.
+- Logout removes protected navigation state. Feature listeners/state must also be cancelled or cleared on UID changes; this behavior is implemented and regression-tested for Income.
+- Local Firebase caches may retain bytes on disk. Cached data must never be treated as authority for a different UID, and shared-device/cache policy still requires deployment-environment verification.
+- Privileged administration belongs outside the Android client. Rules and Emulator Suite tests are necessary, while deployment evidence must be recorded separately.
+
+### UID-scoped preferences with DataStore
+
+UID-scoped Android DataStore remains proposed as the authoritative preference store. This branch has no preferences model, repository, or DataStore implementation. A Firestore preferences document is only an optional cloud-synchronization proposal and must not become a second authority without an approved conflict, migration, offline, logout, and user-switch design.
+
+## Completed responsibilities and remaining scope
+
+- **M02 complete:** shared `Money` model, validation, exact conversion, precision limits, `HALF_UP` rounding, overflow handling, and tests.
+- **M03 complete:** Income list/add/edit/delete UI, automatic/manual exchange rates, validation, historical snapshots, ViewModel behavior, owner-bound Firestore observation/save/delete, mapping, DI, rules, and regression coverage.
+- **Outside M03:** UID-scoped DataStore preferences and completing the remaining finance features. Firebase deployment status must be tracked separately from repository implementation.

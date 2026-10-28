@@ -116,6 +116,26 @@ class MoneyConverterTest {
     }
 
     @Test
+    fun roundsBelowMinorUnitMidpointDownAndMidpointUp() {
+        val belowMidpoint = MoneyConverter.fromUsd(
+            amountInput = "1.00",
+            rateLkrPerUsdInput = "100.004999",
+            rateSource = RateSource.MANUAL_REFERENCE,
+            rateDate = transactionDate
+        ).getOrThrow()
+        val atMidpoint = MoneyConverter.fromUsd(
+            amountInput = "1.00",
+            rateLkrPerUsdInput = "100.005",
+            rateSource = RateSource.MANUAL_REFERENCE,
+            rateDate = transactionDate
+        ).getOrThrow()
+
+        // Exact BigDecimal minor values are 10,000.4999 and 10,000.5 respectively.
+        assertEquals(10000L, belowMidpoint.baseAmountMinor)
+        assertEquals(10001L, atMidpoint.baseAmountMinor)
+    }
+
+    @Test
     fun roundsHalfCentUpCorrectly() {
         val result = MoneyConverter.fromUsd(
             amountInput = "125.50",
@@ -174,6 +194,50 @@ class MoneyConverterTest {
             RateSource.MANUAL_REFERENCE,
             result.getOrThrow().rateSource
         )
+    }
+
+    @Test
+    fun convertsAutomaticUsdRateAndPreservesItsSnapshotMetadata() {
+        val applicableDate = LocalDate.of(2026, 10, 19)
+
+        val result = MoneyConverter.fromUsd(
+            amountInput = "125.50",
+            rateLkrPerUsdInput = "305.25",
+            rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
+            rateDate = applicableDate
+        )
+
+        assertTrue(result.isSuccess)
+
+        val money = result.getOrThrow()
+
+        assertEquals(3830888L, money.baseAmountMinor)
+        assertEquals("125.50", money.originalAmountDecimal)
+        assertEquals(CurrencyCode.USD, money.originalCurrency)
+        assertEquals("305.25", money.rateLkrPerUnitDecimal)
+        assertEquals(RateSource.EXCHANGE_RATE_API_REFERENCE, money.rateSource)
+        assertEquals(applicableDate, money.rateDate)
+    }
+
+    @Test
+    fun rejectsInvalidAutomaticExchangeRates() {
+        val invalidRates = listOf(
+            "",
+            "0",
+            "-300",
+            "300.1234567"
+        )
+
+        invalidRates.forEach { rate ->
+            val result = MoneyConverter.fromUsd(
+                amountInput = "100",
+                rateLkrPerUsdInput = rate,
+                rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
+                rateDate = transactionDate
+            )
+
+            assertTrue("Expected rejection for: $rate", result.isFailure)
+        }
     }
 
     @Test
@@ -259,11 +323,39 @@ class MoneyConverterTest {
     }
 
     @Test
+    fun rejectsAutomaticUsdOverflowInsteadOfStoringWrongValue() {
+        val result = MoneyConverter.fromUsd(
+            amountInput = "999999999999999999999999",
+            rateLkrPerUsdInput = "300",
+            rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
+            rateDate = transactionDate
+        )
+
+        assertTrue(result.isFailure)
+    }
+
+    @Test
     fun rejectsUsdConversionThatRoundsToZeroMinorUnits() {
         val result = MoneyConverter.fromUsd(
             amountInput = "0.01",
             rateLkrPerUsdInput = "0.01",
             rateSource = RateSource.MANUAL_REFERENCE,
+            rateDate = transactionDate
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals(
+            "Converted amount is too small to represent in LKR cents",
+            result.exceptionOrNull()?.message
+        )
+    }
+
+    @Test
+    fun rejectsAutomaticUsdConversionThatRoundsToZeroMinorUnits() {
+        val result = MoneyConverter.fromUsd(
+            amountInput = "0.01",
+            rateLkrPerUsdInput = "0.01",
+            rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
             rateDate = transactionDate
         )
 

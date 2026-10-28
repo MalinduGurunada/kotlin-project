@@ -1,246 +1,210 @@
-# Add Income Screen Wireframe
+# Income List and Add/Edit Wireframes
 
-**SE3092 Personal Finance App** | **M02** | **18 October 2026**
+**SE3092 Personal Finance App** | **M03** | **26 October 2026**
 
-*Status: approved screen specification. The screen and its ViewModel are not implemented in the current branch.*
+*Status: implemented. This document describes the current Income list, editor, money, exchange-rate, persistence, and ownership behaviour.*
 
 ## Purpose and scope
 
-This document specifies the Add Income form for M02 and records the boundary of the planned M03 automatic USD/LKR exchange-rate feature. It is a UI and behaviour specification, not evidence that the screen, Firebase persistence, or online rate lookup exists.
+The Income feature lists the signed-in user's income for a selected month and supports Add, Edit, and Delete workflows. The editor accepts LKR or USD, supports automatic and manual USD/LKR rates, and preserves the selected conversion as historical `Money` data.
 
-The specification is based on the implemented [`Money`](../../app/src/main/java/com/example/personalfinanceapp/core/model/Money.kt) and [`Income`](../../app/src/main/java/com/example/personalfinanceapp/core/model/Income.kt) models, the implemented [`MoneyValidator`](../../app/src/main/java/com/example/personalfinanceapp/core/money/MoneyValidator.kt) and [`MoneyConverter`](../../app/src/main/java/com/example/personalfinanceapp/core/money/MoneyConverter.kt), and the current [`IncomeRepository`](../../app/src/main/java/com/example/personalfinanceapp/feature/income/IncomeRepository.kt) contract. It follows the [shared screen conventions](../screen-conventions.md), [architecture](../architecture.md), and proposed [Firestore schema](../firestore-schema.md).
+The implementation is defined by [`IncomeListScreen`](../../app/src/main/java/com/example/personalfinanceapp/feature/income/ui/IncomeListScreen.kt), [`IncomeEditorScreen`](../../app/src/main/java/com/example/personalfinanceapp/feature/income/ui/IncomeEditorScreen.kt), [`IncomeViewModel`](../../app/src/main/java/com/example/personalfinanceapp/feature/income/ui/IncomeViewModel.kt), the money utilities, and the owner-bound Firestore income repository.
 
 ## Current implementation boundary
 
-| Area | Verified status in the current branch |
+| Area | Implemented behaviour |
 | --- | --- |
-| Money model | Implemented. Preserves original amount/currency, LKR-per-unit rate, converted LKR minor units, rate source, and rate date. |
-| Money validation and conversion | Implemented and unit tested for positive amounts, LKR conversion, manually rated USD conversion, precision, rounding, overflow, and too-small results. |
-| Income model | Implemented with source, entry kind, money snapshot, transaction date, and optional P&L, project, receivable, asset, and note fields. |
-| Income repository | Contract and in-memory fake implemented. The fake can observe, save/update, and delete income, but validates only that a saved income ID is non-blank. |
-| Add Income UI and ViewModel | Not present. This document defines the intended screen only. |
-| Firebase income persistence | Not present. The Firestore income structure is a proposed schema only. |
-| Automatic USD/LKR lookup | Not present and outside M02. It is planned for M03. |
+| Income list | Observes one half-open monthly date range, renders loading/empty/error/success states, shows net LKR income, and supports previous/next month navigation. |
+| Add/Edit | Uses one editor with mode-specific title and save label. Add creates a stable draft ID; Edit preserves the selected record ID and immutable original record. |
+| Delete | Uses a confirmation dialog, disables duplicate confirmation while deleting, and retains safe retryable error text. |
+| Money | Preserves original amount/currency, LKR-per-unit rate, converted LKR minor units, rate source, and rate date. |
+| USD rates | Supports automatic API reference rates plus manual actual-transfer and manual-reference rates, including refresh, retry, and manual fallback. |
+| Persistence | Uses a schema-versioned Firestore mapper and UID-scoped observation, save, and delete paths. |
+| Ownership | Observation snapshots carry their authenticated owner. Edit and Delete validate the snapshot owner and exact record; writes use owner-bound repository methods. |
 
-## Screen layout
+## Screen layouts
 
-Conditional areas are marked in the wireframe and are described below.
+### Income list
 
 ```text
 +------------------------------------------------------+
-| [Back]  Add Income                                   |  1
+| [Back]  Income                                       |
 +------------------------------------------------------+
-| Income source *                                      |  2
-| [ Salary ] [ Freelance ] [ AdSense ] [ Crypto ]      |
+| [Previous]          October 2026             [Next]  |
 |                                                      |
-| [Crypto only] Result *                               |  3
-| [ Profit ] [ Loss ]                                  |
+| Net income                                           |
+| LKR 250,000.00                                      |
 |                                                      |
-| [Freelance only] Project reference (optional)        |  4
-| [ e.g. Website redesign                         ]    |
+| Salary                                               |
+| Oct 5, 2026                    LKR 150,000.00         |
+|                                      [Edit] [Delete] |
 |                                                      |
-| Income amount *                                      |  5
-| [ 0.00                                           ]    |
+| AdSense                                              |
+| Oct 20, 2026                          USD 100.00      |
+|                                      [Edit] [Delete] |
 |                                                      |
-| Currency *                                           |  6
-| [ LKR ] [ USD ]                                      |
-|                                                      |
-| [USD only] Exchange rate (LKR per USD) *              |  7
-| [ 0.000000                                       ]    |
-| M02: manually entered rate                           |
-| M03: fetched rate, timestamp, and manual alternative |
-|                                                      |
-| Estimated amount in LKR                              |  8
-| LKR --                                               |
-|                                                      |
-| Transaction date *                                   |  9
-| [ YYYY-MM-DD                                    ] [v]|
-|                                                      |
-| Notes (optional)                                     | 10
-| [                                                  ] |
-| [                                                  ] |
-|                                                      |
-| [                  Save Income                    ]   | 11
+|                                         [Add Income] |
 +------------------------------------------------------+
 ```
 
-The form must be vertically scrollable, remain usable above the software keyboard, and hide bottom navigation while open. The back action follows the shared form convention: an untouched form closes; a changed form asks whether to discard changes or keep editing.
+Each row shows the original amount and currency, source, transaction date, and any stored project, asset, or note text. Rows do not show converted LKR, exchange-rate source, or rate date; the stored LKR values are used only for the net summary. The list also shows loading, empty, and recoverable error states. Delete opens a confirmation dialog with source, original amount, and transaction date. A pending deletion cannot be submitted or cancelled twice.
+
+### Add/Edit editor
+
+```text
++------------------------------------------------------+
+| [Back]  Add Income / Edit Income                     |
++------------------------------------------------------+
+| Currency *                 ( LKR ) ( USD )            |
+| Income source *            [ Salary              v ] |
+| Amount *                   [ 0.00                  ] |
+|                                                      |
+| [USD only] Rate mode       ( Automatic ) ( Manual )  |
+| Automatic: [Refresh/Retry reference rate]            |
+|             [Enter a manual rate] on lookup failure  |
+| Manual:    LKR per USD [                         ]    |
+|            Type (Actual transfer) (Reference)        |
+|            [Rate date: YYYY-MM-DD]                   |
+|                                                      |
+| Selected rate / converted LKR / source / rate date   |
+| [Transaction date: YYYY-MM-DD]                       |
+| [Freelance] Project reference (optional)             |
+| [Crypto] Realized result (Gain) (Loss)                |
+| [Crypto] Asset symbol (optional)                     |
+| Note (optional)                                      |
+|                                                      |
+|                         [Cancel] [Save Income/Changes]|
++------------------------------------------------------+
+```
+
+The editor scrolls vertically. Back and Cancel close an unsaved editor immediately; there is no dirty-form discard-confirmation dialog. Back, Cancel, fields, and Save are disabled while a save is active.
 
 ## Fields and model mapping
 
-| No. | UI element | Required behaviour | Model mapping and status |
-| --- | --- | --- | --- |
-| 1 | Title and back navigation | Display **Add Income** and an accessible back action. | Navigation concern; no `Income` field. Not implemented. |
-| 2 | Income source | Offer Salary, Freelance, AdSense, and Crypto as a single-choice selection. | Maps exactly to `IncomeSource.SALARY`, `FREELANCE`, `ADSENSE`, and `CRYPTO`. Enum implemented; UI not implemented. |
-| 3 | Profit or Loss | Display only when Crypto is selected. Exactly one option is required for the approved realised-P&L flow. | Profit maps to `PnlDirection.GAIN`; Loss maps to `PnlDirection.LOSS`; `entryKind` maps to `IncomeEntryKind.REALIZED_PNL`. Fields and enums implemented; cross-field validation is not implemented. |
-| 4 | Project reference | Display for Freelance. It is optional; omit it from the model when blank. | Maps to nullable `Income.projectReference`. The model supports it. The fake repository does not validate or normalize it. |
-| 5 | Income amount | Accept a positive decimal amount in the selected original currency. Loss entries still use a positive magnitude. | Stored through `Money.originalAmountDecimal`; validation is implemented. |
-| 6 | Currency | Offer LKR or USD as a single-choice selection. | Maps exactly to `CurrencyCode.LKR` or `CurrencyCode.USD`. Enum implemented. |
-| 7 | Exchange rate | Display only for USD. In M02 it is a required manual LKR-per-USD value. | Stored in `Money.rateLkrPerUnitDecimal`. `MoneyConverter.fromUsd` accepts only `MANUAL_TRANSFER` or `MANUAL_REFERENCE`; see the open decision below. |
-| 8 | Estimated converted LKR amount | Read-only result calculated from valid amount and rate input. Show a neutral placeholder until calculation is possible. | Derived from `Money.baseAmountMinor`, which stores LKR minor units. Calculation is implemented; presentation is not. |
-| 9 | Transaction date | Require a valid calendar date selected by the user. | Maps to `Income.occurredDate`. For LKR, `MoneyConverter.fromLkr` also uses this date as `Money.rateDate`. |
-| 10 | Notes | Optional multiline text. | Maps to nullable `Income.note`. No maximum length or normalization rule is implemented or approved. |
-| 11 | Save Income | Validate the complete form, prevent duplicate submission, build one `Income`, and request persistence. | Calls `IncomeRepository.saveIncome` in a future ViewModel. No income UI/ViewModel or production repository currently exists. |
+| UI element | Behaviour | Model mapping |
+| --- | --- | --- |
+| Mode/title | **Add Income** for a new draft; **Edit Income** for an observed record. | `IncomeEditorMode.ADD` or `EDIT`; Edit retains `Income.id`. |
+| Currency | LKR or USD. Add defaults to LKR. | `Money.originalCurrency`. |
+| Income source | Salary, Freelance, AdSense, or Crypto. Add defaults to Salary. | `Income.source`. |
+| Amount | Positive original-currency amount with at most two fractional digits. | `Money.originalAmountDecimal`. |
+| Transaction date | Required calendar date; Add defaults to the current date. | `Income.occurredDate`; also the LKR `rateDate`. |
+| USD rate mode | Automatic API reference or Manual. | Selects how the USD `Money` snapshot is prepared. |
+| Manual rate | Positive LKR-per-USD rate with at most six fractional digits. | `Money.rateLkrPerUnitDecimal`. |
+| Manual rate type | Actual transfer or Reference. | `MANUAL_TRANSFER` or `MANUAL_REFERENCE`. |
+| Manual rate date | Required for manual USD; follows the transaction date until explicitly selected. | `Money.rateDate`. |
+| Conversion preview | Displays selected rate, converted LKR amount, rate source, and stored rate date. | Derived from the candidate `Money` snapshot. |
+| Project reference | Optional and visible only for Freelance. | Trimmed to `Income.projectReference`, or `null` when blank/not applicable. |
+| Realized result | Gain or Loss, required only for Crypto. | `Income.entryKind = REALIZED_PNL` and `Income.pnlDirection`. |
+| Asset symbol | Optional and visible only for Crypto. | Trimmed to `Income.assetSymbol`, or `null`. |
+| Note | Optional multiline text. | Trimmed to `Income.note`, or `null`. |
 
-`Income.id` is required by the repository but is not a user-facing field. The save flow must supply a stable, non-blank ID. `receivableId` and `assetSymbol` exist in the model but are not fields in this approved Add Income wireframe. Adding receivable linking or a crypto asset selector requires a separate UI requirement.
+`Income.id` and the owner ID are not user-editable. Add generates one UUID when the draft opens and reuses it across retries. Edit uses the selected record ID and preserves an untouched `receivableId`.
 
 ## Conditional behaviour
 
 | Condition | Screen behaviour | Stored meaning |
 | --- | --- | --- |
-| Currency is LKR | Hide the exchange-rate input. Calculate using a fixed rate of `1`. | `originalCurrency = LKR`, `rateLkrPerUnitDecimal = "1"`, `rateSource = LKR_FIXED`, and `rateDate = occurredDate`. |
-| Currency is USD | Show and require the exchange-rate input. Recalculate the estimate when both amount and rate are valid. | Preserve the USD amount, selected manual rate source, rate value, rate date, and calculated LKR minor units. |
-| Source is Crypto | Show Profit and Loss. For this approved flow, use `REALIZED_PNL`; require Profit/Gain or Loss. | `pnlDirection = GAIN` or `LOSS`. The entered amount remains positive; direction carries the financial sign. |
-| Source is not Crypto | Hide Profit and Loss. | Use `entryKind = RECEIPT` and `pnlDirection = null`. |
-| Source is Freelance | Show optional Project reference. | Store a non-blank value in `projectReference`; otherwise store `null`. |
-| Source is not Freelance | Hide Project reference. | Store `projectReference = null` for this screen flow. |
-| Amount or required USD rate is invalid | Do not show a misleading estimate and do not save. | No `Money` or `Income` record is produced until validation succeeds. |
+| Currency is LKR | Hide USD controls; use a fixed rate without network access. | Rate `1`, source `LKR_FIXED`, rate date equal to transaction date. |
+| Currency is USD with Automatic selected | Request a validated recent USD/LKR quote; show loading, refresh/retry, safe errors, and manual fallback. | Source `EXCHANGE_RATE_API_REFERENCE`; preserve quote rate and applicable date. |
+| Currency is USD with Manual selected | Show rate, rate type, and rate-date controls. | Source `MANUAL_TRANSFER` or `MANUAL_REFERENCE`; preserve the selected date. |
+| Source is Crypto | Show Gain/Loss and optional asset symbol. | Positive money magnitude with `REALIZED_PNL`; `pnlDirection` carries the sign. |
+| Source is Freelance | Show optional project reference. | Non-blank trimmed value or `null`. |
+| Source is Salary or AdSense | No source-specific metadata fields. | `RECEIPT`, with project/asset/P&L fields cleared. |
+| Existing USD record opens | Hydrate the stored rate snapshot without a network request. | Untouched money remains byte-for-byte equivalent at the model level. |
+| Existing USD amount changes | Recalculate with the preserved historical rate, source, and rate date. | The record is not silently repriced. |
+| User explicitly refreshes an API-rated edit | Request and validate a new quote. | A successful refresh replaces the candidate snapshot only when the user saves. |
 
-The models can represent combinations beyond this wireframe. The mappings above are screen rules, not validations currently enforced by the `Income` constructor or fake repository.
+The editor's conversion preview displays `Money.rateDate`, which is the applicable date persisted with the transaction. Income list rows do not display rate metadata. The UI does **not** display or persist the provider's full `providerUpdatedAt` timestamp.
 
-## Input validation
+## Input validation and errors
 
-Validation should run after relevant field interaction and again on Save. Show a field-specific, understandable message, preserve the user's input, and move focus to the first invalid field when helpful. Raw exceptions and Firebase error codes must not be displayed.
+Validation occurs while rate/amount inputs change and again on Save. Invalid input stays visible and no repository write occurs.
 
-| Input | Verified rule |
+| Input | Implemented rule |
 | --- | --- |
-| Source | Required by this screen specification. No model or repository validator currently enforces it because the Kotlin enum is non-null once an `Income` is constructed. |
-| Amount | Trim surrounding whitespace; require digits with an optional decimal point and one or two fractional digits; require a value greater than zero. Commas, signs, letters, and scientific notation are rejected. |
-| Currency | Required by this screen specification. Only LKR and USD exist in `CurrencyCode`. |
-| USD rate | Trim surrounding whitespace; require digits with an optional decimal point and one to six fractional digits; require a value greater than zero. Commas, signs, letters, and scientific notation are rejected. |
-| Rate source | LKR must use `LKR_FIXED`. USD conversion currently accepts only `MANUAL_TRANSFER` or `MANUAL_REFERENCE`; `LKR_FIXED` is rejected for USD. |
-| Converted amount | The calculated LKR minor-unit value must fit exactly in a `Long` and be greater than zero. A conversion that rounds to zero minor units is rejected. |
-| Crypto result | Required when Crypto is selected. Use a positive amount plus `GAIN`/`LOSS`; do not encode a loss as a negative amount. |
-| Transaction date | Required and represented by `LocalDate`. The repository contains no rule about future dates, so this document does not prohibit them. |
-| Project reference | Optional for Freelance. No approved length or character limit exists. If supplied to the proposed Firestore shape, it should be non-blank. |
-| Notes | Optional. No approved length limit exists in current Kotlin validation. |
-| Income ID | Must be stable and non-blank. It is generated or supplied by the data layer, not typed by the user. |
+| Amount | Trim whitespace; digits with optional one or two fractional digits; greater than zero. Commas, signs, letters, and scientific notation are rejected. |
+| USD rate | Trim whitespace; digits with optional one to six fractional digits; greater than zero. |
+| Rate source | LKR requires `LKR_FIXED`; USD accepts `MANUAL_TRANSFER`, `MANUAL_REFERENCE`, or `EXCHANGE_RATE_API_REFERENCE`. |
+| Converted amount | Exact decimal calculation must fit a `Long` and round to a positive LKR minor-unit value. |
+| Transaction date | Required `LocalDate`. No rule prohibits a future date. |
+| Crypto result | Gain or Loss is required; negative amount input is not used. |
+| Income ID | Stable and non-blank; Firestore-compatible IDs are enforced at the persistence boundary. |
+| Snapshot consistency | `IncomeValidator` recalculates money and rejects mismatched stored minor units, invalid LKR rate/date/source, and invalid entry-kind/P&L combinations. |
 
-The implemented amount error messages are **Amount cannot be empty**, **Enter a valid amount with up to 2 decimal places**, and **Amount must be greater than zero**. The implemented rate errors are **Enter a valid exchange rate with up to 6 decimal places** and **Exchange rate must be greater than zero**. The UI may use equivalent user-friendly wording but must not weaken these rules.
+Automatic-rate failures are mapped to safe network, timeout, rate-limit, stale-quote, or unavailable messages. Save failures retain the complete form and show a generic safe message. Raw Firebase and provider details are not displayed.
 
-## Screen states
+## Screen and operation states
 
-These are target behaviours for a future screen; none is implemented for income in the current branch.
-
-| State | Expected behaviour |
+| State | Implemented behaviour |
 | --- | --- |
-| Default / ready | Render the base fields and explicit required/optional labels. Hide source-specific fields until their condition applies. The models do not define initial source, currency, or date values, so defaults must be approved during UI implementation rather than presented as existing behaviour. Do not silently save an unselected required value. |
-| Loading | M02 has no online exchange-rate loading. In M03, when an automatic USD lookup is active, keep the form visible, show progress beside the rate, and disable Save until a valid fetched or manual rate is available. |
-| Invalid input | Show inline field errors, retain every entered value, suppress an invalid estimate, and do not call the repository. |
-| Error | For rate-service or save failures, keep the completed form visible, show a short message, and provide Retry or manual-rate action as appropriate. Do not expose implementation details. |
-| Offline | M02 manual calculation can continue without a rate service. M03 must offer manual rate entry when lookup is unavailable. Persistence must show an accurate offline or pending state and must not claim cloud confirmation while a write remains pending. Firebase income persistence and pending-write behaviour are not yet implemented. |
-| Saving | Keep values visible, replace or accompany the button label with **Saving**, disable repeated submissions and navigation actions that would duplicate the write, and retain the form if saving fails. |
-| Success | Show a brief accessible confirmation, return to the relevant income/activity view, and display the saved record using its stored historical values. |
+| List loading | Clears prior financial values and shows progress. |
+| List empty | Shows a zero total and no-records message. |
+| List error | Shows a safe message and Retry. |
+| Editor ready | Add uses Salary/LKR/current-date defaults; Edit hydrates the observed record. |
+| Rate loading | Keeps the form visible, shows progress, and disables Save until valid money is available. |
+| Invalid input | Shows field/form errors and prevents persistence. |
+| Saving | Keeps values visible, shows **Saving**, and blocks duplicate submission/navigation. |
+| Save failure | Retains all input and stable ID for retry. |
+| Save success | Closes the editor and shows an Add/Edit success message. |
+| Deleting | Keeps the confirmation visible and blocks duplicate confirmation/cancellation. |
+| Delete failure | Retains the selected record and shows a safe missing/permission/network message. |
 
 ## Financial calculation and historical-rate rules
 
-1. Parse money with decimal arithmetic. Do not use `Double` or `Float`.
-2. For LKR, use `rate = 1`, `rateSource = LKR_FIXED`, and the transaction date as `rateDate`.
-3. For USD, calculate `amount x LKR-per-USD rate x 100` and round once to the nearest LKR minor unit using `RoundingMode.HALF_UP`.
-4. Store the rounded result in `baseAmountMinor`. Reject overflow and results that round to zero minor units.
-5. Preserve `originalAmountDecimal`, `originalCurrency`, `rateLkrPerUnitDecimal`, `baseAmountMinor`, `rateSource`, and `rateDate` together as the transaction's `Money` snapshot.
-6. Treat the displayed LKR value as an estimate before saving and as the stored historical conversion after saving.
-7. Do not recalculate an existing transaction because a newer exchange rate becomes available. Historical reports must use the stored `baseAmountMinor` and rate metadata.
-8. For a Crypto loss, the converter still produces a positive money magnitude. Reporting logic must use `pnlDirection = LOSS` to interpret the direction; it must not require a negative amount that the validator rejects.
+1. Parse amounts and rates with `BigDecimal`; never use `Double` or `Float` for financial calculation.
+2. Amounts allow at most two fractional digits; USD rates allow at most six.
+3. For LKR, use rate `1`, `LKR_FIXED`, and the transaction date as `rateDate`.
+4. For USD, calculate `amount × LKR-per-USD rate × 100` and round once to an LKR minor unit with `RoundingMode.HALF_UP`.
+5. Store the result in `baseAmountMinor`; reject overflow and values that round to zero.
+6. Preserve `originalAmountDecimal`, `originalCurrency`, `rateLkrPerUnitDecimal`, `baseAmountMinor`, `rateSource`, and `rateDate` as one historical snapshot.
+7. The Income list's net total uses stored `baseAmountMinor`; it does not reprice old records from a newer quote.
+8. Crypto losses retain a positive money magnitude and are subtracted according to `pnlDirection = LOSS`.
 
-Example: USD `125.50` at LKR `305.25` produces `3,830,888` LKR minor units, displayed as LKR `38,308.88`, because `125.50 x 305.25 x 100 = 3,830,887.5` and the implemented policy rounds half up.
+Example: USD `125.50` at LKR `305.25` produces `3,830,888` LKR minor units because `125.50 × 305.25 × 100 = 3,830,887.5` and the midpoint rounds up. USD `1.00` at `100.004999` produces `10,000` minor units because `10,000.4999` is below the midpoint.
 
-## Relationship to `Money` and `Income`
+## Ownership and persistence
 
-The form produces one `Income` record containing one immutable-at-save-time `Money` snapshot:
+Income data is stored at `users/{uid}/incomes/{incomeId}` with mapper schema version `1`.
 
-```text
-Add Income form
-  source ------------------------------> Income.source
-  Profit/Loss (Crypto) ----------------> Income.pnlDirection
-  derived receipt/P&L kind ------------> Income.entryKind
-  transaction date --------------------> Income.occurredDate
-  project reference (Freelance) -------> Income.projectReference?
-  notes --------------------------------> Income.note?
-  amount + currency + rate metadata ----> Income.money
-                                            |- originalAmountDecimal
-                                            |- originalCurrency
-                                            |- rateLkrPerUnitDecimal
-                                            |- baseAmountMinor
-                                            |- rateSource
-                                            `- rateDate
-```
-
-The current fake repository does not validate that Crypto, `REALIZED_PNL`, and `pnlDirection` agree, nor that project references are limited to Freelance. The future ViewModel must enforce the screen mapping before it constructs and saves an `Income`; production persistence should also reject malformed data at its trust boundary.
+- Observation snapshots include the UID whose listener produced them and copy their record list.
+- The ViewModel accepts only snapshots owned by the current authenticated UID.
+- Edit and Delete callbacks carry the immutable observation owner.
+- Opening Edit or Delete requires a successful current snapshot, matching callback/snapshot/authentication owners, and exact record membership.
+- Drafts retain their verified owner. Saves call `saveIncomeForOwner`; deletes call `deleteIncomeForOwner`.
+- The Firestore repository rechecks the current authenticated UID against the expected owner before constructing the write path.
+- Authentication generation checks clear active editor/delete state and suppress stale operation completions after account changes.
 
 ## M02 and M03 responsibilities
 
-| Responsibility | M02 | M03 |
+| Responsibility | M02 result | M03 result |
 | --- | --- | --- |
-| Positive amount validation (up to 2 decimal places) | Implemented and tested | Reuse without weakening |
-| LKR fixed-rate conversion | Implemented and tested | Reuse |
-| Manual USD conversion (rate up to 6 decimal places) | Implemented and tested | Retain as override and fallback |
-| `HALF_UP` conversion to LKR minor units | Implemented and tested | Reuse |
-| Historical `Money` snapshot | Model and converter implemented | Preserve for automatic and manual rates |
-| Add Income wireframe and behaviour specification | Defined by this document | Extend only for automatic-rate status and controls |
-| Add Income Compose screen and ViewModel | Not present in the current branch | Not made complete by this documentation task |
-| Online USD/LKR API integration | Out of scope; do not call an API | Planned |
-| Fetched rate and update timestamp | Out of scope | Retrieve a recent reference rate and display its update timestamp |
-| Manual alternative when online lookup is available | Manual entry is the only M02 path | Allow the user to replace the fetched rate with a manual rate |
-| Service-unavailable behaviour | No service dependency | Provide a clear error/offline state and manual fallback |
-| Repricing old transactions | Never | Never |
+| Positive amount validation | Implemented | Reused in the editor and persistence validation. |
+| LKR conversion and minor units | Implemented | Reused without weakening. |
+| Manual USD conversion | Implemented | Exposed with explicit transfer/reference source and rate date. |
+| `HALF_UP` rounding and overflow protection | Implemented and tested | Reused by automatic/manual editor flows. |
+| Historical `Money` snapshot | Implemented | Preserved through editing, mapping, Firestore, list totals, and retries. |
+| Income UI | Wireframe defined | List, Add/Edit, Delete, states, and navigation implemented. |
+| Automatic USD/LKR reference | Planned | Remote provider, validation, loading, refresh, retry, and fallback implemented. |
+| Owner-bound persistence | Planned | Authenticated observation/save/delete and security rules implemented and tested locally. |
 
-### Planned M03 automatic-rate flow
+## Resolved decisions and current limitations
 
-When USD is selected in M03:
-
-1. Request a recent USD/LKR reference rate from the approved exchange-rate service.
-2. Show an in-place loading state while keeping the rest of the form usable.
-3. Display the fetched LKR-per-USD rate and the service's update timestamp.
-4. Let the user choose manual entry instead of the fetched value.
-5. If the service fails or the device is offline, explain the problem and provide the manual input immediately.
-6. Calculate and display the estimated LKR amount using the currently selected valid rate.
-7. On Save, preserve the exact selected rate, its source, its applicable date, and the resulting LKR minor amount with the transaction.
-8. Never update a saved transaction from a later lookup.
-
-This flow is planned, not implemented. No API provider, endpoint, freshness window, caching policy, retry policy, or network client has been selected in the repository.
-
-## Open decisions and known inconsistencies
-
-- The approved M02 controls include one manual exchange-rate input but no control that distinguishes `MANUAL_TRANSFER` from `MANUAL_REFERENCE`. `MoneyConverter.fromUsd` requires one of them. The team must either add a source choice or approve a deterministic mapping before implementing the screen; the UI must not guess silently.
-- `RateSource` currently contains only `LKR_FIXED`, `MANUAL_TRANSFER`, and `MANUAL_REFERENCE`. It has no value that truthfully identifies an automatically fetched API rate. M03 needs a reviewed model and persistence decision before automatic rates can be stored. This M02 documentation task does not modify `RateSource`.
-- `Money.rateDate` is a `LocalDate`, while M03 must display a fetched update timestamp. The service timestamp may be transient display metadata, or M03 may require a reviewed persistence change. The current model cannot preserve a full timestamp.
-- The USD converter accepts a separate `rateDate`, but the approved M02 layout has no rate-date field. If the manual rate's date is not the transaction date, the UI needs an additional approved rule or field. Until then, the implementation must not claim that a separately dated rate was captured.
-- No rule currently decides whether future transaction dates are allowed, and no note/project-reference length limits are defined.
-- Existing architecture and Firestore documents still describe the M02 converter and some integration work as unfinished. The Kotlin source and unit tests on this branch are the authoritative evidence that money validation/conversion is now implemented; those documents were intentionally not changed by this task.
+- Manual rate type is explicit: **Actual transfer** maps to `MANUAL_TRANSFER`; **Reference** maps to `MANUAL_REFERENCE`.
+- Automatic quotes map to `EXCHANGE_RATE_API_REFERENCE`.
+- Manual rate date is an explicit editor field. Automatic snapshots use the validated quote's applicable date.
+- The provider's full update timestamp is used for quote validation but is not part of `Money` and is not displayed by the Income editor; the stored/displayed historical field is `rateDate`.
+- Future transaction dates and note/project/asset length limits are not currently prohibited by the domain validator.
+- Back and Cancel do not prompt to discard dirty input.
+- Local source and tests do not prove that Firebase rules or indexes have been deployed to a remote project.
 
 ## Acceptance checklist
 
-### Documentation acceptance
-
-- [x] Shows the approved title, back action, source choices, amount, currency, conditional USD rate, LKR estimate, date, notes, and Save action.
-- [x] Documents conditional Crypto Profit/Loss and optional Freelance project reference behaviour.
-- [x] Uses terminology that maps to the current Kotlin enums and fields.
-- [x] Separates implemented domain logic from the unimplemented screen and persistence layers.
-- [x] Separates M02 manual conversion from M03 automatic lookup.
-- [x] Records exact implemented amount, rate, rounding, overflow, and historical-snapshot rules.
-- [x] Covers default, loading, invalid, error, offline, saving, and success states.
-- [x] Identifies unresolved requirements without presenting them as implemented behaviour.
-
-### Future M02 screen implementation acceptance
-
-- [ ] Source choices map exactly to `IncomeSource` values.
-- [ ] LKR hides rate input and uses the fixed rate/source/date rules.
-- [ ] USD requires a valid manual rate and an approved manual `RateSource` mapping.
-- [ ] Amount, rate, converted-minor-unit, and overflow rules match the tested money utilities.
-- [ ] Crypto requires Profit/Gain or Loss and stores a positive amount with the correct direction.
-- [ ] Freelance alone exposes the optional project reference in this flow.
-- [ ] Invalid input remains visible with field-specific messages and cannot be saved.
-- [ ] Saving prevents duplicate submissions; failure retains input; success shows the stored record.
-- [ ] Accessibility, scrolling, keyboard, focus, and back/discard behaviour follow shared conventions.
-- [ ] Historical money values are saved as a snapshot and are not repriced later.
-
-### Future M03 acceptance
-
-- [ ] A recent USD/LKR reference rate and update timestamp are displayed when lookup succeeds.
-- [ ] The user can override the fetched rate with a valid manual rate.
-- [ ] Offline and service failures provide a manual fallback.
-- [ ] The estimate always reflects the currently selected rate.
-- [ ] The selected rate, truthful source, applicable date, and LKR minor amount are preserved.
-- [ ] Previously saved transactions are never recalculated from newer rates.
-- [ ] The API rate-source and timestamp model gaps are resolved through reviewed design changes before implementation.
+- [x] Income list covers loading, empty, error/retry, monthly navigation, totals, Add, Edit, and Delete.
+- [x] Add/Edit covers LKR/USD, every income source, conditional fields, validation, saving, errors, and stable IDs.
+- [x] Automatic USD rates support loading, refresh, retry, and manual fallback.
+- [x] Manual USD rates capture value, truthful source, and explicit rate date.
+- [x] Financial conversion uses exact decimals, `HALF_UP`, positive minor units, and overflow rejection.
+- [x] Historical LKR/USD snapshots survive mapping, persistence, editing, and retries without implicit repricing.
+- [x] Owner-bound snapshots and writes prevent stale cross-account Edit/Delete actions.
+- [x] Documentation distinguishes stored `rateDate` from the provider update timestamp.
+- [x] Documentation does not claim a dirty-form discard confirmation that the UI does not implement.

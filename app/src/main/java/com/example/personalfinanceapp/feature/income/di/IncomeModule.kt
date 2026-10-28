@@ -1,20 +1,20 @@
 package com.example.personalfinanceapp.feature.income.di
 
-import com.example.personalfinanceapp.feature.income.FakeIncomeRepository
+import com.example.personalfinanceapp.feature.income.FirestoreIncomeRepository
 import com.example.personalfinanceapp.feature.income.IncomeRepository
+import dagger.Binds
 import dagger.Module
-import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
-object IncomeModule {
+abstract class IncomeModule {
 
-    @Provides
+    @Binds
     @Singleton
-    fun provideIncomeRepository(): IncomeRepository {
-        return FakeIncomeRepository()
-    }
+    abstract fun bindIncomeRepository(
+        impl: FirestoreIncomeRepository
+    ): IncomeRepository
 }
