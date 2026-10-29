@@ -7,6 +7,7 @@ import com.example.personalfinanceapp.core.model.IncomeEntryKind
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.RateSource
+import com.example.personalfinanceapp.core.model.Receivable
 import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.core.money.MoneyConverter
 import com.example.personalfinanceapp.feature.auth.AuthRepository
@@ -18,6 +19,7 @@ import com.example.personalfinanceapp.feature.income.IncomeRepository
 import com.example.personalfinanceapp.feature.income.IncomeObservationSnapshot
 import com.example.personalfinanceapp.feature.income.rate.IncomeManualRateSource
 import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionMode
+import com.example.personalfinanceapp.feature.receivable.FakeReceivableRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -59,6 +61,7 @@ class IncomeFormViewModelTest {
     private lateinit var repository: SavingIncomeRepository
     private lateinit var authRepository: FormAuthRepository
     private lateinit var exchangeRateRepository: FormExchangeRateRepository
+    private lateinit var receivableRepository: FakeReceivableRepository
     private lateinit var viewModel: IncomeViewModel
 
     @Before
@@ -67,11 +70,13 @@ class IncomeFormViewModelTest {
         repository = SavingIncomeRepository()
         authRepository = FormAuthRepository(USER_A)
         exchangeRateRepository = FormExchangeRateRepository()
+        receivableRepository = FakeReceivableRepository(USER_A)
         viewModel = IncomeViewModel(
             repository,
             authRepository,
             exchangeRateRepository,
-            clock
+            clock,
+            receivableRepository
         )
         dispatcher.scheduler.runCurrent()
     }
@@ -239,6 +244,17 @@ class IncomeFormViewModelTest {
 
     @Test
     fun `editing preserves ID and untouched linked receivable`() = runTest {
+        receivableRepository.saveReceivable(
+            Receivable(
+                id = "receivable-7",
+                title = "Project 7",
+                projectReference = "project-7",
+                expectedOriginalDecimal = "1000.00",
+                currency = CurrencyCode.LKR,
+                expectedDate = TODAY
+            )
+        ).getOrThrow()
+        dispatcher.scheduler.runCurrent()
         val existing = income(id = "existing", source = IncomeSource.FREELANCE).copy(
             projectReference = "old-project",
             receivableId = "receivable-7"

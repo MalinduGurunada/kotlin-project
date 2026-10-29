@@ -89,6 +89,14 @@ object IncomeValidator {
                     "Profit or loss direction is only used for crypto transactions"
                 }
             }
+
+            if (income.receivableId != null) {
+                require(income.receivableId.isNotBlank()) { "Receivable link cannot be blank" }
+                require(
+                    income.source == IncomeSource.FREELANCE &&
+                        income.entryKind == IncomeEntryKind.RECEIPT
+                ) { "Only freelance receipts can be linked to a receivable" }
+            }
         }
     }
 }

@@ -68,12 +68,14 @@ fun IncomeEditorScreen(
     onManualRateDateChanged: (LocalDate) -> Unit,
     onRefreshAutomaticRate: () -> Unit,
     onProjectReferenceChanged: (String) -> Unit,
+    onReceivableChanged: (String?) -> Unit,
     onAssetSymbolChanged: (String) -> Unit,
     onPnlDirectionChanged: (PnlDirection) -> Unit,
     onNoteChanged: (String) -> Unit,
     onSave: () -> Unit
 ) {
     var sourceMenuExpanded by remember { mutableStateOf(false) }
+    var receivableMenuExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
     var showRateDatePicker by remember { mutableStateOf(false) }
 
@@ -296,6 +298,43 @@ fun IncomeEditorScreen(
                         .fillMaxWidth()
                         .testTag("income-project-reference")
                 )
+
+                val eligibleReceivables = uiState.availableReceivables.filter {
+                    !it.archived && it.currency == uiState.selectedCurrency
+                }
+                ExposedDropdownMenuBox(
+                    expanded = receivableMenuExpanded,
+                    onExpandedChange = { if (!uiState.isSaving) receivableMenuExpanded = it },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val selected = uiState.availableReceivables.firstOrNull {
+                        it.id == uiState.selectedReceivableId
+                    }
+                    OutlinedTextField(
+                        value = selected?.let { "${it.title} · ${it.currency} ${it.expectedOriginalDecimal}" }
+                            ?: "Not linked",
+                        onValueChange = {},
+                        readOnly = true,
+                        enabled = !uiState.isSaving,
+                        label = { Text("Receivable (optional)") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(receivableMenuExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth().testTag("income-receivable")
+                    )
+                    ExposedDropdownMenu(
+                        expanded = receivableMenuExpanded,
+                        onDismissRequest = { receivableMenuExpanded = false }
+                    ) {
+                        DropdownMenuItem(text = { Text("Not linked") }, onClick = {
+                            onReceivableChanged(null); receivableMenuExpanded = false
+                        })
+                        eligibleReceivables.forEach { receivable ->
+                            DropdownMenuItem(
+                                text = { Text("${receivable.title} · ${receivable.currency} ${receivable.expectedOriginalDecimal}") },
+                                onClick = { onReceivableChanged(receivable.id); receivableMenuExpanded = false }
+                            )
+                        }
+                    }
+                }
             }
 
             if (uiState.selectedSource == IncomeSource.CRYPTO) {

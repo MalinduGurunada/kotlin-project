@@ -76,6 +76,18 @@ class FakeReceivableRepositoryTest {
     }
 
     @Test
+    fun rejectCurrencyChangeAfterCreation() = runTest {
+        val repository = FakeReceivableRepository()
+        val original = createReceivable()
+        repository.saveReceivable(original)
+
+        val result = repository.saveReceivable(original.copy(currency = CurrencyCode.USD))
+
+        assertTrue(result.isFailure)
+        assertEquals(CurrencyCode.LKR, repository.observeReceivables().first().single().currency)
+    }
+
+    @Test
     fun rejectBlankReceivableId() = runTest {
         val repository = FakeReceivableRepository()
 
