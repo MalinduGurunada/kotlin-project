@@ -413,16 +413,17 @@ fun CategoryScreenDesignPreview() {
     CategoryScreenContent(
         uiState = CategoryUiState.Success(
             activeCategories = listOf(
-                Category("1", "Groceries & Food", SpendingClass.DISCRETIONARY),
-                Category("2", "Rent & Housing", SpendingClass.COMMITTED),
-                Category("3", "Electricity Bill", SpendingClass.COMMITTED),
-                Category("4", "Transport & Fuel", SpendingClass.DISCRETIONARY),
-                Category("5", "Coffee & Dining", SpendingClass.DISCRETIONARY)
+                Category("1", "Groceries & Food", SpendingClass.COMMITTED),
+                Category("2", "Utilities & Bills", SpendingClass.COMMITTED),
+                Category("3", "Transport & Fuel", SpendingClass.COMMITTED),
+                Category("4", "Electronics & Software", SpendingClass.DISCRETIONARY),
+                Category("5", "Dining & Takeout", SpendingClass.DISCRETIONARY)
             ),
             archivedCategories = listOf(
                 Category("6", "Old Gym Membership", SpendingClass.DISCRETIONARY, archived = true),
-                Category("7", "Past Subscription", SpendingClass.COMMITTED, archived = true)
+                Category("7", "Project Alpha Travel", SpendingClass.DISCRETIONARY, archived = true)
             )
-        )
+        ),
+        onBack = {}
     )
 }
