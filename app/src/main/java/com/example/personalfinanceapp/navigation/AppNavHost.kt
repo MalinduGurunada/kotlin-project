@@ -1,5 +1,8 @@
 package com.example.personalfinanceapp.navigation
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -14,9 +17,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavHostController
@@ -25,6 +30,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.example.personalfinanceapp.feature.auth.ui.AuthViewModel
+import com.example.personalfinanceapp.feature.auth.GoogleCredentialResult
+import com.example.personalfinanceapp.feature.auth.GoogleCredentialSignIn
 import com.example.personalfinanceapp.feature.auth.ui.AuthNavigationState
 import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
 import com.example.personalfinanceapp.feature.auth.ui.PasswordResetScreen
@@ -44,6 +51,16 @@ import com.example.personalfinanceapp.feature.income.ui.IncomeViewModel
 import com.example.personalfinanceapp.feature.income.ui.shiftIncomeMonth
 import com.example.personalfinanceapp.feature.receivable.ui.ReceivableScreen
 import com.example.personalfinanceapp.feature.receivable.ui.ReceivableViewModel
+import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigationDecision
+import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigationResolver
+import com.example.personalfinanceapp.feature.notification.FinanceReviewPayload
+import kotlinx.coroutines.launch
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
 
 internal fun NavHostController.returnToSignIn() {
     if (!popBackStack()) {
@@ -84,17 +101,22 @@ internal fun HomeActionsScreen(
 
 @Composable
 fun AppNavHost(
-    authViewModel: AuthViewModel = hiltViewModel()
+    authViewModel: AuthViewModel = hiltViewModel(),
+    notificationTarget: FinanceReviewPayload? = null,
+    onNotificationTargetConsumed: () -> Unit = {},
+    onAuthenticated: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val navigationState by authViewModel.navigationState.collectAsState()
     val loginUiState by authViewModel.loginUiState.collectAsState()
     val registerUiState by authViewModel.registerUiState.collectAsState()
     val resetUiState by authViewModel.passwordResetUiState.collectAsState()
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     var showRecordExpenseDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(navigationState) {
+    LaunchedEffect(navigationState, notificationTarget) {
         when (navigationState) {
             AuthNavigationState.Resolving -> Unit
             AuthNavigationState.Unauthenticated -> {
@@ -110,9 +132,29 @@ fun AppNavHost(
                 }
             }
             is AuthNavigationState.Authenticated -> {
-                navController.navigate(Overview) {
-                    popUpTo(0) { inclusive = true }
-                    launchSingleTop = true
+                onAuthenticated()
+                val authenticatedUserId =
+                    (navigationState as AuthNavigationState.Authenticated).userId
+                val navigateToFinanceActivity = notificationTarget?.let { target ->
+                    when (
+                        FinanceReviewNavigationResolver.resolve(target, authenticatedUserId)
+                    ) {
+                        FinanceReviewNavigationDecision.NAVIGATE_TO_ACTIVITY -> true
+                        FinanceReviewNavigationDecision.IGNORE -> false
+                        FinanceReviewNavigationDecision.WAIT_FOR_AUTH -> false
+                    }
+                } ?: false
+                if (notificationTarget != null) onNotificationTargetConsumed()
+                if (navigateToFinanceActivity) {
+                    navController.navigate(ActivityRoute) {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                } else {
+                    navController.navigate(Overview) {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
                 }
             }
         }
@@ -128,6 +170,28 @@ fun AppNavHost(
                 onEmailChanged = authViewModel::onLoginEmailChanged,
                 onPasswordChanged = authViewModel::onLoginPasswordChanged,
                 onLoginClicked = authViewModel::login,
+                onGoogleSignInClicked = {
+                    val requestId = authViewModel.beginGoogleSignIn()
+                        ?: return@LoginScreen
+                    val activity = context.findActivity()
+                    if (activity == null) {
+                        authViewModel.failGoogleSignIn(
+                            requestId,
+                            "Google sign-in is unavailable in this context."
+                        )
+                    } else {
+                        coroutineScope.launch {
+                            when (val result = GoogleCredentialSignIn.requestIdToken(activity)) {
+                                is GoogleCredentialResult.Success ->
+                                    authViewModel.completeGoogleSignIn(requestId, result.idToken)
+                                GoogleCredentialResult.Cancelled ->
+                                    authViewModel.cancelGoogleSignIn(requestId)
+                                is GoogleCredentialResult.Failure ->
+                                    authViewModel.failGoogleSignIn(requestId, result.message)
+                            }
+                        }
+                    }
+                },
                 onNavigateToRegister = { navController.navigate(Register) },
                 onNavigateToPasswordReset = { navController.navigate(PasswordReset) }
             )
@@ -179,17 +243,17 @@ fun AppNavHost(
                 onNavDestinationSelected = { dest ->
                     when (dest) {
                         NavDestination.OVERVIEW -> {}
-                        NavDestination.ACTIVITY -> navController.navigate(Activity)
+                        NavDestination.ACTIVITY -> navController.navigate(ActivityRoute)
                         NavDestination.GOALS -> navController.navigate(Goals)
                         NavDestination.MORE -> navController.navigate(Home)
                     }
                 },
-                onNavigateToActivity = { navController.navigate(Activity) },
+                onNavigateToActivity = { navController.navigate(ActivityRoute) },
                 onNavigateToIncome = { navController.navigate(IncomeList) }
             )
         }
 
-        composable<Activity> {
+        composable<ActivityRoute> {
             val expenseViewModel: ExpenseViewModel = hiltViewModel()
             val expenseUiState by expenseViewModel.uiState.collectAsState()
             val expenseSaveUiState by expenseViewModel.saveUiState.collectAsState()
@@ -267,7 +331,7 @@ fun AppNavHost(
                 onNavDestinationSelected = { destination ->
                     when (destination) {
                         NavDestination.OVERVIEW -> navController.navigate(Overview)
-                        NavDestination.ACTIVITY -> navController.navigate(Activity)
+                        NavDestination.ACTIVITY -> navController.navigate(ActivityRoute)
                         NavDestination.GOALS -> Unit
                         NavDestination.MORE -> navController.navigate(Home)
                     }

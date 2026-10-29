@@ -7,6 +7,21 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
+    function isValidFcmRegistrationData(data, userId) {
+      return data.keys().hasAll([
+               'schemaVersion', 'userId', 'installationId', 'platform', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'userId', 'installationId', 'platform', 'updatedAt'
+             ]) &&
+             data.schemaVersion is int && data.schemaVersion == 1 &&
+             data.userId is string && data.userId == userId &&
+             data.installationId is string &&
+             data.installationId.size() > 0 && data.installationId.size() <= 256 &&
+             data.platform == 'android' &&
+             data.updatedAt == request.time;
+    }
+
     // Helper function validating expense schema and preventing ownership forging
     function isValidExpenseData(data, userId) {
       return data.userId == userId &&
@@ -299,6 +314,15 @@ service cloud.firestore {
     // User document access
     match /users/{userId} {
       allow read, write: if isOwner(userId);
+
+      // FCM installation registrations are write-only to their authenticated owner. A trusted
+      // backend uses Admin SDK access when sending and is not governed by these rules.
+      match /fcmRegistrations/{registrationId} {
+        allow create, update: if isOwner(userId) &&
+                              isValidFcmRegistrationData(request.resource.data, userId);
+        allow delete: if isOwner(userId);
+        allow get, list: if false;
+      }
 
       // Scoped expenses collection for signed-in user
       match /expenses/{expenseId} {

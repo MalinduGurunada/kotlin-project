@@ -17,10 +17,13 @@ class FakeAuthRepository(
     private val mutex = Mutex()
 
     var shouldFailLogin = false
+    var shouldFailGoogleLogin = false
     var shouldFailRegister = false
     var shouldFailProfileUpdate = false
     var shouldFailPasswordReset = false
     var registerCallCount = 0
+        private set
+    var googleLoginCallCount = 0
         private set
     var displayName: String? = null
         private set
@@ -69,6 +72,19 @@ class FakeAuthRepository(
         Result.success(uid)
     }
 
+    override suspend fun loginWithGoogleIdToken(idToken: String): Result<UserId> = mutex.withLock {
+        googleLoginCallCount += 1
+        if (shouldFailGoogleLogin) {
+            return@withLock Result.failure(IllegalArgumentException("Google authentication failed"))
+        }
+        if (idToken.isBlank()) {
+            return@withLock Result.failure(IllegalArgumentException("Google ID token is blank"))
+        }
+        currentEmail = "google.user@example.com"
+        currentUserId.value = "google-user"
+        Result.success("google-user")
+    }
+
     override suspend fun updateDisplayName(userId: UserId, fullName: String): Result<Unit> = mutex.withLock {
         if (shouldFailProfileUpdate) {
             return@withLock Result.failure(
@@ -99,5 +115,10 @@ class FakeAuthRepository(
         currentEmail = null
         currentUserId.value = null
         Result.success(Unit)
+    }
+
+    fun simulateAccountSwitch(userId: UserId, email: String) {
+        currentEmail = email
+        currentUserId.value = userId
     }
 }

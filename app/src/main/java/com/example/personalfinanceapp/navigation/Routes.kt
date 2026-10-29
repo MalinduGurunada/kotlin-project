@@ -27,7 +27,7 @@ data object ReceivableList
 data object Overview
 
 @Serializable
-data object Activity
+data object ActivityRoute
 
 @Serializable
 data object Goals
