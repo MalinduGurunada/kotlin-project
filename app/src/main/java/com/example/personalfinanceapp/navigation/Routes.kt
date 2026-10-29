@@ -27,4 +27,7 @@ data object Overview
 data object Activity
 
 @Serializable
+data object Goals
+
+@Serializable
 data class TransactionDetail(val transactionId: String)

@@ -44,6 +44,7 @@ import com.example.personalfinanceapp.ui.theme.SpecialDarkGreen
 import com.example.personalfinanceapp.ui.theme.SurfaceWhite
 import com.example.personalfinanceapp.ui.theme.TextPrimaryDark
 import com.example.personalfinanceapp.ui.theme.TextSecondaryMuted
+import java.math.BigDecimal
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -52,7 +53,8 @@ fun OverviewScreen(
     uiState: DashboardUiState,
     currentNavDestination: NavDestination,
     onNavDestinationSelected: (NavDestination) -> Unit,
-    onNavigateToActivity: () -> Unit
+    onNavigateToActivity: () -> Unit,
+    onNavigateToIncome: () -> Unit = {}
 ) {
     Scaffold(
         topBar = {
@@ -61,8 +63,8 @@ fun OverviewScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
-                                .size(32.dp)
-                                .background(PrimaryDarkGreen, RoundedCornerShape(8.dp)),
+                                .size(34.dp)
+                                .background(PrimaryDarkGreen, RoundedCornerShape(10.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             Text("💳", fontSize = 16.sp)
@@ -80,18 +82,7 @@ fun OverviewScreen(
                     Box(
                         modifier = Modifier
                             .size(36.dp)
-                            .background(Color(0xFFF2F4F5), CircleShape)
-                            .clickable { },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("🔔", fontSize = 16.sp)
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(PrimaryDarkGreen, CircleShape)
-                            .clickable { },
+                            .background(PrimaryDarkGreen, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Text("👤", fontSize = 16.sp)
@@ -117,6 +108,16 @@ fun OverviewScreen(
             ) {
                 CircularProgressIndicator(color = PrimaryDarkGreen)
             }
+        } else if (uiState.errorMessage != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(uiState.errorMessage, color = MutedCoral)
+            }
         } else {
             LazyColumn(
                 modifier = Modifier
@@ -128,14 +129,18 @@ fun OverviewScreen(
             ) {
                 // Balance & Stat Card Hero Header
                 item {
-                    OverviewBalanceCard(uiState)
+                    OverviewBalanceCard(
+                        uiState = uiState,
+                        onNavigateToIncome = onNavigateToIncome,
+                        onNavigateToActivity = onNavigateToActivity
+                    )
                 }
 
                 // Active Savings Goal Card
                 item {
-                    if (uiState.activeGoal != null) {
-                        ActiveGoalCard(goal = uiState.activeGoal)
-                    }
+                    uiState.activeGoal?.let { goal ->
+                        ActiveGoalCard(goal = goal)
+                    } ?: GoalEmptyCard()
                 }
 
                 // Recent Activity Header & Items
@@ -161,8 +166,32 @@ fun OverviewScreen(
                     }
                 }
 
-                items(uiState.recentActivity, key = { it.id }) { item ->
-                    RecentActivityCard(item)
+                if (uiState.recentActivity.isEmpty()) {
+                    item {
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No recent transactions this month",
+                                    fontSize = 14.sp,
+                                    color = TextSecondaryMuted
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    items(uiState.recentActivity, key = { it.id }) { item ->
+                        RecentActivityCard(item)
+                    }
                 }
 
                 item {
@@ -172,11 +201,17 @@ fun OverviewScreen(
                             .padding(vertical = 12.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "ℹ Sample illustrative data",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondaryMuted
-                        )
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFFEDEFEF), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = "ⓘ Real transaction data",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondaryMuted
+                            )
+                        }
                     }
                 }
             }
@@ -185,7 +220,11 @@ fun OverviewScreen(
 }
 
 @Composable
-private fun OverviewBalanceCard(uiState: DashboardUiState) {
+private fun OverviewBalanceCard(
+    uiState: DashboardUiState,
+    onNavigateToIncome: () -> Unit,
+    onNavigateToActivity: () -> Unit
+) {
     Card(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = PrimaryDarkGreen),
@@ -204,11 +243,11 @@ private fun OverviewBalanceCard(uiState: DashboardUiState) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(44.dp)
                             .background(AccentLime, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("👩‍💼", fontSize = 22.sp)
+                        Text("👩‍💼", fontSize = 24.sp)
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
@@ -226,14 +265,6 @@ private fun OverviewBalanceCard(uiState: DashboardUiState) {
                     }
                 }
 
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .background(SpecialDarkGreen, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("🔔", fontSize = 16.sp)
-                }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -259,8 +290,10 @@ private fun OverviewBalanceCard(uiState: DashboardUiState) {
 
             Spacer(modifier = Modifier.height(4.dp))
 
+            val now = java.time.LocalDate.now()
+            val monthShort = now.month.getDisplayName(java.time.format.TextStyle.SHORT, Locale.US)
             Text(
-                text = "This month (1 Mar – Today) • Illustrative data",
+                text = "This month (1 $monthShort – Today) • Real data",
                 fontSize = 12.sp,
                 color = SurfaceWhite.copy(alpha = 0.7f)
             )
@@ -276,7 +309,9 @@ private fun OverviewBalanceCard(uiState: DashboardUiState) {
                 Card(
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = onNavigateToIncome)
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -303,7 +338,7 @@ private fun OverviewBalanceCard(uiState: DashboardUiState) {
                         Text(
                             text = "${uiState.incomeCount} deposits",
                             fontSize = 11.sp,
-                            color = TextSecondaryMuted
+                            color = PrimaryDarkGreen
                         )
                     }
                 }
@@ -312,7 +347,9 @@ private fun OverviewBalanceCard(uiState: DashboardUiState) {
                 Card(
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = onNavigateToActivity)
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -370,10 +407,9 @@ private fun ActiveGoalCard(goal: ActiveSavingsGoalUiState) {
                     letterSpacing = 1.sp
                 )
                 Text(
-                    text = goal.priorityText,
+                    text = "Target: ${goal.targetDateText}",
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = PrimaryDarkGreen
+                    color = TextSecondaryMuted
                 )
             }
 
@@ -401,22 +437,26 @@ private fun ActiveGoalCard(goal: ActiveSavingsGoalUiState) {
                             fontWeight = FontWeight.Bold,
                             color = TextPrimaryDark
                         )
-                        Box(
-                            modifier = Modifier
-                                .background(SecondaryPaleGreen, RoundedCornerShape(8.dp))
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = "${goal.progressPercent}%",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = PrimaryDarkGreen
-                            )
+                        goal.progressPercent?.let { progressPercent ->
+                            Box(
+                                modifier = Modifier
+                                    .background(SecondaryPaleGreen, RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "$progressPercent%",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PrimaryDarkGreen
+                                )
+                            }
                         }
                     }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "LKR ${String.format(Locale.US, "%,d", goal.currentSavedLkr)} of LKR ${String.format(Locale.US, "%,d", goal.targetAmountLkr)} target",
+                        text = goal.currentSavedLkrMinor?.let { savedMinor ->
+                            "${formatLkrMinor(savedMinor)} of ${formatLkrMinor(goal.targetAmountLkrMinor)} target"
+                        } ?: "Saved balance unavailable",
                         fontSize = 12.sp,
                         color = TextSecondaryMuted
                     )
@@ -425,15 +465,16 @@ private fun ActiveGoalCard(goal: ActiveSavingsGoalUiState) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Progress Bar
-            LinearProgressIndicator(
-                progress = { goal.progressPercent / 100f },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp),
-                color = AccentLime,
-                trackColor = Color(0xFFE0E0E0),
-            )
+            goal.progressPercent?.let { progressPercent ->
+                LinearProgressIndicator(
+                    progress = { progressPercent / 100f },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp),
+                    color = AccentLime,
+                    trackColor = Color(0xFFE0E0E0),
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -442,12 +483,8 @@ private fun ActiveGoalCard(goal: ActiveSavingsGoalUiState) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "LKR ${String.format(Locale.US, "%,d", goal.remainingLkr)} remaining",
-                    fontSize = 11.sp,
-                    color = TextSecondaryMuted
-                )
-                Text(
-                    text = "Target: ${goal.targetDateText}",
+                    text = goal.remainingLkrMinor?.let { "${formatLkrMinor(it)} remaining" }
+                        ?: "Progress unavailable",
                     fontSize = 11.sp,
                     color = TextSecondaryMuted
                 )
@@ -455,6 +492,38 @@ private fun ActiveGoalCard(goal: ActiveSavingsGoalUiState) {
         }
     }
 }
+
+@Composable
+private fun GoalEmptyCard() {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "No active savings goal",
+                fontWeight = FontWeight.Bold,
+                color = TextPrimaryDark
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Create or activate a goal to track progress here.",
+                fontSize = 12.sp,
+                color = TextSecondaryMuted
+            )
+        }
+    }
+}
+
+private fun formatLkrMinor(amountMinor: Long): String =
+    "LKR ${String.format(Locale.US, "%,.2f", BigDecimal.valueOf(amountMinor, 2))}"
 
 @Composable
 private fun RecentActivityCard(item: TimelineActivityItem) {

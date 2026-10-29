@@ -4,7 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.personalfinanceapp.core.model.Expense
 import com.example.personalfinanceapp.core.model.Goal
+import com.example.personalfinanceapp.core.model.Contribution
 import com.example.personalfinanceapp.core.model.Income
+import com.example.personalfinanceapp.core.model.IncomeEntryKind
+import com.example.personalfinanceapp.core.model.IncomeSource
+import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.feature.auth.AuthRepository
 import com.example.personalfinanceapp.feature.expense.ExpenseRepository
@@ -15,10 +19,15 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import java.math.BigInteger
 import java.time.LocalDate
+import java.util.Locale
 import javax.inject.Inject
 
 data class TimelineActivityItem(
@@ -34,37 +43,62 @@ data class TimelineActivityItem(
 data class ActiveSavingsGoalUiState(
     val id: String,
     val name: String,
-    val targetAmountLkr: Long,
-    val currentSavedLkr: Long,
-    val remainingLkr: Long,
-    val progressPercent: Int,
-    val priorityText: String = "Priority 1",
-    val targetDateText: String = "June 2025"
+    val targetAmountLkrMinor: Long,
+    val currentSavedLkrMinor: Long?,
+    val remainingLkrMinor: Long?,
+    val progressPercent: Int?,
+    val targetDateText: String
+)
+
+private data class DashboardInputs(
+    val incomes: List<Income>,
+    val expenses: List<Expense>,
+    val goals: List<Goal>,
+    val activeGoalContributions: List<Contribution>?
 )
 
 data class DashboardUiState(
-    val userName: String = "Himasha",
-    val totalAvailableBalanceLkrMinor: Long = 284_500_00L,
-    val totalIncomeLkrMinor: Long = 410_000_00L,
-    val incomeCount: Int = 3,
-    val totalExpenseLkrMinor: Long = 125_500_00L,
-    val expenseCount: Int = 24,
-    val committedExpenseLkrMinor: Long = 84_200_00L,
-    val committedPercent: Int = 67,
-    val discretionaryExpenseLkrMinor: Long = 41_300_00L,
-    val discretionaryPercent: Int = 33,
-    val activeGoal: ActiveSavingsGoalUiState? = ActiveSavingsGoalUiState(
-        id = "goal-m3",
-        name = "MacBook Pro M3 Fund",
-        targetAmountLkr = 550_000,
-        currentSavedLkr = 385_000,
-        remainingLkr = 165_000,
-        progressPercent = 70
-    ),
+    val userName: String = "User",
+    val totalAvailableBalanceLkrMinor: Long = 0L,
+    val totalIncomeLkrMinor: Long = 0L,
+    val incomeCount: Int = 0,
+    val totalExpenseLkrMinor: Long = 0L,
+    val expenseCount: Int = 0,
+    val committedExpenseLkrMinor: Long = 0L,
+    val committedPercent: Int = 0,
+    val discretionaryExpenseLkrMinor: Long = 0L,
+    val discretionaryPercent: Int = 0,
+    val activeGoal: ActiveSavingsGoalUiState? = null,
     val recentActivity: List<TimelineActivityItem> = emptyList(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null
 )
+
+internal data class GoalProgressAmounts(
+    val savedMinor: Long,
+    val remainingMinor: Long,
+    val progressPercent: Int
+)
+
+internal fun calculateGoalProgressAmounts(
+    goal: Goal,
+    contributions: List<Contribution>
+): GoalProgressAmounts? = try {
+    val savedMinor = contributions.fold(0L) { total, contribution ->
+        Math.addExact(total, contribution.amountMinor)
+    }
+    val remainingMinor = Math.subtractExact(goal.targetAmountMinor, savedMinor)
+        .coerceAtLeast(0L)
+    val nonNegativeSaved = savedMinor.coerceAtLeast(0L)
+    val percent = BigInteger.valueOf(nonNegativeSaved)
+        .multiply(BigInteger.valueOf(100L))
+        .divide(BigInteger.valueOf(goal.targetAmountMinor))
+        .min(BigInteger.valueOf(100L))
+        .toInt()
+    GoalProgressAmounts(savedMinor, remainingMinor, percent)
+} catch (_: ArithmeticException) {
+    null
+}
 
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
@@ -89,58 +123,93 @@ class DashboardViewModel @Inject constructor(
                     expenseRepository.observeExpenses(startDate, endDateExclusive),
                     goalRepository.observeGoals()
                 ) { incomes, expenses, goals ->
-                    calculateDashboardState(incomes, expenses, goals)
+                    Triple(incomes, expenses, goals)
+                }.flatMapLatest { (incomes, expenses, goals) ->
+                    val activeGoal = goals.firstOrNull { !it.archived }
+                    if (activeGoal == null) {
+                        flowOf(DashboardInputs(incomes, expenses, goals, emptyList()))
+                    } else {
+                        goalRepository.observeContributions(activeGoal.id)
+                            .map<List<Contribution>, List<Contribution>?> { it }
+                            .catch { emit(null) }
+                            .map { contributions ->
+                                DashboardInputs(incomes, expenses, goals, contributions)
+                            }
+                    }
+                }.map { inputs ->
+                    calculateDashboardState(
+                        incomes = inputs.incomes,
+                        expenses = inputs.expenses,
+                        goals = inputs.goals,
+                        activeGoalContributions = inputs.activeGoalContributions
+                    )
+                }.onStart {
+                    emit(DashboardUiState(isLoading = true))
+                }.catch { exception ->
+                    emit(
+                        DashboardUiState(
+                            isLoading = false,
+                            errorMessage = exception.localizedMessage
+                                ?: "Goal data is currently unavailable"
+                        )
+                    )
                 }
             }
         }.stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.WhileSubscribed(
+                stopTimeoutMillis = 0,
+                replayExpirationMillis = 0
+            ),
             initialValue = DashboardUiState(isLoading = true)
         )
 
     private fun calculateDashboardState(
         incomes: List<Income>,
         expenses: List<Expense>,
-        goals: List<Goal>
+        goals: List<Goal>,
+        activeGoalContributions: List<Contribution>?
     ): DashboardUiState {
-        val totalIncomeMinor = if (incomes.isNotEmpty()) incomes.sumOf { it.money.baseAmountMinor } else 410_000_00L
-        val totalExpenseMinor = if (expenses.isNotEmpty()) expenses.sumOf { it.money.baseAmountMinor } else 125_500_00L
-        val balanceMinor = totalIncomeMinor - totalExpenseMinor
+        var netIncomeMinor = 0L
+        incomes.forEach { income ->
+            val isLoss = income.entryKind == IncomeEntryKind.REALIZED_PNL && income.pnlDirection == PnlDirection.LOSS
+            if (isLoss) {
+                netIncomeMinor -= income.money.baseAmountMinor
+            } else {
+                netIncomeMinor += income.money.baseAmountMinor
+            }
+        }
 
-        val committedMinor = expenses.filter { it.spendingClass == SpendingClass.COMMITTED }
-            .sumOf { it.money.baseAmountMinor }
-            .let { if (it > 0L) it else 84_200_00L }
+        val totalExpenseMinor = expenses.sumOf { it.money.baseAmountMinor }
+        val balanceMinor = netIncomeMinor - totalExpenseMinor
 
-        val discretionaryMinor = expenses.filter { it.spendingClass == SpendingClass.DISCRETIONARY }
+        val committedMinor = expenses
+            .filter { it.spendingClass == SpendingClass.COMMITTED }
             .sumOf { it.money.baseAmountMinor }
-            .let { if (it > 0L) it else 41_300_00L }
+
+        val discretionaryMinor = expenses
+            .filter { it.spendingClass == SpendingClass.DISCRETIONARY }
+            .sumOf { it.money.baseAmountMinor }
 
         val totalOutflow = committedMinor + discretionaryMinor
-        val committedPct = if (totalOutflow > 0) ((committedMinor.toDouble() / totalOutflow) * 100).toInt() else 67
-        val discretionaryPct = 100 - committedPct
+        val committedPct = if (totalOutflow > 0) ((committedMinor.toDouble() / totalOutflow) * 100).toInt() else 0
+        val discretionaryPct = if (totalOutflow > 0) 100 - committedPct else 0
 
-        val primaryGoal = goals.firstOrNull()?.let { goal ->
-            val savedLkr = goal.targetAmountMinor / 100 / 2 // Default illustrative progress
-            val targetLkr = goal.targetAmountMinor / 100
-            val remainingLkr = targetLkr - savedLkr
-            val pct = if (targetLkr > 0) ((savedLkr.toDouble() / targetLkr) * 100).toInt() else 70
+        val primaryGoal = goals.firstOrNull { !it.archived }?.let { goal ->
+            val progress = activeGoalContributions?.let {
+                calculateGoalProgressAmounts(goal, it)
+            }
 
             ActiveSavingsGoalUiState(
                 id = goal.id,
                 name = goal.name,
-                targetAmountLkr = targetLkr,
-                currentSavedLkr = savedLkr,
-                remainingLkr = remainingLkr,
-                progressPercent = pct
+                targetAmountLkrMinor = goal.targetAmountMinor,
+                currentSavedLkrMinor = progress?.savedMinor,
+                remainingLkrMinor = progress?.remainingMinor,
+                progressPercent = progress?.progressPercent,
+                targetDateText = "${goal.targetDate.month.name.lowercase().replaceFirstChar { it.uppercase() }} ${goal.targetDate.year}"
             )
-        } ?: ActiveSavingsGoalUiState(
-            id = "goal-m3",
-            name = "MacBook Pro M3 Fund",
-            targetAmountLkr = 550_000,
-            currentSavedLkr = 385_000,
-            remainingLkr = 165_000,
-            progressPercent = 70
-        )
+        }
 
         val timelineItems = mutableListOf<TimelineActivityItem>()
 
@@ -149,9 +218,9 @@ class DashboardViewModel @Inject constructor(
             timelineItems.add(
                 TimelineActivityItem(
                     id = exp.id,
-                    title = exp.categoryNameSnapshot,
-                    subtitle = "${exp.paymentChannel.name} • ${exp.occurredDate}",
-                    amountText = "-LKR ${String.format("%.2f", lkrDecimal)}",
+                    title = exp.categoryNameSnapshot.ifBlank { "Expense" },
+                    subtitle = "${exp.paymentChannel.name.lowercase().replaceFirstChar { it.uppercase() }} • ${exp.occurredDate}",
+                    amountText = "-LKR ${String.format(Locale.US, "%,.2f", lkrDecimal)}",
                     isRedAmount = true,
                     occurredDate = exp.occurredDate,
                     isIncome = false
@@ -160,37 +229,42 @@ class DashboardViewModel @Inject constructor(
         }
 
         incomes.forEach { inc ->
+            val isLoss = inc.entryKind == IncomeEntryKind.REALIZED_PNL && inc.pnlDirection == PnlDirection.LOSS
             val lkrDecimal = (inc.money.baseAmountMinor.toDouble() / 100.0)
+            val title = if (inc.source == IncomeSource.CRYPTO) {
+                if (isLoss) "Crypto Loss" else "Crypto Gain"
+            } else {
+                "${inc.source.name.lowercase().replaceFirstChar { it.uppercase() }} Receipt"
+            }
             timelineItems.add(
                 TimelineActivityItem(
                     id = inc.id,
-                    title = "${inc.source.name} Receipt",
-                    subtitle = "${inc.occurredDate} • Inbound",
-                    amountText = "+LKR ${String.format("%.2f", lkrDecimal)}",
-                    isRedAmount = false,
+                    title = title,
+                    subtitle = "${inc.occurredDate} • ${if (isLoss) "Loss" else "Inbound"}",
+                    amountText = if (isLoss) {
+                        "-LKR ${String.format(Locale.US, "%,.2f", lkrDecimal)}"
+                    } else {
+                        "+LKR ${String.format(Locale.US, "%,.2f", lkrDecimal)}"
+                    },
+                    isRedAmount = isLoss,
                     occurredDate = inc.occurredDate,
-                    isIncome = true
+                    isIncome = !isLoss
                 )
             )
         }
 
-        val sortedTimeline = if (timelineItems.isNotEmpty()) {
-            timelineItems.sortedByDescending { it.occurredDate }
-        } else {
-            listOf(
-                TimelineActivityItem("1", "Freelance Upwork", "28 Mar • Inbound", "+LKR 145,000.00", false, LocalDate.of(2025, 3, 28), true),
-                TimelineActivityItem("2", "Keells Supermarket", "27 Mar • Everyday", "-LKR 18,450.00", true, LocalDate.of(2025, 3, 27), false),
-                TimelineActivityItem("3", "Dialog Axiata Home", "25 Mar • Utilities", "-LKR 6,200.00", true, LocalDate.of(2025, 3, 25), false)
-            )
-        }
+        val sortedTimeline = timelineItems.sortedByDescending { it.occurredDate }
+
+        val userSnapshot = authRepository.currentUserSnapshot()
+        val displayName = userSnapshot?.email?.substringBefore("@")?.replaceFirstChar { it.uppercase() } ?: "User"
 
         return DashboardUiState(
-            userName = "Himasha",
+            userName = displayName,
             totalAvailableBalanceLkrMinor = balanceMinor,
-            totalIncomeLkrMinor = totalIncomeMinor,
-            incomeCount = if (incomes.isNotEmpty()) incomes.size else 3,
+            totalIncomeLkrMinor = netIncomeMinor,
+            incomeCount = incomes.size,
             totalExpenseLkrMinor = totalExpenseMinor,
-            expenseCount = if (expenses.isNotEmpty()) expenses.size else 24,
+            expenseCount = expenses.size,
             committedExpenseLkrMinor = committedMinor,
             committedPercent = committedPct,
             discretionaryExpenseLkrMinor = discretionaryMinor,

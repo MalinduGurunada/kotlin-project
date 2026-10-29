@@ -33,7 +33,9 @@ import com.example.personalfinanceapp.feature.dashboard.ui.ActivityScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.DashboardViewModel
 import com.example.personalfinanceapp.feature.dashboard.ui.NavDestination
 import com.example.personalfinanceapp.feature.dashboard.ui.OverviewScreen
+import com.example.personalfinanceapp.feature.dashboard.ui.GoalsScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.TransactionDetailScreen
+import com.example.personalfinanceapp.core.model.Expense
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseEditorDialog
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseViewModel
 import com.example.personalfinanceapp.feature.income.ui.IncomeListScreen
@@ -168,48 +170,97 @@ fun AppNavHost(
                     when (dest) {
                         NavDestination.OVERVIEW -> {}
                         NavDestination.ACTIVITY -> navController.navigate(Activity)
-                        NavDestination.GOALS -> {}
+                        NavDestination.GOALS -> navController.navigate(Goals)
                         NavDestination.MORE -> navController.navigate(Home)
                     }
                 },
-                onNavigateToActivity = { navController.navigate(Activity) }
+                onNavigateToActivity = { navController.navigate(Activity) },
+                onNavigateToIncome = { navController.navigate(IncomeList) }
             )
         }
 
         composable<Activity> {
-            val dashboardViewModel: DashboardViewModel = hiltViewModel()
             val expenseViewModel: ExpenseViewModel = hiltViewModel()
-            val uiState by dashboardViewModel.uiState.collectAsState()
             val expenseUiState by expenseViewModel.uiState.collectAsState()
+            val expenseSaveUiState by expenseViewModel.saveUiState.collectAsState()
+            var editingExpense by remember { mutableStateOf<Expense?>(null) }
+
+            LaunchedEffect(expenseSaveUiState.savedExpenseId) {
+                if (expenseSaveUiState.savedExpenseId != null) {
+                    showRecordExpenseDialog = false
+                    editingExpense = null
+                    expenseViewModel.consumeSaveResult()
+                }
+            }
 
             if (showRecordExpenseDialog) {
                 ExpenseEditorDialog(
-                    expenseToEdit = null,
+                    expenseToEdit = editingExpense,
                     categories = expenseUiState.categories,
-                    onDismiss = { showRecordExpenseDialog = false },
-                    onSave = { id, categoryId, amountDecimal, currency, channel, spendingClass, date, note ->
-                        expenseViewModel.saveExpense(id, categoryId, amountDecimal, currency, channel, spendingClass, date, note)
+                    errorMessage = expenseSaveUiState.errorMessage,
+                    isSaving = expenseSaveUiState.isSaving,
+                    onDismiss = {
                         showRecordExpenseDialog = false
+                        editingExpense = null
+                        expenseViewModel.consumeSaveResult()
+                        expenseViewModel.clearError()
+                    },
+                    onSave = { id, categoryId, amountDecimal, currency, channel, spendingClass, date, note ->
+                        expenseViewModel.saveExpense(
+                            id = id,
+                            categoryId = categoryId,
+                            amountDecimal = amountDecimal,
+                            currency = currency,
+                            paymentChannel = channel,
+                            spendingClass = spendingClass,
+                            occurredDate = date,
+                            note = note,
+                            existingExpense = editingExpense
+                        )
                     }
                 )
             }
 
             ActivityScreen(
-                uiState = uiState,
+                expenseUiState = expenseUiState,
                 currentNavDestination = NavDestination.ACTIVITY,
                 onNavDestinationSelected = { dest ->
                     when (dest) {
                         NavDestination.OVERVIEW -> navController.navigate(Overview)
                         NavDestination.ACTIVITY -> {}
-                        NavDestination.GOALS -> {}
+                        NavDestination.GOALS -> navController.navigate(Goals)
                         NavDestination.MORE -> navController.navigate(Home)
                     }
                 },
-                onSelectTransaction = { id ->
-                    navController.navigate(TransactionDetail(id))
-                },
                 onRecordExpenseClicked = {
+                    expenseViewModel.consumeSaveResult()
+                    editingExpense = null
                     showRecordExpenseDialog = true
+                },
+                onExpenseClicked = { expense ->
+                    expenseViewModel.consumeSaveResult()
+                    editingExpense = expense
+                    showRecordExpenseDialog = true
+                },
+                onNavigateToIncome = {
+                    navController.navigate(IncomeList)
+                }
+            )
+        }
+
+        composable<Goals> {
+            val dashboardViewModel: DashboardViewModel = hiltViewModel()
+            val uiState by dashboardViewModel.uiState.collectAsState()
+
+            GoalsScreen(
+                uiState = uiState,
+                onNavDestinationSelected = { destination ->
+                    when (destination) {
+                        NavDestination.OVERVIEW -> navController.navigate(Overview)
+                        NavDestination.ACTIVITY -> navController.navigate(Activity)
+                        NavDestination.GOALS -> Unit
+                        NavDestination.MORE -> navController.navigate(Home)
+                    }
                 }
             )
         }

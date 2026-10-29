@@ -1,20 +1,20 @@
 package com.example.personalfinanceapp.feature.goal.di
 
-import com.example.personalfinanceapp.feature.goal.FakeGoalRepository
+import com.example.personalfinanceapp.feature.goal.FirestoreGoalRepository
 import com.example.personalfinanceapp.feature.goal.GoalRepository
+import dagger.Binds
 import dagger.Module
-import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
-object GoalModule {
+abstract class GoalModule {
 
-    @Provides
+    @Binds
     @Singleton
-    fun provideGoalRepository(): GoalRepository {
-        return FakeGoalRepository()
-    }
+    abstract fun bindGoalRepository(
+        impl: FirestoreGoalRepository
+    ): GoalRepository
 }
