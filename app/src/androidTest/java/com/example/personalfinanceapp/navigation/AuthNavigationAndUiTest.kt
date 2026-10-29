@@ -1,14 +1,12 @@
 package com.example.personalfinanceapp.navigation
 
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasClickAction
-import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -18,6 +16,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
@@ -27,6 +26,7 @@ import com.example.personalfinanceapp.feature.auth.ui.PasswordResetUiState
 import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
 import com.example.personalfinanceapp.feature.auth.ui.RegisterUiState
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -104,23 +104,73 @@ class AuthNavigationAndUiTest {
     }
 
     @Test
-    fun homeActionsExposeIncomeAndSignOut() {
-        var incomeClicked = false
+    fun homeActionsExposeAllManagementDestinationsAndSignOut() {
+        val destinations = mutableListOf<ManagementDestination>()
         var signOutClicked = false
         composeRule.setContent {
             HomeActionsScreen(
-                onManageIncome = { incomeClicked = true },
-                onManageReceivables = {},
+                onDestinationSelected = destinations::add,
                 onSignOut = { signOutClicked = true }
             )
         }
 
+        composeRule.onNodeWithText("Manage Expenses").performClick()
+        composeRule.onNodeWithText("Manage Categories").performClick()
         composeRule.onNodeWithText("Manage Income").performClick()
+        composeRule.onNodeWithText("Manage Receivables").performClick()
         composeRule.onNodeWithText("Sign Out").performClick()
         composeRule.runOnIdle {
-            assertTrue(incomeClicked)
+            assertEquals(
+                listOf(
+                    ManagementDestination.EXPENSES,
+                    ManagementDestination.CATEGORIES,
+                    ManagementDestination.INCOME,
+                    ManagementDestination.RECEIVABLES
+                ),
+                destinations
+            )
             assertTrue(signOutClicked)
         }
+    }
+
+    @Test
+    fun allDestinationTypesRegisterAndTransactionDetailReceivesItsId() {
+        composeRule.setContent {
+            val navController = rememberNavController()
+            NavHost(navController = navController, startDestination = Login) {
+                composable<Login> { Text("Login") }
+                composable<Register> { Text("Register") }
+                composable<PasswordReset> { Text("Password reset") }
+                composable<Home> { Text("More") }
+                composable<Overview> { Text("Overview") }
+                composable<Activity> { Text("Activity") }
+                composable<Goals> { Text("Goals") }
+                composable<Category> { Text("Categories") }
+                composable<ExpenseList> { Text("Expenses") }
+                composable<IncomeList> { Text("Income") }
+                composable<ReceivableList> { Text("Receivables") }
+                composable<TransactionDetail> { backStackEntry ->
+                    val route: TransactionDetail = backStackEntry.toRoute()
+                    Text(route.transactionId, Modifier.testTag("transaction_id"))
+                }
+            }
+            LaunchedEffect(Unit) {
+                navController.navigate(Register)
+                navController.navigate(PasswordReset)
+                navController.navigate(Home)
+                navController.navigate(Overview)
+                navController.navigate(Activity)
+                navController.navigate(Goals)
+                navController.navigate(Category)
+                navController.navigate(ExpenseList)
+                navController.navigate(IncomeList)
+                navController.navigate(ReceivableList)
+                navController.navigate(TransactionDetail("transaction-42"))
+            }
+        }
+
+        composeRule.onNodeWithTag("transaction_id").assertIsDisplayed()
+        composeRule.onNodeWithText("transaction-42").assertIsDisplayed()
     }
 
     @Test
@@ -145,21 +195,6 @@ class AuthNavigationAndUiTest {
         composeRule.onNodeWithContentDescription("Email address").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Show password").performClick()
         composeRule.onNodeWithContentDescription("Hide password").assertIsDisplayed()
-        composeRule.onNode(hasText("Sign in") and hasClickAction()).assertIsNotEnabled()
-    }
-}
-
-@Composable
-private fun HomeActionsScreen(
-    onManageIncome: () -> Unit,
-    onSignOut: () -> Unit
-) {
-    androidx.compose.foundation.layout.Column {
-        androidx.compose.material3.Button(onClick = onManageIncome) {
-            Text("Manage Income")
-        }
-        androidx.compose.material3.Button(onClick = onSignOut) {
-            Text("Sign Out")
-        }
+        composeRule.onNode(hasClickAction() and isNotEnabled()).assertIsDisplayed()
     }
 }
