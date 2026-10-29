@@ -133,7 +133,43 @@ service cloud.firestore {
               !('pnlDirection' in data));
     }
 
-    function isValidIncomeData(data, incomeId) {
+    function hasValidReceivableFields(data) {
+      return data.keys().hasAll([
+               'schemaVersion', 'id', 'title', 'projectReference',
+               'expectedOriginalDecimal', 'currency', 'expectedDate', 'archived'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'id', 'title', 'projectReference',
+               'expectedOriginalDecimal', 'currency', 'expectedDate', 'archived'
+             ]);
+    }
+
+    function isValidReceivableData(data, receivableId) {
+      return hasValidReceivableFields(data) &&
+             data.schemaVersion is int &&
+             data.schemaVersion == 1 &&
+             data.id is string && data.id == receivableId &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+             data.projectReference is string &&
+             data.projectReference.size() > 0 && data.projectReference.size() <= 200 &&
+             isPositiveAmountDecimal(data.expectedOriginalDecimal) &&
+             data.currency in ['LKR', 'USD'] &&
+             isIsoDate(data.expectedDate) &&
+             data.archived is bool;
+    }
+
+    function hasValidReceivableLink(data, userId) {
+      return !('receivableId' in data) ||
+             (data.receivableId is string &&
+              data.receivableId.size() > 0 &&
+              data.source == 'FREELANCE' &&
+              data.entryKind == 'RECEIPT' &&
+              exists(/databases/$(database)/documents/users/$(userId)/receivables/$(data.receivableId)) &&
+              get(/databases/$(database)/documents/users/$(userId)/receivables/$(data.receivableId)).data.archived == false &&
+              get(/databases/$(database)/documents/users/$(userId)/receivables/$(data.receivableId)).data.currency == data.money.originalCurrency);
+    }
+
+    function isValidIncomeData(data, userId, incomeId) {
       return hasValidIncomeFields(data) &&
              data.schemaVersion is int &&
              data.schemaVersion == 1 &&
@@ -148,7 +184,8 @@ service cloud.firestore {
              hasValidMoneyTypes(data.money) &&
              hasValidCurrencyAndRate(data) &&
              hasValidOptionalIncomeTypes(data) &&
-             hasValidIncomeKind(data);
+             hasValidIncomeKind(data) &&
+             hasValidReceivableLink(data, userId);
     }
 
     function isValidGoalData(data, goalId) {
@@ -273,8 +310,18 @@ service cloud.firestore {
       match /incomes/{incomeId} {
         allow get, list: if isOwner(userId);
         allow create, update: if isOwner(userId) &&
-                              isValidIncomeData(request.resource.data, incomeId);
+                              isValidIncomeData(request.resource.data, userId, incomeId);
         allow delete: if isOwner(userId);
+      }
+
+      match /receivables/{receivableId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidReceivableData(request.resource.data, receivableId);
+        allow update: if isOwner(userId) &&
+                         isValidReceivableData(request.resource.data, receivableId) &&
+                         request.resource.data.currency == resource.data.currency;
+        allow delete: if false;
       }
 
       // UID-scoped goals and immutable contribution ledger entries.

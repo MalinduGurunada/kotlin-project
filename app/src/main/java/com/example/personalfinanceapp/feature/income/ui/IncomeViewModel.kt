@@ -20,6 +20,8 @@ import com.example.personalfinanceapp.feature.income.rate.IncomeManualRateSource
 import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionCoordinator
 import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionMode
 import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionState
+import com.example.personalfinanceapp.feature.receivable.ReceivableObservationSnapshot
+import com.example.personalfinanceapp.feature.receivable.ReceivableRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -51,7 +53,8 @@ class IncomeViewModel @Inject constructor(
     private val incomeRepository: IncomeRepository,
     private val authRepository: AuthRepository,
     private val exchangeRateRepository: ExchangeRateRepository,
-    private val clock: Clock
+    private val clock: Clock,
+    private val receivableRepository: ReceivableRepository
 ) : ViewModel() {
 
     private val initialDateRange = currentMonthDateRange(clock)
@@ -63,6 +66,12 @@ class IncomeViewModel @Inject constructor(
             scope = viewModelScope,
             started = SharingStarted.Eagerly,
             initialValue = null
+        )
+    private val receivableSnapshot = receivableRepository.observeReceivableSnapshots()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = ReceivableObservationSnapshot.signedOut()
         )
     private var authGeneration = 0L
     private var rateCoordinator: IncomeRateSelectionCoordinator? = null
@@ -96,6 +105,17 @@ class IncomeViewModel @Inject constructor(
                         }
                     }
                     previousUserId = userId
+                }
+            }
+        }
+        viewModelScope.launch {
+            receivableSnapshot.collectLatest { snapshot ->
+                _formState.update { current ->
+                    if (current != null && current.ownerId == snapshot.ownerId) {
+                        current.copy(availableReceivables = snapshot.receivables)
+                    } else {
+                        current
+                    }
                 }
             }
         }
@@ -145,6 +165,7 @@ class IncomeViewModel @Inject constructor(
             amountText = "",
             transactionDate = transactionDate,
             projectReference = "",
+            availableReceivables = receivablesForOwner(ownerId),
             assetSymbol = "",
             pnlDirection = null,
             note = ""
@@ -180,6 +201,8 @@ class IncomeViewModel @Inject constructor(
             amountText = income.money.originalAmountDecimal,
             transactionDate = income.occurredDate,
             projectReference = income.projectReference.orEmpty(),
+            availableReceivables = receivablesForOwner(snapshotOwnerId),
+            selectedReceivableId = income.receivableId,
             assetSymbol = income.assetSymbol.orEmpty(),
             pnlDirection = income.pnlDirection,
             note = income.note.orEmpty()
@@ -206,6 +229,11 @@ class IncomeViewModel @Inject constructor(
                 current.projectReference
             } else {
                 ""
+            },
+            selectedReceivableId = if (source == IncomeSource.FREELANCE) {
+                current.selectedReceivableId
+            } else {
+                null
             },
             assetSymbol = if (source == IncomeSource.CRYPTO) current.assetSymbol else "",
             pnlDirection = if (source == IncomeSource.CRYPTO) current.pnlDirection else null,
@@ -345,6 +373,14 @@ class IncomeViewModel @Inject constructor(
 
     fun updateProjectReference(reference: String) = updateForm { current ->
         current.copy(projectReference = reference, saveError = null)
+    }
+
+    fun updateReceivableId(receivableId: String?) = updateForm { current ->
+        current.copy(
+            selectedReceivableId = receivableId,
+            errors = current.errors.copy(form = null),
+            saveError = null
+        )
     }
 
     fun updateAssetSymbol(symbol: String) = updateForm { current ->
@@ -531,6 +567,17 @@ class IncomeViewModel @Inject constructor(
         if (draft.selectedSource == IncomeSource.CRYPTO && draft.pnlDirection == null) {
             errors = errors.copy(pnlDirection = "Select gain or loss")
         }
+        val selectedReceivable = draft.selectedReceivableId?.let { id ->
+            draft.availableReceivables.firstOrNull { it.id == id }
+        }
+        if (draft.selectedReceivableId != null) {
+            when {
+                selectedReceivable == null -> errors = errors.copy(form = "Selected receivable is no longer available")
+                selectedReceivable.archived -> errors = errors.copy(form = "Archived receivables cannot accept payments")
+                selectedReceivable.currency != draft.selectedCurrency ->
+                    errors = errors.copy(form = "Payment currency must match the receivable")
+            }
+        }
 
         val amountFailure = MoneyValidator.parsePositiveAmount(draft.amountText).exceptionOrNull()
         if (amountFailure != null) {
@@ -579,7 +626,9 @@ class IncomeViewModel @Inject constructor(
             } else {
                 null
             },
-            receivableId = draft.originalIncome?.receivableId,
+            receivableId = if (draft.selectedSource == IncomeSource.FREELANCE) {
+                draft.selectedReceivableId
+            } else null,
             assetSymbol = if (isCrypto) {
                 draft.assetSymbol.trim().ifBlank { null }
             } else {
@@ -722,6 +771,11 @@ class IncomeViewModel @Inject constructor(
         val income: Income? = null,
         val errors: IncomeFormErrors = IncomeFormErrors()
     )
+
+    private fun receivablesForOwner(ownerId: UserId): List<com.example.personalfinanceapp.core.model.Receivable> {
+        val snapshot = receivableSnapshot.value
+        return if (snapshot.ownerId == ownerId) snapshot.receivables else emptyList()
+    }
 
     private companion object {
         const val OBSERVATION_ERROR_MESSAGE =

@@ -21,6 +21,9 @@ data object ExpenseList
 data object IncomeList
 
 @Serializable
+data object ReceivableList
+
+@Serializable
 data object Overview
 
 @Serializable

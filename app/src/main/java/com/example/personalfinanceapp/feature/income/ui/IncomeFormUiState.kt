@@ -5,6 +5,7 @@ import com.example.personalfinanceapp.core.model.Income
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.Money
 import com.example.personalfinanceapp.core.model.PnlDirection
+import com.example.personalfinanceapp.core.model.Receivable
 import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.feature.income.rate.IncomeManualRateSource
 import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionMode
@@ -49,6 +50,8 @@ data class IncomeFormUiState(
     val rateValidationError: String? = null,
     val automaticRateError: String? = null,
     val projectReference: String,
+    val availableReceivables: List<Receivable> = emptyList(),
+    val selectedReceivableId: String? = null,
     val assetSymbol: String,
     val pnlDirection: PnlDirection?,
     val note: String,

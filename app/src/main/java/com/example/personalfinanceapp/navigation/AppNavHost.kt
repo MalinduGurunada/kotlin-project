@@ -42,6 +42,8 @@ import com.example.personalfinanceapp.feature.income.ui.IncomeListScreen
 import com.example.personalfinanceapp.feature.income.ui.IncomeEditorScreen
 import com.example.personalfinanceapp.feature.income.ui.IncomeViewModel
 import com.example.personalfinanceapp.feature.income.ui.shiftIncomeMonth
+import com.example.personalfinanceapp.feature.receivable.ui.ReceivableScreen
+import com.example.personalfinanceapp.feature.receivable.ui.ReceivableViewModel
 
 internal fun NavHostController.returnToSignIn() {
     if (!popBackStack()) {
@@ -52,6 +54,7 @@ internal fun NavHostController.returnToSignIn() {
 @Composable
 internal fun HomeActionsScreen(
     onManageIncome: () -> Unit,
+    onManageReceivables: () -> Unit,
     onSignOut: () -> Unit
 ) {
     Column(
@@ -63,6 +66,12 @@ internal fun HomeActionsScreen(
     ) {
         Button(onClick = onManageIncome) {
             Text("Manage Income")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(onClick = onManageReceivables) {
+            Text("Manage Receivables")
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -155,6 +164,7 @@ fun AppNavHost(
         composable<Home> {
             HomeActionsScreen(
                 onManageIncome = { navController.navigate(IncomeList) },
+                onManageReceivables = { navController.navigate(ReceivableList) },
                 onSignOut = authViewModel::signOut
             )
         }
@@ -300,6 +310,7 @@ fun AppNavHost(
                     onManualRateDateChanged = incomeViewModel::updateManualRateDate,
                     onRefreshAutomaticRate = incomeViewModel::refreshAutomaticRate,
                     onProjectReferenceChanged = incomeViewModel::updateProjectReference,
+                    onReceivableChanged = incomeViewModel::updateReceivableId,
                     onAssetSymbolChanged = incomeViewModel::updateAssetSymbol,
                     onPnlDirectionChanged = incomeViewModel::updatePnlDirection,
                     onNoteChanged = incomeViewModel::updateIncomeNote,
@@ -338,6 +349,28 @@ fun AppNavHost(
                     canNavigateToNextMonth = nextMonth != null
                 )
             }
+        }
+
+        composable<ReceivableList> {
+            val viewModel: ReceivableViewModel = hiltViewModel()
+            val uiState by viewModel.uiState.collectAsState()
+            val formState by viewModel.formState.collectAsState()
+            ReceivableScreen(
+                uiState = uiState,
+                formState = formState,
+                onBack = { navController.popBackStack() },
+                onRetry = viewModel::retry,
+                onCreate = viewModel::openCreate,
+                onEdit = viewModel::openEdit,
+                onArchive = viewModel::setArchived,
+                onCloseForm = viewModel::closeForm,
+                onTitleChanged = viewModel::updateTitle,
+                onProjectChanged = viewModel::updateProject,
+                onAmountChanged = viewModel::updateAmount,
+                onCurrencyChanged = viewModel::updateCurrency,
+                onDateChanged = viewModel::updateDate,
+                onSave = viewModel::save
+            )
         }
     }
 }

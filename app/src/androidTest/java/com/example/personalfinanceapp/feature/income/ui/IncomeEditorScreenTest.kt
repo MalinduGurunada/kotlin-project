@@ -337,6 +337,7 @@ class IncomeEditorScreenTest {
                     },
                     onRefreshAutomaticRate = {},
                     onProjectReferenceChanged = { state = state.copy(projectReference = it) },
+                    onReceivableChanged = { state = state.copy(selectedReceivableId = it) },
                     onAssetSymbolChanged = { state = state.copy(assetSymbol = it) },
                     onPnlDirectionChanged = { state = state.copy(pnlDirection = it) },
                     onNoteChanged = { state = state.copy(note = it) },

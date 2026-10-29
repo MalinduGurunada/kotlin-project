@@ -94,6 +94,7 @@ class FirestoreIncomeRepositoryTest {
         val repository = repository(authRepository, gateway)
         val income = lkrIncome(
             id = "stable-income-id",
+            source = IncomeSource.FREELANCE,
             projectReference = "project-42",
             receivableId = "receivable-7",
             note = "October salary"
@@ -379,6 +380,7 @@ class FirestoreIncomeRepositoryTest {
         val repository = repository(authRepository, gateway)
         val original = lkrIncome(
             id = "income-a",
+            source = IncomeSource.FREELANCE,
             projectReference = "old-project",
             receivableId = "receivable-a",
             note = "old-note"

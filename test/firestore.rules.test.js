@@ -81,6 +81,24 @@ function expenseReference(firestore, uid, expenseId) {
   return doc(firestore, "users", uid, "expenses", expenseId);
 }
 
+function receivableReference(firestore, uid, receivableId) {
+  return doc(firestore, "users", uid, "receivables", receivableId);
+}
+
+function receivableDocument(receivableId, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    id: receivableId,
+    title: "Website delivery",
+    projectReference: "WEB-2026",
+    expectedOriginalDecimal: "500.00",
+    currency: "LKR",
+    expectedDate: "2026-10-30",
+    archived: false,
+    ...overrides,
+  };
+}
+
 function goalReference(firestore, uid, goalId) {
   return doc(firestore, "users", uid, "goals", goalId);
 }
@@ -143,7 +161,7 @@ function incomeDocument(incomeId, overrides = {}) {
   return data;
 }
 
-function usdIncome(incomeId, rateSource) {
+function usdIncome(incomeId, rateSource, overrides = {}) {
   return incomeDocument(incomeId, {
     source: "FREELANCE",
     money: {
@@ -154,6 +172,7 @@ function usdIncome(incomeId, rateSource) {
       rateSource,
       rateDate: "2026-10-18",
     },
+    ...overrides,
   });
 }
 
@@ -195,6 +214,12 @@ function withoutField(value, field) {
 async function seedIncome(uid, incomeId, data = incomeDocument(incomeId)) {
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
     await setDoc(incomeReference(context.firestore(), uid, incomeId), data);
+  });
+}
+
+async function seedReceivable(uid, receivableId, data = receivableDocument(receivableId)) {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(receivableReference(context.firestore(), uid, receivableId), data);
   });
 }
 
@@ -423,6 +448,7 @@ test("obviously malformed date strings are rejected", async () => {
 
 test("all supported income business cases are accepted", async () => {
   const firestore = userFirestore("user-a");
+  await seedReceivable("user-a", "receivable-1");
   const validDocuments = [
     incomeDocument("salary"),
     incomeDocument("freelance", { source: "FREELANCE" }),
@@ -435,6 +461,7 @@ test("all supported income business cases are accepted", async () => {
     usdIncome("usd-transfer", "MANUAL_TRANSFER"),
     usdIncome("usd-reference", "MANUAL_REFERENCE"),
     incomeDocument("metadata", {
+      source: "FREELANCE",
       projectReference: "project-1",
       receivableId: "receivable-1",
       assetSymbol: "LKR",
@@ -451,8 +478,10 @@ test("all supported income business cases are accepted", async () => {
 
 test("full-document upserts can remove optional metadata", async () => {
   const firestore = userFirestore("user-a");
+  await seedReceivable("user-a", "receivable-1");
   const reference = incomeReference(firestore, "user-a", "income-1");
   const withMetadata = incomeDocument("income-1", {
+    source: "FREELANCE",
     projectReference: "project-1",
     receivableId: "receivable-1",
     note: "Will be removed",
@@ -465,6 +494,58 @@ test("full-document upserts can remove optional metadata", async () => {
   if ("projectReference" in snapshot.data() || "receivableId" in snapshot.data() || "note" in snapshot.data()) {
     throw new Error("Full-document set did not remove omitted optional metadata");
   }
+});
+
+test("receivables require authentication, exact schema, and owner-scoped paths", async () => {
+  const owner = userFirestore("user-a");
+  const other = userFirestore("user-b");
+  const anonymous = anonymousFirestore();
+  const ownerRef = receivableReference(owner, "user-a", "same-id");
+
+  await expectDenied(setDoc(receivableReference(anonymous, "user-a", "same-id"), receivableDocument("same-id")));
+  await expectAllowed(setDoc(ownerRef, receivableDocument("same-id")));
+  await expectDenied(getDoc(receivableReference(other, "user-a", "same-id")));
+  await expectDenied(setDoc(receivableReference(other, "user-a", "same-id"), receivableDocument("same-id")));
+  await expectDenied(setDoc(receivableReference(owner, "user-a", "bad-id"), receivableDocument("different-id")));
+  await expectDenied(setDoc(receivableReference(owner, "user-a", "extra"), {
+    ...receivableDocument("extra"), unexpected: true,
+  }));
+  await expectDenied(setDoc(
+    receivableReference(owner, "user-a", "float-version"),
+    receivableDocument("float-version", { schemaVersion: 1.0 + Number.EPSILON }),
+  ));
+
+  await expectAllowed(setDoc(receivableReference(other, "user-b", "same-id"), receivableDocument("same-id", {
+    title: "Other account's record",
+  })));
+  const ownerSnapshot = await assertSucceeds(getDoc(ownerRef));
+  allowedAssertions += 1;
+  if (ownerSnapshot.data().title !== "Website delivery") throw new Error("Identical IDs crossed account boundaries");
+});
+
+test("receivable links require an active same-account receivable with matching currency", async () => {
+  const userA = userFirestore("user-a");
+  await seedReceivable("user-a", "active-lkr");
+  await seedReceivable("user-a", "archived-lkr", receivableDocument("archived-lkr", { archived: true }));
+  await seedReceivable("user-b", "other-only");
+
+  const linked = (incomeId, receivableId, overrides = {}) => incomeDocument(incomeId, {
+    source: "FREELANCE", receivableId, ...overrides,
+  });
+  await expectAllowed(setDoc(incomeReference(userA, "user-a", "valid"), linked("valid", "active-lkr")));
+  await expectDenied(setDoc(incomeReference(userA, "user-a", "missing"), linked("missing", "missing")));
+  await expectDenied(setDoc(incomeReference(userA, "user-a", "cross-account"), linked("cross-account", "other-only")));
+  await expectDenied(setDoc(incomeReference(userA, "user-a", "archived"), linked("archived", "archived-lkr")));
+  await expectDenied(setDoc(incomeReference(userA, "user-a", "wrong-source"), incomeDocument("wrong-source", {
+    source: "SALARY", receivableId: "active-lkr",
+  })));
+  await expectDenied(setDoc(incomeReference(userA, "user-a", "wrong-currency"), usdIncome("wrong-currency", "MANUAL_TRANSFER", {
+    receivableId: "active-lkr",
+  })));
+
+  const receivable = receivableReference(userA, "user-a", "active-lkr");
+  await expectAllowed(updateDoc(receivable, { expectedOriginalDecimal: "750.00" }));
+  await expectDenied(updateDoc(receivable, { currency: "USD" }));
 });
 
 test("owner updates cannot bypass complete resulting-document validation", async () => {

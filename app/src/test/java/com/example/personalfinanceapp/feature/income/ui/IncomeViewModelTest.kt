@@ -15,6 +15,7 @@ import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateRepositor
 import com.example.personalfinanceapp.feature.income.IncomeRepository
 import com.example.personalfinanceapp.feature.income.IncomeObservationSnapshot
 import com.example.personalfinanceapp.feature.income.IncomeDeleteException
+import com.example.personalfinanceapp.feature.receivable.FakeReceivableRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -68,7 +69,8 @@ class IncomeViewModelTest {
             incomeRepository,
             authRepository,
             UnusedExchangeRateRepository,
-            fixedClock
+            fixedClock,
+            FakeReceivableRepository(USER_A)
         )
     }
 

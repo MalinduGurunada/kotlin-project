@@ -207,6 +207,16 @@ class IncomeValidatorTest {
     }
 
     @Test
+    fun rejectsReceivableLinkOnNonFreelanceIncome() {
+        assertFailureMessage(
+            income = createIncome(source = IncomeSource.SALARY).copy(
+                receivableId = "receivable-001"
+            ),
+            expectedMessage = "Only freelance receipts can be linked to a receivable"
+        )
+    }
+
+    @Test
     fun rejectsBlankIncomeId() {
         assertFailureMessage(
             income = createIncome(id = "   "),

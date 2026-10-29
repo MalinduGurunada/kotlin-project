@@ -105,6 +105,7 @@ class AuthNavigationAndUiTest {
         composeRule.setContent {
             HomeActionsScreen(
                 onManageIncome = { incomeClicked = true },
+                onManageReceivables = {},
                 onSignOut = { signOutClicked = true }
             )
         }
