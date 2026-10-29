@@ -1,26 +1,26 @@
 package com.example.personalfinanceapp.feature.auth.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 
 @Composable
@@ -30,98 +30,99 @@ fun PasswordResetScreen(
     onResetClicked: () -> Unit,
     onNavigateToLogin: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "Reset Password",
-            style = MaterialTheme.typography.headlineLarge,
-            color = MaterialTheme.colorScheme.primary
-        )
+    BackHandler(onBack = onNavigateToLogin)
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = "Enter your email to receive password reset instructions",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        OutlinedTextField(
-            value = uiState.emailInput,
-            onValueChange = onEmailChanged,
-            label = { Text("Email Address") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Email,
-                imeAction = ImeAction.Done
-            ),
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        if (uiState.errorMessage != null) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = uiState.errorMessage,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.align(Alignment.Start)
-            )
-        }
-
-        if (uiState.isSuccess) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Password reset email sent! Check your inbox.",
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.align(Alignment.Start)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(
-            onClick = onResetClicked,
-            enabled = !uiState.isLoading,
+    AuthBackground {
+        LazyColumn(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp)
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding(),
+            contentPadding = PaddingValues(
+                horizontal = AuthDimens.ScreenPadding,
+                vertical = 18.dp
+            ),
+            verticalArrangement = Arrangement.SpaceBetween
         ) {
-            if (uiState.isLoading) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.padding(2.dp)
-                )
-            } else {
-                Text("Send Reset Link")
+            item {
+                Column {
+                    AuthTopBar(onBack = onNavigateToLogin)
+
+                    Text(
+                        text = "Reset your password",
+                        color = AuthColors.White,
+                        fontSize = 31.sp,
+                        lineHeight = 37.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = (-0.65).sp,
+                        modifier = Modifier.padding(top = 62.dp)
+                    )
+                    Text(
+                        text = "Enter the email linked to your account and we’ll send you a secure reset link.",
+                        color = AuthColors.TextMuted,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp,
+                        modifier = Modifier.padding(top = 10.dp, bottom = 32.dp)
+                    )
+
+                    AuthTextField(
+                        value = uiState.emailInput,
+                        onValueChange = onEmailChanged,
+                        label = "Email address",
+                        placeholder = "name@example.com",
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Email,
+                            imeAction = ImeAction.Done
+                        ),
+                        leadingIcon = AuthFieldIcon.Email
+                    )
+
+                    uiState.errorMessage?.let {
+                        AuthMessage(
+                            message = it,
+                            isError = true,
+                            modifier = Modifier.padding(top = 13.dp)
+                        )
+                    }
+                    if (uiState.isSuccess) {
+                        AuthMessage(
+                            message = "Reset link sent. Check your inbox to continue.",
+                            isError = false,
+                            modifier = Modifier.padding(top = 13.dp)
+                        )
+                    }
+
+                    AuthPrimaryButton(
+                        text = "Send reset link",
+                        onClick = onResetClicked,
+                        isLoading = uiState.isLoading,
+                        modifier = Modifier.padding(top = 24.dp)
+                    )
+
+                    AuthInlineLink(
+                        prompt = "Remember your password?  ",
+                        link = "Back to sign in",
+                        onClick = onNavigateToLogin,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 15.dp)
+                    )
+                }
             }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        TextButton(onClick = onNavigateToLogin) {
-            Text("Back to Sign In")
+            item {
+                SupportCard(Modifier.padding(top = 38.dp, bottom = 8.dp))
+            }
         }
     }
 }
 
-@Preview(showBackground = true)
+@Preview(showBackground = true, widthDp = 390, heightDp = 844)
 @Composable
-fun PasswordResetScreenPreview() {
-    PersonalFinanceAppTheme {
+private fun PasswordResetScreenPreview() {
+    PersonalFinanceAppTheme(dynamicColor = false) {
         PasswordResetScreen(
-            uiState = PasswordResetUiState(
-                emailInput = "user@example.com",
-                isSuccess = true
-            ),
+            uiState = PasswordResetUiState(emailInput = "malindu@example.com"),
             onEmailChanged = {},
             onResetClicked = {},
             onNavigateToLogin = {}

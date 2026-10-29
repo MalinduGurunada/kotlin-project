@@ -151,6 +151,114 @@ service cloud.firestore {
              hasValidIncomeKind(data);
     }
 
+    function isValidGoalData(data, goalId) {
+      return data.keys().hasAll([
+               'schemaVersion',
+               'id',
+               'name',
+               'targetAmountMinor',
+               'startDate',
+               'targetDate',
+               'archived'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion',
+               'id',
+               'name',
+               'targetAmountMinor',
+               'startDate',
+               'targetDate',
+               'archived'
+             ]) &&
+             data.schemaVersion == 1 &&
+             data.id is string &&
+             data.id == goalId &&
+             data.name is string &&
+             data.name.size() > 0 &&
+             data.targetAmountMinor is int &&
+             data.targetAmountMinor > 0 &&
+             isIsoDate(data.startDate) &&
+             isIsoDate(data.targetDate) &&
+             data.targetDate >= data.startDate &&
+             data.archived is bool;
+    }
+
+    function hasValidContributionFields(data) {
+      return data.keys().hasAll([
+               'schemaVersion',
+               'id',
+               'goalId',
+               'amountMinor',
+               'kind',
+               'occurredDate'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion',
+               'id',
+               'goalId',
+               'amountMinor',
+               'kind',
+               'occurredDate',
+               'reversesId',
+               'note'
+             ]);
+    }
+
+    function isValidReversal(data, userId, goalId, contributionId) {
+      let originalPath = /databases/$(database)/documents/users/$(userId)/goals/$(goalId)/contributions/$(data.reversesId);
+      let claimPath = /databases/$(database)/documents/users/$(userId)/goals/$(goalId)/reversalClaims/$(data.reversesId);
+      return data.amountMinor < 0 &&
+             data.reversesId is string &&
+             data.reversesId.size() > 0 &&
+             exists(originalPath) &&
+             get(originalPath).data.kind != 'REVERSAL' &&
+             get(originalPath).data.amountMinor is int &&
+             data.amountMinor + get(originalPath).data.amountMinor == 0 &&
+             existsAfter(claimPath) &&
+             getAfter(claimPath).data.reversalContributionId == contributionId &&
+             getAfter(claimPath).data.originalContributionId == data.reversesId;
+    }
+
+    function isValidContributionData(data, userId, goalId, contributionId) {
+      return hasValidContributionFields(data) &&
+             data.schemaVersion == 1 &&
+             data.id is string &&
+             data.id == contributionId &&
+             data.goalId is string &&
+             data.goalId == goalId &&
+             data.amountMinor is int &&
+             data.kind is string &&
+             data.kind in ['OPENING', 'ALLOCATION', 'REVERSAL'] &&
+             isIsoDate(data.occurredDate) &&
+             (!('note' in data) || data.note is string) &&
+             exists(/databases/$(database)/documents/users/$(userId)/goals/$(goalId)) &&
+             ((data.kind in ['OPENING', 'ALLOCATION'] &&
+               data.amountMinor > 0 &&
+               !('reversesId' in data)) ||
+              (data.kind == 'REVERSAL' &&
+               isValidReversal(data, userId, goalId, contributionId)));
+    }
+
+    function isValidReversalClaim(data, userId, goalId, originalId) {
+      let reversalPath = /databases/$(database)/documents/users/$(userId)/goals/$(goalId)/contributions/$(data.reversalContributionId);
+      return data.keys().hasAll([
+               'schemaVersion',
+               'originalContributionId',
+               'reversalContributionId'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion',
+               'originalContributionId',
+               'reversalContributionId'
+             ]) &&
+             data.schemaVersion == 1 &&
+             data.originalContributionId == originalId &&
+             data.reversalContributionId is string &&
+             existsAfter(reversalPath) &&
+             getAfter(reversalPath).data.kind == 'REVERSAL' &&
+             getAfter(reversalPath).data.reversesId == originalId;
+    }
+
     // User document access
     match /users/{userId} {
       allow read, write: if isOwner(userId);
@@ -167,6 +275,38 @@ service cloud.firestore {
         allow create, update: if isOwner(userId) &&
                               isValidIncomeData(request.resource.data, incomeId);
         allow delete: if isOwner(userId);
+      }
+
+      // UID-scoped goals and immutable contribution ledger entries.
+      match /goals/{goalId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+                              isValidGoalData(request.resource.data, goalId);
+        allow delete: if false;
+
+        match /contributions/{contributionId} {
+          allow get, list: if isOwner(userId);
+          allow create: if isOwner(userId) &&
+                        isValidContributionData(
+                          request.resource.data,
+                          userId,
+                          goalId,
+                          contributionId
+                        );
+          allow update, delete: if false;
+        }
+
+        match /reversalClaims/{originalId} {
+          allow get: if isOwner(userId);
+          allow create: if isOwner(userId) &&
+                        isValidReversalClaim(
+                          request.resource.data,
+                          userId,
+                          goalId,
+                          originalId
+                        );
+          allow list, update, delete: if false;
+        }
       }
     }
 

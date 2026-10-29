@@ -19,6 +19,7 @@ import {
   setLogLevel,
   updateDoc,
   where,
+  writeBatch,
 } from "firebase/firestore";
 
 const PROJECT_ID = "demo-personal-finance-income-rules";
@@ -78,6 +79,43 @@ function incomeReference(firestore, uid, incomeId) {
 
 function expenseReference(firestore, uid, expenseId) {
   return doc(firestore, "users", uid, "expenses", expenseId);
+}
+
+function goalReference(firestore, uid, goalId) {
+  return doc(firestore, "users", uid, "goals", goalId);
+}
+
+function contributionReference(firestore, uid, goalId, contributionId) {
+  return doc(firestore, "users", uid, "goals", goalId, "contributions", contributionId);
+}
+
+function reversalClaimReference(firestore, uid, goalId, originalId) {
+  return doc(firestore, "users", uid, "goals", goalId, "reversalClaims", originalId);
+}
+
+function goalDocument(goalId, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    id: goalId,
+    name: "Emergency fund",
+    targetAmountMinor: 1000000,
+    startDate: "2026-10-01",
+    targetDate: "2027-10-01",
+    archived: false,
+    ...overrides,
+  };
+}
+
+function contributionDocument(goalId, contributionId, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    id: contributionId,
+    goalId,
+    amountMinor: 50000,
+    kind: "ALLOCATION",
+    occurredDate: "2026-10-20",
+    ...overrides,
+  };
 }
 
 function incomeDocument(incomeId, overrides = {}) {
@@ -471,6 +509,123 @@ test("existing expense authorization remains owner-scoped", async () => {
   await expectDenied(updateDoc(expenseReference(otherFirestore, "user-a", "expense-1"), { note: "denied" }));
   await expectDenied(deleteDoc(expenseReference(otherFirestore, "user-a", "expense-1")));
   await expectAllowed(deleteDoc(ownerReference));
+});
+
+test("goal documents are owner-scoped, schema-checked, and not deletable", async () => {
+  const owner = userFirestore("user-a");
+  const other = userFirestore("user-b");
+  const reference = goalReference(owner, "user-a", "goal-1");
+
+  await expectAllowed(setDoc(reference, goalDocument("goal-1")));
+  await expectAllowed(getDoc(reference));
+  await expectAllowed(getDocs(collection(owner, "users", "user-a", "goals")));
+  await expectAllowed(updateDoc(reference, { archived: true }));
+  await expectDenied(deleteDoc(reference));
+  await expectDenied(getDoc(goalReference(other, "user-a", "goal-1")));
+  await expectDenied(setDoc(goalReference(other, "user-a", "goal-2"), goalDocument("goal-2")));
+
+  const invalidGoals = [
+    withoutField(goalDocument("invalid"), "schemaVersion"),
+    goalDocument("invalid", { id: "different" }),
+    goalDocument("invalid", { name: "" }),
+    goalDocument("invalid", { targetAmountMinor: 0 }),
+    goalDocument("invalid", { targetDate: "2025-01-01" }),
+    goalDocument("invalid", { unexpected: true }),
+  ];
+  for (const invalid of invalidGoals) {
+    await expectDenied(setDoc(goalReference(owner, "user-a", "invalid"), invalid));
+  }
+});
+
+test("identical goal and contribution IDs remain isolated between owners", async () => {
+  const userA = userFirestore("user-a");
+  const userB = userFirestore("user-b");
+  await expectAllowed(setDoc(goalReference(userA, "user-a", "same"), goalDocument("same", { name: "A" })));
+  await expectAllowed(setDoc(goalReference(userB, "user-b", "same"), goalDocument("same", { name: "B" })));
+  await expectAllowed(
+    setDoc(
+      contributionReference(userA, "user-a", "same", "same-entry"),
+      contributionDocument("same", "same-entry", { amountMinor: 100 }),
+    ),
+  );
+  await expectAllowed(
+    setDoc(
+      contributionReference(userB, "user-b", "same", "same-entry"),
+      contributionDocument("same", "same-entry", { amountMinor: 250 }),
+    ),
+  );
+  const aSnapshot = await assertSucceeds(
+    getDoc(contributionReference(userA, "user-a", "same", "same-entry")),
+  );
+  allowedAssertions += 1;
+  const bSnapshot = await assertSucceeds(
+    getDoc(contributionReference(userB, "user-b", "same", "same-entry")),
+  );
+  allowedAssertions += 1;
+  if (aSnapshot.data().amountMinor !== 100 || bSnapshot.data().amountMinor !== 250) {
+    throw new Error("Identical contribution IDs crossed owner boundaries");
+  }
+  await expectDenied(getDoc(contributionReference(userA, "user-b", "same", "same-entry")));
+});
+
+test("contribution ledger is immutable and exact reversals require one atomic claim", async () => {
+  const firestore = userFirestore("user-a");
+  const goalId = "goal-1";
+  await expectAllowed(setDoc(goalReference(firestore, "user-a", goalId), goalDocument(goalId)));
+  const original = contributionReference(firestore, "user-a", goalId, "original");
+  await expectAllowed(setDoc(original, contributionDocument(goalId, "original")));
+  await expectDenied(updateDoc(original, { amountMinor: 60000 }));
+  await expectDenied(deleteDoc(original));
+
+  const reversal = contributionReference(firestore, "user-a", goalId, "reversal");
+  await expectDenied(
+    setDoc(
+      reversal,
+      contributionDocument(goalId, "reversal", {
+        amountMinor: -50000,
+        kind: "REVERSAL",
+        reversesId: "original",
+      }),
+    ),
+  );
+
+  const batch = writeBatch(firestore);
+  batch.set(
+    reversalClaimReference(firestore, "user-a", goalId, "original"),
+    {
+      schemaVersion: 1,
+      originalContributionId: "original",
+      reversalContributionId: "reversal",
+    },
+  );
+  batch.set(
+    reversal,
+    contributionDocument(goalId, "reversal", {
+      amountMinor: -50000,
+      kind: "REVERSAL",
+      reversesId: "original",
+    }),
+  );
+  await expectAllowed(batch.commit());
+
+  const duplicateBatch = writeBatch(firestore);
+  duplicateBatch.set(
+    reversalClaimReference(firestore, "user-a", goalId, "original"),
+    {
+      schemaVersion: 1,
+      originalContributionId: "original",
+      reversalContributionId: "duplicate",
+    },
+  );
+  duplicateBatch.set(
+    contributionReference(firestore, "user-a", goalId, "duplicate"),
+    contributionDocument(goalId, "duplicate", {
+      amountMinor: -50000,
+      kind: "REVERSAL",
+      reversesId: "original",
+    }),
+  );
+  await expectDenied(duplicateBatch.commit());
 });
 
 test("unrelated paths and broader cross-user access remain denied", async () => {

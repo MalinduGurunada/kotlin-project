@@ -48,6 +48,7 @@ import java.time.LocalDate
 @Composable
 fun ExpenseListScreen(
     uiState: ExpenseUiState,
+    saveUiState: ExpenseSaveUiState = ExpenseSaveUiState(),
     onSaveExpense: (
         id: String?,
         categoryId: String,
@@ -65,6 +66,13 @@ fun ExpenseListScreen(
     var showEditorDialog by remember { mutableStateOf(false) }
     var expenseToEdit by remember { mutableStateOf<Expense?>(null) }
 
+    LaunchedEffect(saveUiState.savedExpenseId) {
+        if (saveUiState.savedExpenseId != null) {
+            showEditorDialog = false
+            expenseToEdit = null
+        }
+    }
+
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let { error ->
             snackbarHostState.showSnackbar(error)
@@ -76,14 +84,14 @@ fun ExpenseListScreen(
         ExpenseEditorDialog(
             expenseToEdit = expenseToEdit,
             categories = uiState.categories,
+            errorMessage = saveUiState.errorMessage,
+            isSaving = saveUiState.isSaving,
             onDismiss = {
                 showEditorDialog = false
                 expenseToEdit = null
             },
             onSave = { id, categoryId, amountDecimal, currency, channel, spendingClass, date, note ->
                 onSaveExpense(id, categoryId, amountDecimal, currency, channel, spendingClass, date, note)
-                showEditorDialog = false
-                expenseToEdit = null
             }
         )
     }

@@ -2,6 +2,8 @@ package com.example.personalfinanceapp.feature.auth.di
 
 import com.example.personalfinanceapp.feature.auth.AuthRepository
 import com.example.personalfinanceapp.feature.auth.FirebaseAuthRepository
+import com.example.personalfinanceapp.feature.auth.PendingRegistrationStore
+import com.example.personalfinanceapp.feature.auth.SharedPreferencesPendingRegistrationStore
 import com.google.firebase.auth.FirebaseAuth
 import dagger.Binds
 import dagger.Module
@@ -19,6 +21,12 @@ abstract class AuthModule {
     abstract fun bindAuthRepository(
         impl: FirebaseAuthRepository
     ): AuthRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindPendingRegistrationStore(
+        impl: SharedPreferencesPendingRegistrationStore
+    ): PendingRegistrationStore
 
     companion object {
         @Provides
