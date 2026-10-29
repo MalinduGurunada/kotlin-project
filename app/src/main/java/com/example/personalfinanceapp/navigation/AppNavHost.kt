@@ -7,36 +7,25 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import androidx.navigation.NavHostController
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.toRoute
 import com.example.personalfinanceapp.feature.auth.ui.AuthViewModel
-import com.example.personalfinanceapp.feature.auth.ui.AuthNavigationState
 import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
 import com.example.personalfinanceapp.feature.auth.ui.PasswordResetScreen
 import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
-import com.example.personalfinanceapp.feature.dashboard.ui.ActivityScreen
-import com.example.personalfinanceapp.feature.dashboard.ui.DashboardViewModel
-import com.example.personalfinanceapp.feature.dashboard.ui.NavDestination
-import com.example.personalfinanceapp.feature.dashboard.ui.OverviewScreen
-import com.example.personalfinanceapp.feature.dashboard.ui.GoalsScreen
-import com.example.personalfinanceapp.feature.dashboard.ui.TransactionDetailScreen
-import com.example.personalfinanceapp.core.model.Expense
-import com.example.personalfinanceapp.feature.expense.ui.ExpenseEditorDialog
+import com.example.personalfinanceapp.feature.category.ui.CategoryScreen
+import com.example.personalfinanceapp.feature.expense.ui.ExpenseListScreen
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseViewModel
 import com.example.personalfinanceapp.feature.income.ui.IncomeListScreen
 import com.example.personalfinanceapp.feature.income.ui.IncomeEditorScreen
@@ -45,40 +34,9 @@ import com.example.personalfinanceapp.feature.income.ui.shiftIncomeMonth
 import com.example.personalfinanceapp.feature.receivable.ui.ReceivableScreen
 import com.example.personalfinanceapp.feature.receivable.ui.ReceivableViewModel
 
-internal fun NavHostController.returnToSignIn() {
+internal fun androidx.navigation.NavHostController.returnToSignIn() {
     if (!popBackStack()) {
         navigate(Login) { launchSingleTop = true }
-    }
-}
-
-@Composable
-internal fun HomeActionsScreen(
-    onManageIncome: () -> Unit,
-    onManageReceivables: () -> Unit,
-    onSignOut: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Button(onClick = onManageIncome) {
-            Text("Manage Income")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = onManageReceivables) {
-            Text("Manage Receivables")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = onSignOut) {
-            Text("Sign Out")
-        }
     }
 }
 
@@ -87,33 +45,19 @@ fun AppNavHost(
     authViewModel: AuthViewModel = hiltViewModel()
 ) {
     val navController = rememberNavController()
-    val navigationState by authViewModel.navigationState.collectAsState()
+    val authState by authViewModel.authState.collectAsState()
     val loginUiState by authViewModel.loginUiState.collectAsState()
     val registerUiState by authViewModel.registerUiState.collectAsState()
     val resetUiState by authViewModel.passwordResetUiState.collectAsState()
 
-    var showRecordExpenseDialog by remember { mutableStateOf(false) }
-
-    LaunchedEffect(navigationState) {
-        when (navigationState) {
-            AuthNavigationState.Resolving -> Unit
-            AuthNavigationState.Unauthenticated -> {
-                navController.navigate(Login) {
-                    popUpTo(0) { inclusive = true }
-                    launchSingleTop = true
-                }
+    LaunchedEffect(authState) {
+        if (authState != null) {
+            navController.navigate(Home) {
+                popUpTo(Login) { inclusive = true }
             }
-            AuthNavigationState.RegistrationSetup -> {
-                navController.navigate(Register) {
-                    popUpTo(0) { inclusive = true }
-                    launchSingleTop = true
-                }
-            }
-            is AuthNavigationState.Authenticated -> {
-                navController.navigate(Overview) {
-                    popUpTo(0) { inclusive = true }
-                    launchSingleTop = true
-                }
+        } else {
+            navController.navigate(Login) {
+                popUpTo(0) { inclusive = true }
             }
         }
     }
@@ -141,12 +85,7 @@ fun AppNavHost(
                 onPasswordChanged = authViewModel::onRegisterPasswordChanged,
                 onConfirmPasswordChanged = authViewModel::onRegisterConfirmPasswordChanged,
                 onRegisterClicked = authViewModel::register,
-                onNavigateToLogin = {
-                    if (registerUiState.isProfileUpdatePending) {
-                        authViewModel.abandonPendingRegistration()
-                    }
-                    navController.returnToSignIn()
-                }
+                onNavigateToLogin = { navController.navigate(Login) }
             )
         }
 
@@ -155,134 +94,99 @@ fun AppNavHost(
                 uiState = resetUiState,
                 onEmailChanged = authViewModel::onResetEmailChanged,
                 onResetClicked = authViewModel::sendPasswordReset,
-                onNavigateToLogin = {
-                    navController.returnToSignIn()
-                }
+                onNavigateToLogin = { navController.navigate(Login) }
             )
         }
 
         composable<Home> {
-            HomeActionsScreen(
-                onManageIncome = { navController.navigate(IncomeList) },
-                onManageReceivables = { navController.navigate(ReceivableList) },
-                onSignOut = authViewModel::signOut
-            )
-        }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "Personal Finance Dashboard",
+                    style = MaterialTheme.typography.headlineMedium
+                )
 
-        composable<Overview> {
-            val dashboardViewModel: DashboardViewModel = hiltViewModel()
-            val uiState by dashboardViewModel.uiState.collectAsState()
+                if (authState != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Signed in as: $authState",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
-            OverviewScreen(
-                uiState = uiState,
-                currentNavDestination = NavDestination.OVERVIEW,
-                onNavDestinationSelected = { dest ->
-                    when (dest) {
-                        NavDestination.OVERVIEW -> {}
-                        NavDestination.ACTIVITY -> navController.navigate(Activity)
-                        NavDestination.GOALS -> navController.navigate(Goals)
-                        NavDestination.MORE -> navController.navigate(Home)
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Button(
+                    onClick = {
+                        navController.navigate(ExpenseList)
                     }
-                },
-                onNavigateToActivity = { navController.navigate(Activity) },
-                onNavigateToIncome = { navController.navigate(IncomeList) }
+                ) {
+                    Text("Manage Expenses")
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
+                        navController.navigate(Category)
+                    }
+                ) {
+                    Text("Manage Categories")
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
+                        navController.navigate(IncomeList)
+                    }
+                ) {
+                    Text("Manage Income")
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
+                        navController.navigate(ReceivableList)
+                    }
+                ) {
+                    Text("Manage Receivables")
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Button(
+                    onClick = {
+                        authViewModel.signOut()
+                    }
+                ) {
+                    Text("Sign Out")
+                }
+            }
+        }
+
+        composable<Category> {
+            CategoryScreen(
+                onBack = { navController.popBackStack() }
             )
         }
 
-        composable<Activity> {
+        composable<ExpenseList> {
             val expenseViewModel: ExpenseViewModel = hiltViewModel()
             val expenseUiState by expenseViewModel.uiState.collectAsState()
-            val expenseSaveUiState by expenseViewModel.saveUiState.collectAsState()
-            var editingExpense by remember { mutableStateOf<Expense?>(null) }
 
-            LaunchedEffect(expenseSaveUiState.savedExpenseId) {
-                if (expenseSaveUiState.savedExpenseId != null) {
-                    showRecordExpenseDialog = false
-                    editingExpense = null
-                    expenseViewModel.consumeSaveResult()
-                }
-            }
-
-            if (showRecordExpenseDialog) {
-                ExpenseEditorDialog(
-                    expenseToEdit = editingExpense,
-                    categories = expenseUiState.categories,
-                    errorMessage = expenseSaveUiState.errorMessage,
-                    isSaving = expenseSaveUiState.isSaving,
-                    onDismiss = {
-                        showRecordExpenseDialog = false
-                        editingExpense = null
-                        expenseViewModel.consumeSaveResult()
-                        expenseViewModel.clearError()
-                    },
-                    onSave = { id, categoryId, amountDecimal, currency, channel, spendingClass, date, note ->
-                        expenseViewModel.saveExpense(
-                            id = id,
-                            categoryId = categoryId,
-                            amountDecimal = amountDecimal,
-                            currency = currency,
-                            paymentChannel = channel,
-                            spendingClass = spendingClass,
-                            occurredDate = date,
-                            note = note,
-                            existingExpense = editingExpense
-                        )
-                    }
-                )
-            }
-
-            ActivityScreen(
-                expenseUiState = expenseUiState,
-                currentNavDestination = NavDestination.ACTIVITY,
-                onNavDestinationSelected = { dest ->
-                    when (dest) {
-                        NavDestination.OVERVIEW -> navController.navigate(Overview)
-                        NavDestination.ACTIVITY -> {}
-                        NavDestination.GOALS -> navController.navigate(Goals)
-                        NavDestination.MORE -> navController.navigate(Home)
-                    }
-                },
-                onRecordExpenseClicked = {
-                    expenseViewModel.consumeSaveResult()
-                    editingExpense = null
-                    showRecordExpenseDialog = true
-                },
-                onExpenseClicked = { expense ->
-                    expenseViewModel.consumeSaveResult()
-                    editingExpense = expense
-                    showRecordExpenseDialog = true
-                },
-                onNavigateToIncome = {
-                    navController.navigate(IncomeList)
-                }
-            )
-        }
-
-        composable<Goals> {
-            val dashboardViewModel: DashboardViewModel = hiltViewModel()
-            val uiState by dashboardViewModel.uiState.collectAsState()
-
-            GoalsScreen(
-                uiState = uiState,
-                onNavDestinationSelected = { destination ->
-                    when (destination) {
-                        NavDestination.OVERVIEW -> navController.navigate(Overview)
-                        NavDestination.ACTIVITY -> navController.navigate(Activity)
-                        NavDestination.GOALS -> Unit
-                        NavDestination.MORE -> navController.navigate(Home)
-                    }
-                }
-            )
-        }
-
-        composable<TransactionDetail> { backStackEntry ->
-            val detailRoute: TransactionDetail = backStackEntry.toRoute()
-
-            TransactionDetailScreen(
-                transactionId = detailRoute.transactionId,
-                onBackClicked = { navController.popBackStack() },
-                onEditClicked = { },
-                onDeleteClicked = { navController.popBackStack() }
+            ExpenseListScreen(
+                uiState = expenseUiState,
+                onSaveExpense = expenseViewModel::saveExpense,
+                onDeleteExpense = expenseViewModel::deleteExpense,
+                onClearError = expenseViewModel::clearError
             )
         }
 

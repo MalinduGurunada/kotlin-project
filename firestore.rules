@@ -21,6 +21,19 @@ service cloud.firestore {
              data.occurredDate is string;
     }
 
+    // Category documents use the exact field set written by FirestoreCategoryRepository.
+    function isValidCategoryData(data, categoryId) {
+      return data.keys().hasAll(['id', 'name', 'defaultSpendingClass', 'archived']) &&
+             data.keys().hasOnly(['id', 'name', 'defaultSpendingClass', 'archived']) &&
+             data.id is string &&
+             data.id == categoryId &&
+             data.name is string &&
+             data.name.trim().size() > 0 &&
+             data.name.size() <= 50 &&
+             data.defaultSpendingClass in ['COMMITTED', 'DISCRETIONARY'] &&
+             data.archived is bool;
+    }
+
     // Income documents use the exact v1 field set emitted by IncomeFirestoreMapper.
     function hasValidIncomeFields(data) {
       return data.keys().hasAll([
@@ -304,6 +317,14 @@ service cloud.firestore {
       match /expenses/{expenseId} {
         allow read, delete: if isOwner(userId);
         allow create, update: if isOwner(userId) && isValidExpenseData(request.resource.data, userId);
+      }
+
+      // UID-scoped expense categories. Categories are archived, never deleted.
+      match /categories/{categoryId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+                              isValidCategoryData(request.resource.data, categoryId);
+        allow delete: if false;
       }
 
       // UID-scoped income reads and complete-schema writes.

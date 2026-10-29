@@ -1,6 +1,7 @@
 package com.example.personalfinanceapp.navigation
 
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -55,7 +56,9 @@ class AuthNavigationAndUiTest {
                         onPasswordChanged = {},
                         onConfirmPasswordChanged = {},
                         onRegisterClicked = {},
-                        onNavigateToLogin = navController::returnToSignIn
+                        onNavigateToLogin = {
+                            navController.popBackStack()
+                        }
                     )
                 }
             }
@@ -83,7 +86,9 @@ class AuthNavigationAndUiTest {
                         uiState = PasswordResetUiState(),
                         onEmailChanged = {},
                         onResetClicked = {},
-                        onNavigateToLogin = navController::returnToSignIn
+                        onNavigateToLogin = {
+                            navController.popBackStack()
+                        }
                     )
                 }
             }
@@ -141,5 +146,20 @@ class AuthNavigationAndUiTest {
         composeRule.onNodeWithContentDescription("Show password").performClick()
         composeRule.onNodeWithContentDescription("Hide password").assertIsDisplayed()
         composeRule.onNode(hasText("Sign in") and hasClickAction()).assertIsNotEnabled()
+    }
+}
+
+@Composable
+private fun HomeActionsScreen(
+    onManageIncome: () -> Unit,
+    onSignOut: () -> Unit
+) {
+    androidx.compose.foundation.layout.Column {
+        androidx.compose.material3.Button(onClick = onManageIncome) {
+            Text("Manage Income")
+        }
+        androidx.compose.material3.Button(onClick = onSignOut) {
+            Text("Sign Out")
+        }
     }
 }

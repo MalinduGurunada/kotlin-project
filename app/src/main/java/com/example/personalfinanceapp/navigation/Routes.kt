@@ -15,6 +15,9 @@ data object PasswordReset
 data object Home
 
 @Serializable
+data object Category
+
+@Serializable
 data object ExpenseList
 
 @Serializable
