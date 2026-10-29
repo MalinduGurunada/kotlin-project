@@ -1,0 +1,318 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function checking if caller is authenticated and matches document owner
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // Helper function validating expense schema and preventing ownership forging
+    function isValidExpenseData(data, userId) {
+      return data.userId == userId &&
+             data.categoryId is string &&
+             data.categoryId.size() > 0 &&
+             data.categoryNameSnapshot is string &&
+             data.originalAmountDecimal is string &&
+             data.baseAmountMinor is int &&
+             data.baseAmountMinor >= 0 &&
+             data.spendingClass in ['COMMITTED', 'DISCRETIONARY'] &&
+             data.paymentChannel in ['CASH', 'CARD', 'BANK', 'OTHER'] &&
+             data.occurredDate is string;
+    }
+
+    // Income documents use the exact v1 field set emitted by IncomeFirestoreMapper.
+    function hasValidIncomeFields(data) {
+      return data.keys().hasAll([
+               'schemaVersion',
+               'id',
+               'source',
+               'entryKind',
+               'money',
+               'occurredDate'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion',
+               'id',
+               'source',
+               'entryKind',
+               'money',
+               'occurredDate',
+               'pnlDirection',
+               'projectReference',
+               'receivableId',
+               'assetSymbol',
+               'note'
+             ]);
+    }
+
+    function isIsoDate(value) {
+      return value is string &&
+             value.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}');
+    }
+
+    function isPositiveAmountDecimal(value) {
+      return value is string &&
+             value.trim().matches('[0-9]+([.][0-9]{1,2})?') &&
+             !value.trim().matches('0+([.]0{1,2})?');
+    }
+
+    function isPositiveRateDecimal(value) {
+      return value is string &&
+             value.trim().matches('[0-9]+([.][0-9]{1,6})?') &&
+             !value.trim().matches('0+([.]0{1,6})?');
+    }
+
+    // Precision-safe subset of BigDecimal representations that equal one.
+    // Includes ordinary decimal forms, zero-exponent forms, and 10e-1 without float conversion.
+    function isLkrUnitRate(value) {
+      return value is string &&
+             value.trim().matches(
+               '[+]?0*(1([.]0*)?([eE][-+]?0+)?|10([.]0*)?[eE]-0*1)'
+             );
+    }
+
+    function hasValidMoneyFields(money) {
+      return money is map &&
+             money.keys().hasAll([
+               'originalAmountDecimal',
+               'originalCurrency',
+               'rateLkrPerUnitDecimal',
+               'baseAmountMinor',
+               'rateSource',
+               'rateDate'
+             ]) &&
+             money.keys().hasOnly([
+               'originalAmountDecimal',
+               'originalCurrency',
+               'rateLkrPerUnitDecimal',
+               'baseAmountMinor',
+               'rateSource',
+               'rateDate'
+             ]);
+    }
+
+    function hasValidMoneyTypes(money) {
+      return isPositiveAmountDecimal(money.originalAmountDecimal) &&
+             money.originalCurrency is string &&
+             money.rateLkrPerUnitDecimal is string &&
+             money.baseAmountMinor is int &&
+             money.baseAmountMinor > 0 &&
+             money.rateSource is string &&
+             isIsoDate(money.rateDate);
+    }
+
+    function hasValidCurrencyAndRate(data) {
+      return (data.money.originalCurrency == 'LKR' &&
+              data.money.rateSource == 'LKR_FIXED' &&
+              isLkrUnitRate(data.money.rateLkrPerUnitDecimal) &&
+              data.money.rateDate == data.occurredDate) ||
+             (data.money.originalCurrency == 'USD' &&
+              data.money.rateSource in [
+                'MANUAL_TRANSFER',
+                'MANUAL_REFERENCE',
+                'EXCHANGE_RATE_API_REFERENCE'
+              ] &&
+              isPositiveRateDecimal(data.money.rateLkrPerUnitDecimal));
+    }
+
+    function hasValidOptionalIncomeTypes(data) {
+      return (!('projectReference' in data) || data.projectReference is string) &&
+             (!('receivableId' in data) || data.receivableId is string) &&
+             (!('assetSymbol' in data) || data.assetSymbol is string) &&
+             (!('note' in data) || data.note is string);
+    }
+
+    function hasValidIncomeKind(data) {
+      return (data.source == 'CRYPTO' &&
+              data.entryKind == 'REALIZED_PNL' &&
+              'pnlDirection' in data &&
+              data.pnlDirection in ['GAIN', 'LOSS']) ||
+             (data.source in ['SALARY', 'FREELANCE', 'ADSENSE'] &&
+              data.entryKind == 'RECEIPT' &&
+              !('pnlDirection' in data));
+    }
+
+    function isValidIncomeData(data, incomeId) {
+      return hasValidIncomeFields(data) &&
+             data.schemaVersion is int &&
+             data.schemaVersion == 1 &&
+             data.id is string &&
+             data.id == incomeId &&
+             data.source is string &&
+             data.source in ['SALARY', 'FREELANCE', 'ADSENSE', 'CRYPTO'] &&
+             data.entryKind is string &&
+             data.entryKind in ['RECEIPT', 'REALIZED_PNL'] &&
+             isIsoDate(data.occurredDate) &&
+             hasValidMoneyFields(data.money) &&
+             hasValidMoneyTypes(data.money) &&
+             hasValidCurrencyAndRate(data) &&
+             hasValidOptionalIncomeTypes(data) &&
+             hasValidIncomeKind(data);
+    }
+
+    function isValidGoalData(data, goalId) {
+      return data.keys().hasAll([
+               'schemaVersion',
+               'id',
+               'name',
+               'targetAmountMinor',
+               'startDate',
+               'targetDate',
+               'archived'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion',
+               'id',
+               'name',
+               'targetAmountMinor',
+               'startDate',
+               'targetDate',
+               'archived'
+             ]) &&
+             data.schemaVersion == 1 &&
+             data.id is string &&
+             data.id == goalId &&
+             data.name is string &&
+             data.name.size() > 0 &&
+             data.targetAmountMinor is int &&
+             data.targetAmountMinor > 0 &&
+             isIsoDate(data.startDate) &&
+             isIsoDate(data.targetDate) &&
+             data.targetDate >= data.startDate &&
+             data.archived is bool;
+    }
+
+    function hasValidContributionFields(data) {
+      return data.keys().hasAll([
+               'schemaVersion',
+               'id',
+               'goalId',
+               'amountMinor',
+               'kind',
+               'occurredDate'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion',
+               'id',
+               'goalId',
+               'amountMinor',
+               'kind',
+               'occurredDate',
+               'reversesId',
+               'note'
+             ]);
+    }
+
+    function isValidReversal(data, userId, goalId, contributionId) {
+      let originalPath = /databases/$(database)/documents/users/$(userId)/goals/$(goalId)/contributions/$(data.reversesId);
+      let claimPath = /databases/$(database)/documents/users/$(userId)/goals/$(goalId)/reversalClaims/$(data.reversesId);
+      return data.amountMinor < 0 &&
+             data.reversesId is string &&
+             data.reversesId.size() > 0 &&
+             exists(originalPath) &&
+             get(originalPath).data.kind != 'REVERSAL' &&
+             get(originalPath).data.amountMinor is int &&
+             data.amountMinor + get(originalPath).data.amountMinor == 0 &&
+             existsAfter(claimPath) &&
+             getAfter(claimPath).data.reversalContributionId == contributionId &&
+             getAfter(claimPath).data.originalContributionId == data.reversesId;
+    }
+
+    function isValidContributionData(data, userId, goalId, contributionId) {
+      return hasValidContributionFields(data) &&
+             data.schemaVersion == 1 &&
+             data.id is string &&
+             data.id == contributionId &&
+             data.goalId is string &&
+             data.goalId == goalId &&
+             data.amountMinor is int &&
+             data.kind is string &&
+             data.kind in ['OPENING', 'ALLOCATION', 'REVERSAL'] &&
+             isIsoDate(data.occurredDate) &&
+             (!('note' in data) || data.note is string) &&
+             exists(/databases/$(database)/documents/users/$(userId)/goals/$(goalId)) &&
+             ((data.kind in ['OPENING', 'ALLOCATION'] &&
+               data.amountMinor > 0 &&
+               !('reversesId' in data)) ||
+              (data.kind == 'REVERSAL' &&
+               isValidReversal(data, userId, goalId, contributionId)));
+    }
+
+    function isValidReversalClaim(data, userId, goalId, originalId) {
+      let reversalPath = /databases/$(database)/documents/users/$(userId)/goals/$(goalId)/contributions/$(data.reversalContributionId);
+      return data.keys().hasAll([
+               'schemaVersion',
+               'originalContributionId',
+               'reversalContributionId'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion',
+               'originalContributionId',
+               'reversalContributionId'
+             ]) &&
+             data.schemaVersion == 1 &&
+             data.originalContributionId == originalId &&
+             data.reversalContributionId is string &&
+             existsAfter(reversalPath) &&
+             getAfter(reversalPath).data.kind == 'REVERSAL' &&
+             getAfter(reversalPath).data.reversesId == originalId;
+    }
+
+    // User document access
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      // Scoped expenses collection for signed-in user
+      match /expenses/{expenseId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidExpenseData(request.resource.data, userId);
+      }
+
+      // UID-scoped income reads and complete-schema writes.
+      match /incomes/{incomeId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+                              isValidIncomeData(request.resource.data, incomeId);
+        allow delete: if isOwner(userId);
+      }
+
+      // UID-scoped goals and immutable contribution ledger entries.
+      match /goals/{goalId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+                              isValidGoalData(request.resource.data, goalId);
+        allow delete: if false;
+
+        match /contributions/{contributionId} {
+          allow get, list: if isOwner(userId);
+          allow create: if isOwner(userId) &&
+                        isValidContributionData(
+                          request.resource.data,
+                          userId,
+                          goalId,
+                          contributionId
+                        );
+          allow update, delete: if false;
+        }
+
+        match /reversalClaims/{originalId} {
+          allow get: if isOwner(userId);
+          allow create: if isOwner(userId) &&
+                        isValidReversalClaim(
+                          request.resource.data,
+                          userId,
+                          goalId,
+                          originalId
+                        );
+          allow list, update, delete: if false;
+        }
+      }
+    }
+
+    // Fallback default deny for any unmatched path
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

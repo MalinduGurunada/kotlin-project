@@ -10,7 +10,8 @@ enum class CurrencyCode {
 enum class RateSource{
     LKR_FIXED,
     MANUAL_TRANSFER,
-    MANUAL_REFERENCE
+    MANUAL_REFERENCE,
+    EXCHANGE_RATE_API_REFERENCE
 }
 
 data class Money (
