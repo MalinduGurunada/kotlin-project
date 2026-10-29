@@ -1,18 +1,28 @@
 package com.example.personalfinanceapp.feature.category.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -24,16 +34,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.personalfinanceapp.core.model.Category
 import com.example.personalfinanceapp.core.model.SpendingClass
+import com.example.personalfinanceapp.ui.theme.PrimaryDarkGreen
+import com.example.personalfinanceapp.ui.theme.SecondaryPaleGreen
+import com.example.personalfinanceapp.ui.theme.SurfaceWhite
+import com.example.personalfinanceapp.ui.theme.TextPrimaryDark
+import com.example.personalfinanceapp.ui.theme.TextSecondaryMuted
 import kotlinx.coroutines.launch
 
 sealed interface CategoryDialogState : java.io.Serializable {
@@ -140,47 +155,32 @@ fun CategoryScreenContent(
     onArchiveClick: (Category) -> Unit = {},
     onRestoreClick: (Category) -> Unit = {}
 ) {
-    var isArchivedExpanded by rememberSaveable { mutableStateOf(false) }
+    var isArchivedExpanded by rememberSaveable { mutableStateOf(true) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Manage Categories") },
+                title = { Text("Categories", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     if (onBack != null) {
                         IconButton(
-                            onClick = onBack,
-                            modifier = Modifier.semantics { contentDescription = "Back" }
+                            onClick = onBack
                         ) {
-                            Text(
-                                text = "←",
-                                style = MaterialTheme.typography.titleLarge
+                            Icon(
+                                imageVector = CategoryIcons.ArrowBack,
+                                contentDescription = "Back"
                             )
                         }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    containerColor = SurfaceWhite,
+                    titleContentColor = TextPrimaryDark,
+                    navigationIconContentColor = PrimaryDarkGreen
                 )
             )
-        },
-        floatingActionButton = {
-            if (uiState is CategoryUiState.Success) {
-                FloatingActionButton(
-                    onClick = onAddClick,
-                    modifier = Modifier
-                        .testTag("category_fab_add")
-                        .semantics { contentDescription = "Add category" }
-                ) {
-                    Text(
-                        text = "+",
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                }
-            }
         }
     ) { paddingValues ->
         val contentModifier = Modifier.padding(paddingValues)
@@ -201,20 +201,76 @@ fun CategoryScreenContent(
                 val hasNoCategories =
                     uiState.activeCategories.isEmpty() && uiState.archivedCategories.isEmpty()
 
-                if (hasNoCategories) {
-                    EmptyStateContent(modifier = contentModifier)
-                } else {
-                    LazyColumn(
-                        modifier = contentModifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp)
-                            .testTag("category_list"),
-                        contentPadding = PaddingValues(vertical = 12.dp)
-                    ) {
-                        if (uiState.activeCategories.isNotEmpty()) {
-                            item {
-                                SectionHeader(title = "ACTIVE CATEGORIES")
+                LazyColumn(
+                    modifier = contentModifier
+                        .fillMaxSize()
+                        .background(CategoryScreenBackground)
+                        .padding(horizontal = 20.dp)
+                        .testTag("category_list"),
+                    contentPadding = PaddingValues(vertical = 12.dp)
+                ) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Active",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimaryDark
+                                )
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = SecondaryPaleGreen
+                                ) {
+                                    Text(
+                                        text = uiState.activeCategories.size.toString(),
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = PrimaryDarkGreen
+                                    )
+                                }
                             }
+
+                            Button(
+                                onClick = onAddClick,
+                                shape = RoundedCornerShape(50),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = PrimaryDarkGreen,
+                                    contentColor = SurfaceWhite
+                                ),
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .testTag("category_fab_add")
+                            ) {
+                                Icon(
+                                    imageVector = CategoryIcons.Add,
+                                    contentDescription = null
+                                )
+                                Spacer(modifier = Modifier.padding(horizontal = 4.dp))
+                                Text(
+                                    text = "Add Category",
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    if (hasNoCategories) {
+                        item {
+                            EmptyStateContent()
+                        }
+                    } else {
+                        if (uiState.activeCategories.isNotEmpty()) {
                             items(
                                 items = uiState.activeCategories,
                                 key = { it.id }
@@ -225,12 +281,12 @@ fun CategoryScreenContent(
                                     onArchiveClick = { onArchiveClick(category) }
                                 )
                             }
-                        } else if (uiState.archivedCategories.isNotEmpty()) {
+                        } else {
                             item {
                                 Text(
                                     text = "No active categories",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.outline,
+                                    color = TextSecondaryMuted,
                                     modifier = Modifier.padding(vertical = 8.dp)
                                 )
                             }
@@ -238,8 +294,10 @@ fun CategoryScreenContent(
 
                         if (uiState.archivedCategories.isNotEmpty()) {
                             item {
+                                Spacer(modifier = Modifier.padding(vertical = 8.dp))
                                 SectionHeader(
-                                    title = "ARCHIVED CATEGORIES (${uiState.archivedCategories.size})",
+                                    title = "Archived",
+                                    count = uiState.archivedCategories.size,
                                     isExpanded = isArchivedExpanded,
                                     onToggleExpand = { isArchivedExpanded = !isArchivedExpanded },
                                     modifier = Modifier.testTag("category_archived_header")
@@ -326,7 +384,7 @@ fun CategoryScreenSuccessPreview() {
     CategoryScreenContent(
         uiState = CategoryUiState.Success(
             activeCategories = listOf(
-                Category("1", "Food", SpendingClass.DISCRETIONARY),
+                Category("1", "Groceries", SpendingClass.DISCRETIONARY),
                 Category("2", "Rent", SpendingClass.COMMITTED)
             ),
             archivedCategories = emptyList()
@@ -340,10 +398,30 @@ fun CategoryScreenWithArchivedPreview() {
     CategoryScreenContent(
         uiState = CategoryUiState.Success(
             activeCategories = listOf(
-                Category("1", "Food", SpendingClass.DISCRETIONARY)
+                Category("1", "Groceries", SpendingClass.DISCRETIONARY)
             ),
             archivedCategories = listOf(
-                Category("2", "Gym", SpendingClass.DISCRETIONARY, archived = true)
+                Category("2", "Old Gym", SpendingClass.DISCRETIONARY, archived = true)
+            )
+        )
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
+fun CategoryScreenDesignPreview() {
+    CategoryScreenContent(
+        uiState = CategoryUiState.Success(
+            activeCategories = listOf(
+                Category("1", "Groceries & Food", SpendingClass.DISCRETIONARY),
+                Category("2", "Rent & Housing", SpendingClass.COMMITTED),
+                Category("3", "Electricity Bill", SpendingClass.COMMITTED),
+                Category("4", "Transport & Fuel", SpendingClass.DISCRETIONARY),
+                Category("5", "Coffee & Dining", SpendingClass.DISCRETIONARY)
+            ),
+            archivedCategories = listOf(
+                Category("6", "Old Gym Membership", SpendingClass.DISCRETIONARY, archived = true),
+                Category("7", "Past Subscription", SpendingClass.COMMITTED, archived = true)
             )
         )
     )
