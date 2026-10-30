@@ -211,22 +211,34 @@ fun AppNavHost(
             MoreScreen(
                 userName = uiState.userName,
                 onCategoriesClick = {
-                    navController.navigateTo(managementTarget(ManagementDestination.CATEGORIES))
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.CATEGORIES)
+                    )
                 },
                 onExpensesClick = {
-                    navController.navigateTo(managementTarget(ManagementDestination.EXPENSES))
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.EXPENSES)
+                    )
                 },
                 onIncomeClick = {
-                    navController.navigateTo(managementTarget(ManagementDestination.INCOME))
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.INCOME)
+                    )
                 },
                 onReceivablesClick = {
-                    navController.navigateTo(managementTarget(ManagementDestination.RECEIVABLES))
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.RECEIVABLES)
+                    )
                 },
                 onRecurringClick = {
-                    navController.navigateTo(managementTarget(ManagementDestination.RECURRING))
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.RECURRING)
+                    )
                 },
                 onDueItemsClick = {
-                    navController.navigateTo(managementTarget(ManagementDestination.DUE_ITEMS))
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.DUE_ITEMS)
+                    )
                 },
                 onSignOut = authViewModel::signOut,
                 onBottomDestinationSelected = { destination ->
