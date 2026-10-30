@@ -10,7 +10,7 @@ import com.example.personalfinanceapp.core.model.RecurringOccurrence
 import com.example.personalfinanceapp.core.model.RecurringOccurrenceStatus
 import com.example.personalfinanceapp.core.model.RecurringStatus
 import com.example.personalfinanceapp.feature.category.CategoryRepository
-import com.example.personalfinanceapp.feature.recurring.RecurringReminderScheduler
+import com.example.personalfinanceapp.feature.recurring.RecurringReminderCoordinator
 import com.example.personalfinanceapp.feature.recurring.RecurringRepository
 import com.example.personalfinanceapp.feature.recurring.RecurringScheduleCalculator
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -101,7 +101,7 @@ data class PaymentConfirmationState(
 class RecurringViewModel @Inject constructor(
     private val recurringRepository: RecurringRepository,
     private val categoryRepository: CategoryRepository,
-    private val reminderScheduler: RecurringReminderScheduler,
+    private val reminderScheduler: RecurringReminderCoordinator,
     private val clock: Clock
 ) : ViewModel() {
 
@@ -288,7 +288,6 @@ class RecurringViewModel @Inject constructor(
         viewModelScope.launch {
             recurringRepository.saveRecurringExpense(item).fold(
                 onSuccess = {
-                    syncReminders(item)
                     _formState.value = null
                     showMessage(if (form.isEditing) "Commitment updated" else "Commitment created")
                 },
@@ -306,7 +305,6 @@ class RecurringViewModel @Inject constructor(
         viewModelScope.launch {
             recurringRepository.setRecurringExpenseStatus(item.id, status).fold(
                 onSuccess = {
-                    syncReminders(item.copy(status = status))
                     showMessage(
                         when (status) {
                             RecurringStatus.ACTIVE -> "Commitment resumed"
@@ -317,18 +315,6 @@ class RecurringViewModel @Inject constructor(
                 },
                 onFailure = { showMessage(it.message ?: "Unable to update commitment") }
             )
-        }
-    }
-
-    private suspend fun syncReminders(item: RecurringExpense) {
-        val today = _uiState.value.today
-        val dates = if (item.active) {
-            RecurringScheduleCalculator.datesBetween(item, today, today.plusDays(90))
-        } else {
-            emptyList()
-        }
-        reminderScheduler.sync(item, dates).onFailure {
-            showMessage("Saved, but reminder synchronization failed")
         }
     }
 

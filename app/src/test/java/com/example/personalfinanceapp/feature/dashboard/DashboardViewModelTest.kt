@@ -208,6 +208,45 @@ class DashboardViewModelTest {
     }
 
     @Test
+    fun goalProgressIncludesAllocationsAndTheirReversals() = runTest {
+        backgroundScope.launch { viewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val goal = Goal(
+            id = "goal-with-reversal",
+            name = "Emergency fund",
+            targetAmountMinor = 100_000L,
+            startDate = LocalDate.now(),
+            targetDate = LocalDate.now().plusMonths(3)
+        )
+        fakeGoalRepository.saveGoal(goal)
+        val allocation = Contribution(
+            id = "allocation-1",
+            goalId = goal.id,
+            amountMinor = 40_000L,
+            kind = ContributionKind.ALLOCATION,
+            occurredDate = LocalDate.now()
+        )
+        fakeGoalRepository.addContribution(allocation)
+        fakeGoalRepository.addContribution(
+            Contribution(
+                id = "reversal-1",
+                goalId = goal.id,
+                amountMinor = -40_000L,
+                kind = ContributionKind.REVERSAL,
+                occurredDate = LocalDate.now(),
+                reversesId = allocation.id
+            )
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val activeGoal = viewModel.uiState.value.activeGoal
+        assertEquals(0L, activeGoal?.currentSavedLkrMinor)
+        assertEquals(100_000L, activeGoal?.remainingLkrMinor)
+        assertEquals(0, activeGoal?.progressPercent)
+    }
+
+    @Test
     fun goalProgressIsExplicitlyUnavailableWhenContributionObservationFails() = runTest {
         val backingRepository = FakeGoalRepository()
         backingRepository.saveGoal(

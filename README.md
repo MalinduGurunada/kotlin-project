@@ -2,7 +2,7 @@
 
 An Android personal-finance application developed as a third-year Computer Science group project. The project aims to help an individual record income and expenses, organise spending, plan savings goals, track expected payments, and manage recurring costs in one place.
 
-The repository is currently at the **foundation stage**. Shared finance models, repository contracts, in-memory repository implementations, and their unit tests are present. The production authentication, Firebase persistence, feature screens, ViewModels, dashboard, and complete navigation flow are still planned or being developed on separate feature branches.
+The repository is in active feature and regression development. Authentication, Firestore-backed finance repositories, Compose screens, dashboard navigation, recurring commitments, due-item confirmation, and reminder scheduling are implemented, with maturity and test coverage varying by feature.
 
 ## Problem and objectives
 
@@ -30,16 +30,16 @@ Status in this table refers to the current branch, not to work that may exist on
 | Area | Status | Current evidence |
 | --- | --- | --- |
 | Android application shell | Implemented foundation | Single `MainActivity`, Compose theme, Hilt application/activity annotations |
-| Navigation | Prototype | Type-safe `Login` and `Home` routes; a button navigates between placeholder screens |
+| Navigation | Implemented | Type-safe authentication, dashboard, management, recurring, income, expense, receivable, and category routes |
 | Shared finance models | Implemented | Category, income, expense, goal, contribution, recurring expense, receivable, money, and ID contracts |
 | Repository contracts | Implemented | Interfaces for category, income, expense, goal, recurring expense, and receivable data |
 | In-memory repositories | Implemented | Coroutine `Flow`-based fake implementations with validation and update behaviour |
 | Repository unit tests | Implemented | JUnit/coroutines-test coverage for all six fake repositories |
-| Authentication | Planned on this branch | Firebase Auth dependency exists; no authentication service, screen logic, or session observer is present |
-| Firestore persistence | Planned on this branch | Firestore dependency and Android Firebase configuration exist; no Firestore repository or query is present |
-| Feature screens and ViewModels | Planned on this branch | No feature ViewModels or production feature screens are present |
-| Dashboard, history, goals, UID-scoped preferences, and reminders | Planned | Domain foundations exist for some areas; Raveen's preferences implementation is assigned to Android DataStore, and user-facing implementations are not present |
-| Security rules and indexes | Not present | No `firestore.rules` or `firestore.indexes.json` exists in this branch |
+| Authentication | Implemented | Firebase Auth repository, recovery-safe ViewModel, Compose screens, session navigation, and regression tests |
+| Firestore persistence | Implemented by feature | Income, expense, category, receivable, goal, and recurring repositories use UID-scoped Firestore paths |
+| Feature screens and ViewModels | Implemented by feature | Dashboard, Category, Income, Expense, Receivable, Recurring Commitments, Due Items, and More screens are connected |
+| Goals and reminders | Partial | Goal progress and ledger persistence exist; full goal-management UI is incomplete. Recurring reminders support permission and session-owner checks |
+| Security rules and indexes | Implemented | Checked-in Firestore rules, indexes, and Emulator Suite rule tests cover implemented cloud paths |
 
 See [Architecture](docs/architecture.md) and [Firestore schema](docs/firestore-schema.md) for the verified design boundary and proposed next steps.
 
@@ -50,7 +50,7 @@ Versions below come from `gradle/libs.versions.toml`, the Gradle wrapper, and th
 | Technology | Configured version or setting |
 | --- | --- |
 | Kotlin | 2.2.10 |
-| Android Gradle Plugin | 9.4.1 |
+| Android Gradle Plugin | 9.3.1 |
 | Gradle wrapper | 9.6.0 |
 | Java language level | 17 |
 | Compile / target SDK | 37 |
@@ -73,14 +73,38 @@ The app uses Kotlin, Jetpack Compose, Material 3, Navigation Compose, Hilt, coro
 
 The intended architecture is feature-based and MVVM-style:
 
-1. Compose screens render state and send user actions.
-2. ViewModels will coordinate use cases and expose observable UI state.
+1. Compose screens render immutable state and send user actions.
+2. ViewModels coordinate use cases and expose observable UI state.
 3. Repository interfaces define feature-level data operations.
-4. Repository implementations provide either in-memory test data now or Firebase-backed persistence in the intended production design.
+4. Firestore-backed and in-memory implementations provide production persistence and deterministic tests.
 
-Only parts 3 and 4's in-memory implementations currently exist for the finance features; the ViewModel layer has not yet been added. `MainActivity` hosts the Compose navigation graph. Hilt is initialized, but this branch contains no dependency-injection modules or repository bindings.
+`MainActivity` hosts the Compose navigation graph, while Hilt modules bind authentication, finance repositories, clocks, reminder coordination, and supporting services.
 
 More detail and diagrams are available in [docs/architecture.md](docs/architecture.md).
+
+## Firebase Android emulator tests
+
+Repository tests running inside an Android AVD reach the host Firebase emulators through ADB reverse tunnels. Start the local Auth and Firestore emulators in one terminal:
+
+```powershell
+firebase emulators:start --config firebase.json --project demo-personal-finance-income-rules --only auth,firestore
+```
+
+With the AVD running, configure the temporary tunnels before executing Goal or Recurring Firestore instrumentation tests:
+
+```powershell
+adb reverse tcp:9099 tcp:9099
+adb reverse tcp:8080 tcp:8080
+```
+
+Remove the tunnels after the tests:
+
+```powershell
+adb reverse --remove tcp:9099
+adb reverse --remove tcp:8080
+```
+
+These commands use only local emulators and do not deploy or modify cloud Firebase resources.
 
 ## Project structure
 
