@@ -111,35 +111,35 @@ class AuthNavigationAndUiTest {
         val destinations = mutableListOf<ManagementDestination>()
         var signOutClicked = false
         composeRule.setContent {
-            MoreScreen(
-                userName = "Raveen",
-                onCategoriesClick = { destinations += ManagementDestination.CATEGORIES },
-                onExpensesClick = { destinations += ManagementDestination.EXPENSES },
-                onIncomeClick = { destinations += ManagementDestination.INCOME },
-                onReceivablesClick = { destinations += ManagementDestination.RECEIVABLES },
-                onSignOut = { signOutClicked = true },
-                onBottomDestinationSelected = {}
-            )
+            PersonalFinanceAppTheme(dynamicColor = false) {
+                MoreScreen(
+                    userName = "Raveen",
+                    onCategoriesClick = { destinations += ManagementDestination.CATEGORIES },
+                    onExpensesClick = { destinations += ManagementDestination.EXPENSES },
+                    onIncomeClick = { destinations += ManagementDestination.INCOME },
+                    onReceivablesClick = { destinations += ManagementDestination.RECEIVABLES },
+                    onRecurringClick = { destinations += ManagementDestination.RECURRING },
+                    onDueItemsClick = { destinations += ManagementDestination.DUE_ITEMS },
+                    onSignOut = { signOutClicked = true },
+                    onBottomDestinationSelected = {}
+                )
+            }
         }
 
         composeRule.onNodeWithText("More / Preferences").assertIsDisplayed()
         composeRule.onNodeWithTag("more_categories").performClick()
-        composeRule.onNodeWithTag("more_list")
-            .performScrollToNode(hasTestTag("more_expenses"))
-        composeRule.onNodeWithTag("more_expenses").performClick()
-        composeRule.onNodeWithTag("more_list")
-            .performScrollToNode(hasTestTag("more_income"))
-        composeRule.onNodeWithTag("more_income").performClick()
-        composeRule.onNodeWithTag("more_list")
-            .performScrollToNode(hasTestTag("more_receivables"))
-        composeRule.onNodeWithTag("more_receivables").performClick()
-        composeRule.onNodeWithTag("more_list")
-            .performScrollToNode(hasTestTag("more_sign_out"))
-        composeRule.onNodeWithTag("more_sign_out").performClick()
+        composeRule.onNodeWithTag("more_recurring").performClick()
+        composeRule.onNodeWithTag("more_due_items").performClick()
+        listOf("more_expenses", "more_income", "more_receivables", "more_sign_out").forEach { tag ->
+            composeRule.onNodeWithTag("more_list").performScrollToNode(hasTestTag(tag))
+            composeRule.onNodeWithTag(tag).performClick()
+        }
         composeRule.runOnIdle {
             assertEquals(
                 listOf(
                     ManagementDestination.CATEGORIES,
+                    ManagementDestination.RECURRING,
+                    ManagementDestination.DUE_ITEMS,
                     ManagementDestination.EXPENSES,
                     ManagementDestination.INCOME,
                     ManagementDestination.RECEIVABLES
@@ -166,6 +166,8 @@ class AuthNavigationAndUiTest {
                 composable<ExpenseList> { Text("Expenses") }
                 composable<IncomeList> { Text("Income") }
                 composable<ReceivableList> { Text("Receivables") }
+                composable<RecurringCommitments> { Text("Recurring") }
+                composable<DueItems> { Text("Due items") }
                 composable<TransactionDetail> { backStackEntry ->
                     val route: TransactionDetail = backStackEntry.toRoute()
                     Text(route.transactionId, Modifier.testTag("transaction_id"))
@@ -182,6 +184,8 @@ class AuthNavigationAndUiTest {
                 navController.navigate(ExpenseList)
                 navController.navigate(IncomeList)
                 navController.navigate(ReceivableList)
+                navController.navigate(RecurringCommitments)
+                navController.navigate(DueItems)
                 navController.navigate(TransactionDetail("transaction-42"))
             }
         }

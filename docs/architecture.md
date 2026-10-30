@@ -250,7 +250,7 @@ The Firestore observer queries `users/{uid}/incomes` with `startDate <= occurred
 | `IncomeRepository` | owner-tagged/list date-range observation | save/delete, including owner-bound variants | Firestore production binding plus in-memory fake |
 | `ExpenseRepository` | date-range observation | save/delete | Firestore production binding plus in-memory fake |
 | `GoalRepository` | goals and contributions by goal | save/archive goal, add contribution | In-memory fake only |
-| `RecurringRepository` | recurring templates | save, activate/pause | In-memory fake only |
+| `RecurringRepository` | recurring templates and occurrence ledger | save, pause/resume/cancel, confirm/skip | Firestore with in-memory fake for tests |
 | `ReceivableRepository` | receivables | save, archive/restore | In-memory fake only |
 
 Fake repositories use `MutableStateFlow` and `Mutex` for deterministic process-local behavior. Their contents disappear with the repository instance/process and do not provide cloud persistence, cross-device synchronization, or server-side security.

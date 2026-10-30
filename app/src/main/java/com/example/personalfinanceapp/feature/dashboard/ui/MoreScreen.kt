@@ -63,6 +63,8 @@ fun MoreScreen(
     onExpensesClick: () -> Unit,
     onIncomeClick: () -> Unit,
     onReceivablesClick: () -> Unit,
+    onRecurringClick: () -> Unit,
+    onDueItemsClick: () -> Unit,
     onSignOut: () -> Unit,
     onBottomDestinationSelected: (NavDestination) -> Unit,
     modifier: Modifier = Modifier
@@ -156,13 +158,15 @@ fun MoreScreen(
                             title = "Recurring Commitments",
                             subtitle = "Bills, utilities, loans and periodic obligations",
                             icon = MoreIcons.Recurring,
-                            status = "Coming soon"
+                            testTag = "more_recurring",
+                            onClick = onRecurringClick
                         ),
                         MoreItem(
                             title = "Due Items & Reminders",
                             subtitle = "Upcoming payments and reminder controls",
                             icon = MoreIcons.Reminder,
-                            status = "Coming soon"
+                            testTag = "more_due_items",
+                            onClick = onDueItemsClick
                         )
                     )
                 )
@@ -633,6 +637,8 @@ private fun MoreScreenPreview() {
             onExpensesClick = {},
             onIncomeClick = {},
             onReceivablesClick = {},
+            onRecurringClick = {},
+            onDueItemsClick = {},
             onSignOut = {},
             onBottomDestinationSelected = {}
         )

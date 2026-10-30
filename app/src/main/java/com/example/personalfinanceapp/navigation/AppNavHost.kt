@@ -37,6 +37,8 @@ import com.example.personalfinanceapp.feature.income.ui.IncomeViewModel
 import com.example.personalfinanceapp.feature.income.ui.shiftIncomeMonth
 import com.example.personalfinanceapp.feature.receivable.ui.ReceivableScreen
 import com.example.personalfinanceapp.feature.receivable.ui.ReceivableViewModel
+import com.example.personalfinanceapp.feature.recurring.ui.DueItemsScreen
+import com.example.personalfinanceapp.feature.recurring.ui.RecurringCommitmentsScreen
 
 internal fun NavHostController.returnToSignIn() {
     if (!popBackStack()) {
@@ -54,14 +56,18 @@ internal enum class AppNavigationTarget {
     EXPENSES,
     CATEGORIES,
     INCOME,
-    RECEIVABLES
+    RECEIVABLES,
+    RECURRING,
+    DUE_ITEMS
 }
 
 internal enum class ManagementDestination {
     EXPENSES,
     CATEGORIES,
     INCOME,
-    RECEIVABLES
+    RECEIVABLES,
+    RECURRING,
+    DUE_ITEMS
 }
 
 internal fun startupTarget(state: AuthNavigationState): AppNavigationTarget? = when (state) {
@@ -84,6 +90,8 @@ internal fun managementTarget(destination: ManagementDestination): AppNavigation
         ManagementDestination.CATEGORIES -> AppNavigationTarget.CATEGORIES
         ManagementDestination.INCOME -> AppNavigationTarget.INCOME
         ManagementDestination.RECEIVABLES -> AppNavigationTarget.RECEIVABLES
+        ManagementDestination.RECURRING -> AppNavigationTarget.RECURRING
+        ManagementDestination.DUE_ITEMS -> AppNavigationTarget.DUE_ITEMS
     }
 
 private fun NavOptionsBuilder.replaceBackStackIfNeeded(replaceBackStack: Boolean) {
@@ -126,6 +134,12 @@ private fun NavHostController.navigateTo(
             replaceBackStackIfNeeded(replaceBackStack)
         }
         AppNavigationTarget.RECEIVABLES -> navigate(ReceivableList) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.RECURRING -> navigate(RecurringCommitments) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.DUE_ITEMS -> navigate(DueItems) {
             replaceBackStackIfNeeded(replaceBackStack)
         }
     }
@@ -214,6 +228,16 @@ fun AppNavHost(
                 onReceivablesClick = {
                     navController.navigateTo(
                         managementTarget(ManagementDestination.RECEIVABLES)
+                    )
+                },
+                onRecurringClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.RECURRING)
+                    )
+                },
+                onDueItemsClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.DUE_ITEMS)
                     )
                 },
                 onSignOut = authViewModel::signOut,
@@ -448,6 +472,17 @@ fun AppNavHost(
                 onDateChanged = viewModel::updateDate,
                 onSave = viewModel::save
             )
+        }
+
+        composable<RecurringCommitments> {
+            RecurringCommitmentsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenDueItems = { navController.navigate(DueItems) }
+            )
+        }
+
+        composable<DueItems> {
+            DueItemsScreen(onBack = { navController.popBackStack() })
         }
     }
 }
