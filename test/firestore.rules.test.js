@@ -18,6 +18,7 @@ import {
   setDoc,
   setLogLevel,
   serverTimestamp,
+  Timestamp,
   updateDoc,
   where,
   writeBatch,
@@ -95,6 +96,18 @@ function fcmTokenDocument(uid, overrides = {}) {
     updatedAt: serverTimestamp(),
     ...overrides,
   };
+}
+
+function categoryReference(firestore, uid, categoryId) {
+  return doc(firestore, "users", uid, "categories", categoryId);
+}
+
+function recurringReference(firestore, uid, recurringId) {
+  return doc(firestore, "users", uid, "recurringExpenses", recurringId);
+}
+
+function occurrenceReference(firestore, uid, occurrenceId) {
+  return doc(firestore, "users", uid, "recurringOccurrences", occurrenceId);
 }
 
 function receivableReference(firestore, uid, receivableId) {
@@ -218,6 +231,50 @@ function expenseDocument(userId, expenseId) {
     occurredDate: "2026-10-21",
     note: null,
     channelLabel: null,
+  };
+}
+
+function categoryDocument(categoryId) {
+  return {
+    id: categoryId,
+    name: "Utilities & Bills",
+    defaultSpendingClass: "COMMITTED",
+    archived: false,
+  };
+}
+
+function recurringDocument(userId, recurringId, overrides = {}) {
+  return {
+    id: recurringId,
+    userId,
+    title: "CEB Electricity Bill",
+    categoryId: "utilities",
+    expectedAmountMinor: 1250000,
+    frequency: "MONTHLY",
+    intervalCount: 1,
+    anchorDate: "2026-10-31",
+    startDate: "2026-10-31",
+    endDate: null,
+    status: "ACTIVE",
+    paymentChannel: "BANK",
+    channelLabel: "ComBank CASA",
+    reminderEnabled: true,
+    reminderLeadDays: 2,
+    ...overrides,
+  };
+}
+
+function occurrenceDocument(userId, recurringId, dueDate, status, overrides = {}) {
+  const id = `${recurringId}_${dueDate}`;
+  return {
+    id,
+    userId,
+    recurringExpenseId: recurringId,
+    dueDate,
+    status,
+    expenseId: status === "CONFIRMED" ? `recurring_${id}` : null,
+    actionAt: Timestamp.fromDate(new Date("2026-10-30T08:00:00Z")),
+    ...overrides,
   };
 }
 
@@ -749,6 +806,102 @@ test("contribution ledger is immutable and exact reversals require one atomic cl
     }),
   );
   await expectDenied(duplicateBatch.commit());
+});
+
+test("recurring commitments are owner scoped, validated, and never deleted", async () => {
+  const owner = userFirestore("user-a");
+  const other = userFirestore("user-b");
+  await expectAllowed(
+    setDoc(categoryReference(owner, "user-a", "utilities"), categoryDocument("utilities")),
+  );
+  await expectAllowed(
+    setDoc(
+      recurringReference(owner, "user-a", "ceb"),
+      recurringDocument("user-a", "ceb"),
+    ),
+  );
+  await expectDenied(getDoc(recurringReference(other, "user-a", "ceb")));
+  await expectDenied(deleteDoc(recurringReference(owner, "user-a", "ceb")));
+  await expectDenied(
+    setDoc(
+      recurringReference(owner, "user-a", "invalid"),
+      recurringDocument("user-a", "invalid", { intervalCount: 0 }),
+    ),
+  );
+});
+
+test("skipped recurring occurrence is immutable and uses a deterministic id", async () => {
+  const firestore = userFirestore("user-a");
+  await expectAllowed(
+    setDoc(categoryReference(firestore, "user-a", "utilities"), categoryDocument("utilities")),
+  );
+  await expectAllowed(
+    setDoc(
+      recurringReference(firestore, "user-a", "ceb"),
+      recurringDocument("user-a", "ceb"),
+    ),
+  );
+  const occurrenceId = "ceb_2026-10-31";
+  await expectAllowed(
+    setDoc(
+      occurrenceReference(firestore, "user-a", occurrenceId),
+      occurrenceDocument("user-a", "ceb", "2026-10-31", "SKIPPED"),
+    ),
+  );
+  await expectDenied(
+    updateDoc(occurrenceReference(firestore, "user-a", occurrenceId), {
+      status: "CONFIRMED",
+      expenseId: `recurring_${occurrenceId}`,
+    }),
+  );
+  await expectDenied(
+    setDoc(
+      occurrenceReference(firestore, "user-a", "made-up-id"),
+      occurrenceDocument("user-a", "ceb", "2026-11-30", "SKIPPED", {
+        id: "made-up-id",
+      }),
+    ),
+  );
+});
+
+test("confirmed occurrence and linked expense must be created atomically", async () => {
+  const firestore = userFirestore("user-a");
+  await expectAllowed(
+    setDoc(categoryReference(firestore, "user-a", "utilities"), categoryDocument("utilities")),
+  );
+  await expectAllowed(
+    setDoc(
+      recurringReference(firestore, "user-a", "ceb"),
+      recurringDocument("user-a", "ceb"),
+    ),
+  );
+  const occurrenceId = "ceb_2026-10-31";
+  const expenseId = `recurring_${occurrenceId}`;
+  const confirmed = occurrenceDocument("user-a", "ceb", "2026-10-31", "CONFIRMED");
+  await expectDenied(
+    setDoc(occurrenceReference(firestore, "user-a", occurrenceId), confirmed),
+  );
+
+  const batch = writeBatch(firestore);
+  batch.set(
+    expenseReference(firestore, "user-a", expenseId),
+    {
+      ...expenseDocument("user-a", expenseId),
+      recurringExpenseId: "ceb",
+      recurringOccurrenceId: occurrenceId,
+    },
+  );
+  batch.set(occurrenceReference(firestore, "user-a", occurrenceId), confirmed);
+  await expectAllowed(batch.commit());
+
+  await expectDenied(
+    setDoc(
+      occurrenceReference(firestore, "user-a", "ceb_2026-11-30"),
+      occurrenceDocument("user-a", "ceb", "2026-11-30", "CONFIRMED", {
+        expenseId,
+      }),
+    ),
+  );
 });
 
 test("unrelated paths and broader cross-user access remain denied", async () => {

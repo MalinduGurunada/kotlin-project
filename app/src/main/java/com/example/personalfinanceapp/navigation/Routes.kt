@@ -15,6 +15,9 @@ data object PasswordReset
 data object Home
 
 @Serializable
+data object Category
+
+@Serializable
 data object ExpenseList
 
 @Serializable
@@ -22,6 +25,12 @@ data object IncomeList
 
 @Serializable
 data object ReceivableList
+
+@Serializable
+data object RecurringCommitments
+
+@Serializable
+data object DueItems
 
 @Serializable
 data object Overview

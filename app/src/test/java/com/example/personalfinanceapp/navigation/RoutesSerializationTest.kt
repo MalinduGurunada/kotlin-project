@@ -12,15 +12,18 @@ class RoutesSerializationTest {
             serializer<Register>(),
             serializer<PasswordReset>(),
             serializer<Home>(),
+            serializer<Category>(),
             serializer<ExpenseList>(),
             serializer<IncomeList>(),
             serializer<ReceivableList>(),
+            serializer<RecurringCommitments>(),
+            serializer<DueItems>(),
             serializer<Overview>(),
             serializer<ActivityRoute>(),
             serializer<Goals>(),
             serializer<TransactionDetail>()
         )
 
-        assertEquals(11, routeSerializers.size)
+        assertEquals(14, routeSerializers.size)
     }
 }

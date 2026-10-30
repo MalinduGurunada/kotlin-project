@@ -6,15 +6,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
@@ -28,7 +31,9 @@ import com.example.personalfinanceapp.feature.auth.PendingRegistration
 import com.example.personalfinanceapp.feature.auth.PendingRegistrationState
 import com.example.personalfinanceapp.feature.auth.PendingRegistrationStore
 import com.example.personalfinanceapp.feature.auth.ui.AuthViewModel
+import com.example.personalfinanceapp.feature.dashboard.ui.MoreScreen
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -111,7 +116,9 @@ class AuthNavigationAndUiTest {
                         onPasswordChanged = {},
                         onConfirmPasswordChanged = {},
                         onRegisterClicked = {},
-                        onNavigateToLogin = navController::returnToSignIn
+                        onNavigateToLogin = {
+                            navController.popBackStack()
+                        }
                     )
                 }
             }
@@ -139,7 +146,9 @@ class AuthNavigationAndUiTest {
                         uiState = PasswordResetUiState(),
                         onEmailChanged = {},
                         onResetClicked = {},
-                        onNavigateToLogin = navController::returnToSignIn
+                        onNavigateToLogin = {
+                            navController.popBackStack()
+                        }
                     )
                 }
             }
@@ -155,23 +164,91 @@ class AuthNavigationAndUiTest {
     }
 
     @Test
-    fun homeActionsExposeIncomeAndSignOut() {
-        var incomeClicked = false
+    fun moreScreenExposesAllManagementDestinationsAndSignOut() {
+        val destinations = mutableListOf<ManagementDestination>()
         var signOutClicked = false
         composeRule.setContent {
-            HomeActionsScreen(
-                onManageIncome = { incomeClicked = true },
-                onManageReceivables = {},
-                onSignOut = { signOutClicked = true }
-            )
+            PersonalFinanceAppTheme(dynamicColor = false) {
+                MoreScreen(
+                    userName = "Raveen",
+                    onCategoriesClick = { destinations += ManagementDestination.CATEGORIES },
+                    onExpensesClick = { destinations += ManagementDestination.EXPENSES },
+                    onIncomeClick = { destinations += ManagementDestination.INCOME },
+                    onReceivablesClick = { destinations += ManagementDestination.RECEIVABLES },
+                    onRecurringClick = { destinations += ManagementDestination.RECURRING },
+                    onDueItemsClick = { destinations += ManagementDestination.DUE_ITEMS },
+                    onSignOut = { signOutClicked = true },
+                    onBottomDestinationSelected = {}
+                )
+            }
         }
 
-        composeRule.onNodeWithText("Manage Income").performClick()
-        composeRule.onNodeWithText("Sign Out").performClick()
+        composeRule.onNodeWithText("More / Preferences").assertIsDisplayed()
+        composeRule.onNodeWithTag("more_categories").performClick()
+        composeRule.onNodeWithTag("more_recurring").performClick()
+        composeRule.onNodeWithTag("more_due_items").performClick()
+        listOf("more_expenses", "more_income", "more_receivables", "more_sign_out").forEach { tag ->
+            composeRule.onNodeWithTag("more_list").performScrollToNode(hasTestTag(tag))
+            composeRule.onNodeWithTag(tag).performClick()
+        }
         composeRule.runOnIdle {
-            assertTrue(incomeClicked)
+            assertEquals(
+                listOf(
+                    ManagementDestination.CATEGORIES,
+                    ManagementDestination.RECURRING,
+                    ManagementDestination.DUE_ITEMS,
+                    ManagementDestination.EXPENSES,
+                    ManagementDestination.INCOME,
+                    ManagementDestination.RECEIVABLES
+                ),
+                destinations
+            )
             assertTrue(signOutClicked)
         }
+    }
+
+    @Test
+    fun allDestinationTypesRegisterAndTransactionDetailReceivesItsId() {
+        composeRule.setContent {
+            val navController = rememberNavController()
+            NavHost(navController = navController, startDestination = Login) {
+                composable<Login> { Text("Login") }
+                composable<Register> { Text("Register") }
+                composable<PasswordReset> { Text("Password reset") }
+                composable<Home> { Text("More") }
+                composable<Overview> { Text("Overview") }
+                composable<ActivityRoute> { Text("Activity") }
+                composable<Goals> { Text("Goals") }
+                composable<Category> { Text("Categories") }
+                composable<ExpenseList> { Text("Expenses") }
+                composable<IncomeList> { Text("Income") }
+                composable<ReceivableList> { Text("Receivables") }
+                composable<RecurringCommitments> { Text("Recurring") }
+                composable<DueItems> { Text("Due items") }
+                composable<TransactionDetail> { backStackEntry ->
+                    val route: TransactionDetail = backStackEntry.toRoute()
+                    Text(route.transactionId, Modifier.testTag("transaction_id"))
+                }
+            }
+            LaunchedEffect(Unit) {
+                navController.navigate(Register)
+                navController.navigate(PasswordReset)
+                navController.navigate(Home)
+                navController.navigate(Overview)
+                navController.navigate(ActivityRoute)
+                navController.navigate(Goals)
+                navController.navigate(Category)
+                navController.navigate(ExpenseList)
+                navController.navigate(IncomeList)
+                navController.navigate(ReceivableList)
+                navController.navigate(RecurringCommitments)
+                navController.navigate(DueItems)
+                navController.navigate(TransactionDetail("transaction-42"))
+            }
+        }
+
+        composeRule.onNodeWithTag("transaction_id").assertIsDisplayed()
+        composeRule.onNodeWithText("transaction-42").assertIsDisplayed()
     }
 
     @Test

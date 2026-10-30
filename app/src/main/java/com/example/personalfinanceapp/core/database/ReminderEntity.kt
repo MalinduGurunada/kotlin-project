@@ -7,6 +7,9 @@ data class ReminderEntity(
     val category: String,
     val amountMinor: Long,
     val dueDateIso: String,
+    val remindOnIso: String = dueDateIso,
     val isDelivered: Boolean = false,
-    val reminderType: String = "RECURRING_BILL"
+    val reminderType: String = "RECURRING_BILL",
+    val recurringExpenseId: String? = null,
+    val recurringOccurrenceId: String? = null
 )
