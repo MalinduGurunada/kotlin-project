@@ -6,12 +6,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -25,6 +27,7 @@ import com.example.personalfinanceapp.feature.auth.ui.PasswordResetScreen
 import com.example.personalfinanceapp.feature.auth.ui.PasswordResetUiState
 import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
 import com.example.personalfinanceapp.feature.auth.ui.RegisterUiState
+import com.example.personalfinanceapp.feature.dashboard.ui.MoreScreen
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -104,26 +107,40 @@ class AuthNavigationAndUiTest {
     }
 
     @Test
-    fun homeActionsExposeAllManagementDestinationsAndSignOut() {
+    fun moreScreenExposesAllManagementDestinationsAndSignOut() {
         val destinations = mutableListOf<ManagementDestination>()
         var signOutClicked = false
         composeRule.setContent {
-            HomeActionsScreen(
-                onDestinationSelected = destinations::add,
-                onSignOut = { signOutClicked = true }
+            MoreScreen(
+                userName = "Raveen",
+                onCategoriesClick = { destinations += ManagementDestination.CATEGORIES },
+                onExpensesClick = { destinations += ManagementDestination.EXPENSES },
+                onIncomeClick = { destinations += ManagementDestination.INCOME },
+                onReceivablesClick = { destinations += ManagementDestination.RECEIVABLES },
+                onSignOut = { signOutClicked = true },
+                onBottomDestinationSelected = {}
             )
         }
 
-        composeRule.onNodeWithText("Manage Expenses").performClick()
-        composeRule.onNodeWithText("Manage Categories").performClick()
-        composeRule.onNodeWithText("Manage Income").performClick()
-        composeRule.onNodeWithText("Manage Receivables").performClick()
-        composeRule.onNodeWithText("Sign Out").performClick()
+        composeRule.onNodeWithText("More / Preferences").assertIsDisplayed()
+        composeRule.onNodeWithTag("more_categories").performClick()
+        composeRule.onNodeWithTag("more_list")
+            .performScrollToNode(hasTestTag("more_expenses"))
+        composeRule.onNodeWithTag("more_expenses").performClick()
+        composeRule.onNodeWithTag("more_list")
+            .performScrollToNode(hasTestTag("more_income"))
+        composeRule.onNodeWithTag("more_income").performClick()
+        composeRule.onNodeWithTag("more_list")
+            .performScrollToNode(hasTestTag("more_receivables"))
+        composeRule.onNodeWithTag("more_receivables").performClick()
+        composeRule.onNodeWithTag("more_list")
+            .performScrollToNode(hasTestTag("more_sign_out"))
+        composeRule.onNodeWithTag("more_sign_out").performClick()
         composeRule.runOnIdle {
             assertEquals(
                 listOf(
-                    ManagementDestination.EXPENSES,
                     ManagementDestination.CATEGORIES,
+                    ManagementDestination.EXPENSES,
                     ManagementDestination.INCOME,
                     ManagementDestination.RECEIVABLES
                 ),

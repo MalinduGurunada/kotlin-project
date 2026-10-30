@@ -1,7 +1,10 @@
 package com.example.personalfinanceapp.feature.category
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -112,10 +115,10 @@ class CategoryScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Rename").performClick()
+        composeTestRule.onNodeWithContentDescription("Edit Food").performClick()
         assertEquals(category, renamedCategory)
 
-        composeTestRule.onNodeWithText("Archive").performClick()
+        composeTestRule.onNodeWithContentDescription("Archive Food").performClick()
         assertEquals(category, archivedCategory)
     }
 
@@ -136,13 +139,18 @@ class CategoryScreenTest {
         }
 
         composeTestRule.onNodeWithTag("category_archived_header").assertIsDisplayed()
-        composeTestRule.onNodeWithText("ARCHIVED CATEGORIES (1)", substring = true).assertIsDisplayed()
+        composeTestRule.onAllNodesWithText("Archived").assertCountEquals(2)
+        // Expanded by default
+        composeTestRule.onNodeWithText("Gym").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("Restore Gym").assertIsDisplayed()
+
+        // Tap header to collapse
+        composeTestRule.onNodeWithTag("category_archived_header").performClick()
         composeTestRule.onNodeWithText("Gym").assertDoesNotExist()
 
+        // Tap header to expand again
         composeTestRule.onNodeWithTag("category_archived_header").performClick()
-
         composeTestRule.onNodeWithText("Gym").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Restore").assertIsDisplayed()
     }
 
     @Test
@@ -163,8 +171,7 @@ class CategoryScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("category_archived_header").performClick()
-        composeTestRule.onNodeWithText("Restore").performClick()
+        composeTestRule.onNodeWithContentDescription("Restore Gym").performClick()
 
         assertEquals(archivedCategory, restoredCategory)
     }
@@ -186,7 +193,6 @@ class CategoryScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("category_archived_header").performClick()
         composeTestRule.onNodeWithText("Delete").assertDoesNotExist()
     }
 }

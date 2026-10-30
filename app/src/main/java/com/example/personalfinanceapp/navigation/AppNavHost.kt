@@ -1,14 +1,5 @@
 package com.example.personalfinanceapp.navigation
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -16,9 +7,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavOptionsBuilder
@@ -36,6 +24,7 @@ import com.example.personalfinanceapp.feature.category.ui.CategoryScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.ActivityScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.DashboardViewModel
 import com.example.personalfinanceapp.feature.dashboard.ui.GoalsScreen
+import com.example.personalfinanceapp.feature.dashboard.ui.MoreScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.NavDestination
 import com.example.personalfinanceapp.feature.dashboard.ui.OverviewScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.TransactionDetailScreen
@@ -143,55 +132,6 @@ private fun NavHostController.navigateTo(
 }
 
 @Composable
-internal fun HomeActionsScreen(
-    onDestinationSelected: (ManagementDestination) -> Unit,
-    onSignOut: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "Manage Finances",
-            style = MaterialTheme.typography.headlineMedium
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(onClick = { onDestinationSelected(ManagementDestination.EXPENSES) }) {
-            Text("Manage Expenses")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = { onDestinationSelected(ManagementDestination.CATEGORIES) }) {
-            Text("Manage Categories")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = { onDestinationSelected(ManagementDestination.INCOME) }) {
-            Text("Manage Income")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = { onDestinationSelected(ManagementDestination.RECEIVABLES) }) {
-            Text("Manage Receivables")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = onSignOut) {
-            Text("Sign Out")
-        }
-    }
-}
-
-@Composable
 fun AppNavHost(
     authViewModel: AuthViewModel = hiltViewModel()
 ) {
@@ -251,11 +191,37 @@ fun AppNavHost(
         }
 
         composable<Home> {
-            HomeActionsScreen(
-                onDestinationSelected = { destination ->
-                    navController.navigateTo(managementTarget(destination))
+            val dashboardViewModel: DashboardViewModel = hiltViewModel()
+            val uiState by dashboardViewModel.uiState.collectAsState()
+
+            MoreScreen(
+                userName = uiState.userName,
+                onCategoriesClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.CATEGORIES)
+                    )
                 },
-                onSignOut = authViewModel::signOut
+                onExpensesClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.EXPENSES)
+                    )
+                },
+                onIncomeClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.INCOME)
+                    )
+                },
+                onReceivablesClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.RECEIVABLES)
+                    )
+                },
+                onSignOut = authViewModel::signOut,
+                onBottomDestinationSelected = { destination ->
+                    if (destination != NavDestination.MORE) {
+                        navController.navigateTo(dashboardTarget(destination))
+                    }
+                }
             )
         }
 
