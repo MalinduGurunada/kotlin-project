@@ -1,10 +1,11 @@
 package com.example.personalfinanceapp.feature.auth.ui
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.feature.auth.AuthRepository
-import com.example.personalfinanceapp.feature.auth.AuthSessionCleanup
+import com.example.personalfinanceapp.feature.auth.AuthPostSignOutCleanup
 import com.example.personalfinanceapp.feature.auth.PendingRegistration
 import com.example.personalfinanceapp.feature.auth.PendingRegistrationPhase
 import com.example.personalfinanceapp.feature.auth.PendingRegistrationState
@@ -21,6 +22,7 @@ data class LoginUiState(
     val emailInput: String = "",
     val passwordInput: String = "",
     val isLoading: Boolean = false,
+    val isGoogleLoading: Boolean = false,
     val errorMessage: String? = null
 )
 
@@ -54,7 +56,7 @@ sealed interface AuthNavigationState {
 class AuthViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val pendingRegistrationStore: PendingRegistrationStore,
-    private val authSessionCleanup: AuthSessionCleanup = AuthSessionCleanup.NoOp
+    private val authSessionCleanup: AuthPostSignOutCleanup = AuthPostSignOutCleanup.NoOp
 ) : ViewModel() {
 
     private var pendingRegistrationState = readPendingRegistrationState()
@@ -63,6 +65,9 @@ class AuthViewModel @Inject constructor(
     private val _pendingRegistration = MutableStateFlow(restoredPendingRegistration)
     private var operationGeneration = 0L
     private val inFlightAccountCreations = mutableMapOf<Long, PendingRegistration>()
+    private var googleRequestGeneration = 0L
+    private var activeGoogleRequestId: Long? = null
+    private var googleExchangeStarted = false
 
     private val _authState = MutableStateFlow<UserId?>(null)
     val authState: StateFlow<UserId?> = _authState.asStateFlow()
@@ -115,7 +120,7 @@ class AuthViewModel @Inject constructor(
     }
 
     fun login() {
-        if (_loginUiState.value.isLoading) return
+        if (_loginUiState.value.isLoading || _loginUiState.value.isGoogleLoading) return
 
         val email = _loginUiState.value.emailInput.trim()
         val password = _loginUiState.value.passwordInput
@@ -150,6 +155,79 @@ class AuthViewModel @Inject constructor(
                 _loginUiState.value = LoginUiState()
             }
         }
+    }
+
+    fun beginGoogleSignIn(): Long? {
+        val state = _loginUiState.value
+        if (
+            state.isLoading ||
+            state.isGoogleLoading ||
+            pendingRegistrationState != PendingRegistrationState.Absent ||
+            authRepository.currentUserId() != null
+        ) {
+            return null
+        }
+
+        val requestId = ++googleRequestGeneration
+        activeGoogleRequestId = requestId
+        googleExchangeStarted = false
+        _loginUiState.value = state.copy(
+            isGoogleLoading = true,
+            errorMessage = null
+        )
+        return requestId
+    }
+
+    fun completeGoogleSignIn(requestId: Long, idToken: String) {
+        if (
+            activeGoogleRequestId != requestId ||
+            googleExchangeStarted ||
+            !_loginUiState.value.isGoogleLoading ||
+            authRepository.currentUserId() != null
+        ) {
+            return
+        }
+        if (idToken.isBlank()) {
+            failGoogleSignIn(requestId, "Google sign-in returned an invalid credential.")
+            return
+        }
+
+        googleExchangeStarted = true
+        viewModelScope.launch {
+            val result = authRepository.loginWithGoogleIdToken(idToken)
+            if (activeGoogleRequestId != requestId) return@launch
+
+            activeGoogleRequestId = null
+            googleExchangeStarted = false
+            if (result.isFailure) {
+                _loginUiState.value = _loginUiState.value.copy(
+                    isGoogleLoading = false,
+                    errorMessage = "Google sign-in failed. Please try again."
+                )
+            } else {
+                _loginUiState.value = LoginUiState()
+            }
+        }
+    }
+
+    fun cancelGoogleSignIn(requestId: Long) {
+        if (activeGoogleRequestId != requestId || googleExchangeStarted) return
+        activeGoogleRequestId = null
+        googleExchangeStarted = false
+        _loginUiState.value = _loginUiState.value.copy(
+            isGoogleLoading = false,
+            errorMessage = null
+        )
+    }
+
+    fun failGoogleSignIn(requestId: Long, message: String) {
+        if (activeGoogleRequestId != requestId || googleExchangeStarted) return
+        activeGoogleRequestId = null
+        googleExchangeStarted = false
+        _loginUiState.value = _loginUiState.value.copy(
+            isGoogleLoading = false,
+            errorMessage = message.ifBlank { "Google sign-in failed. Please try again." }
+        )
     }
 
     fun onRegisterEmailChanged(email: String) {
@@ -905,6 +983,11 @@ class AuthViewModel @Inject constructor(
 
     private fun invalidateOperations() {
         operationGeneration += 1
+        activeGoogleRequestId = null
+        googleExchangeStarted = false
+        if (_loginUiState.value.isGoogleLoading) {
+            _loginUiState.value = _loginUiState.value.copy(isGoogleLoading = false)
+        }
     }
 
     private fun readPendingRegistrationState(): PendingRegistrationState {

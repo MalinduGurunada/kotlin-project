@@ -3,6 +3,7 @@ package com.example.personalfinanceapp.feature.auth
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
@@ -21,6 +22,7 @@ class AuthComposeUiTest {
         var emailEntered = ""
         var passwordEntered = ""
         var loginClicked = false
+        var googleLoginClicked = false
 
         composeTestRule.setContent {
             PersonalFinanceAppTheme {
@@ -32,14 +34,17 @@ class AuthComposeUiTest {
                     onEmailChanged = { emailEntered = it },
                     onPasswordChanged = { passwordEntered = it },
                     onLoginClicked = { loginClicked = true },
+                    onGoogleSignInClicked = { googleLoginClicked = true },
                     onNavigateToRegister = {},
                     onNavigateToPasswordReset = {}
                 )
             }
         }
 
-        composeTestRule.onNodeWithText("Welcome Back").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Sign In").performClick()
+        composeTestRule.onNodeWithText("Welcome back").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Sign in").performClick()
+        composeTestRule.onNodeWithContentDescription("Continue with Google").performClick()
         assert(loginClicked)
+        assert(googleLoginClicked)
     }
 }

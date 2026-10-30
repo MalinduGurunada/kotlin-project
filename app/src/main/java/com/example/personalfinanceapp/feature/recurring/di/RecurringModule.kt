@@ -1,6 +1,6 @@
 package com.example.personalfinanceapp.feature.recurring.di
 
-import com.example.personalfinanceapp.feature.auth.AuthSessionCleanup
+import com.example.personalfinanceapp.feature.auth.AuthPostSignOutCleanup
 import com.example.personalfinanceapp.feature.recurring.FirestoreRecurringRepository
 import com.example.personalfinanceapp.feature.recurring.RecurringReminderCoordinator
 import com.example.personalfinanceapp.feature.recurring.RecurringReminderScheduler
@@ -22,9 +22,9 @@ abstract class RecurringModule {
     ): RecurringRepository
 
     @Binds
-    abstract fun bindAuthSessionCleanup(
+    abstract fun bindAuthPostSignOutCleanup(
         implementation: RecurringReminderScheduler
-    ): AuthSessionCleanup
+    ): AuthPostSignOutCleanup
 
     @Binds
     abstract fun bindRecurringReminderCoordinator(

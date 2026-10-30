@@ -7,7 +7,7 @@ import android.content.Intent
 import com.example.personalfinanceapp.core.database.ReminderEntity
 import com.example.personalfinanceapp.core.model.RecurringExpense
 import com.example.personalfinanceapp.core.model.UserId
-import com.example.personalfinanceapp.feature.auth.AuthSessionCleanup
+import com.example.personalfinanceapp.feature.auth.AuthPostSignOutCleanup
 import com.example.personalfinanceapp.feature.reminder.RoomReminderRepository
 import com.google.firebase.auth.FirebaseAuth
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -27,7 +27,7 @@ class RecurringReminderScheduler @Inject constructor(
     private val deliveryStore: RecurringReminderDeliveryStore,
     private val clock: Clock,
     @param:ApplicationContext private val context: Context
-) : AuthSessionCleanup, RecurringReminderCoordinator {
+) : AuthPostSignOutCleanup, RecurringReminderCoordinator {
 
     private val syncMutex = Mutex()
 

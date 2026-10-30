@@ -2,6 +2,7 @@ package com.example.personalfinanceapp.feature.auth
 
 import com.example.personalfinanceapp.core.model.UserId
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.UserProfileChangeRequest
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -12,7 +13,8 @@ import javax.inject.Inject
 import kotlin.coroutines.resume
 
 class FirebaseAuthRepository @Inject constructor(
-    private val firebaseAuth: FirebaseAuth
+    private val firebaseAuth: FirebaseAuth,
+    private val sessionCleanup: AuthSessionCleanup = NoOpAuthSessionCleanup
 ) : AuthRepository {
 
     override fun observeAuthState(): Flow<UserId?> = callbackFlow {
@@ -74,6 +76,36 @@ class FirebaseAuthRepository @Inject constructor(
             }
     }
 
+    override suspend fun loginWithGoogleIdToken(idToken: String): Result<UserId> =
+        suspendCancellableCoroutine { continuation ->
+            if (idToken.isBlank()) {
+                continuation.resume(Result.failure(IllegalArgumentException("Google ID token is blank")))
+                return@suspendCancellableCoroutine
+            }
+            if (firebaseAuth.currentUser != null) {
+                continuation.resume(
+                    Result.failure(IllegalStateException("Sign out before changing accounts"))
+                )
+                return@suspendCancellableCoroutine
+            }
+
+            val credential = GoogleAuthProvider.getCredential(idToken, null)
+            firebaseAuth.signInWithCredential(credential)
+                .addOnSuccessListener { result ->
+                    val uid = result.user?.uid
+                    if (uid != null) {
+                        continuation.resume(Result.success(uid))
+                    } else {
+                        continuation.resume(
+                            Result.failure(IllegalStateException("User ID is null after Google sign-in"))
+                        )
+                    }
+                }
+                .addOnFailureListener { exception ->
+                    continuation.resume(Result.failure(exception))
+                }
+        }
+
     override suspend fun updateDisplayName(userId: UserId, fullName: String): Result<Unit> =
         suspendCancellableCoroutine { continuation ->
             val user = firebaseAuth.currentUser
@@ -110,6 +142,8 @@ class FirebaseAuthRepository @Inject constructor(
     }
 
     override suspend fun signOut(): Result<Unit> {
+        val cleanup = sessionCleanup.beforeSignOut()
+        if (cleanup.isFailure) return cleanup
         return try {
             firebaseAuth.signOut()
             Result.success(Unit)

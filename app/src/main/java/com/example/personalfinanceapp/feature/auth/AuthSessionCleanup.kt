@@ -1,12 +1,28 @@
 package com.example.personalfinanceapp.feature.auth
 
-import com.example.personalfinanceapp.core.model.UserId
+import android.content.Context
+import com.example.personalfinanceapp.feature.notification.PushTokenRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
 
-fun interface AuthSessionCleanup {
+interface AuthSessionCleanup {
+    suspend fun beforeSignOut(): Result<Unit>
+}
 
-    suspend fun clearForUser(userId: UserId): Result<Unit>
+object NoOpAuthSessionCleanup : AuthSessionCleanup {
+    override suspend fun beforeSignOut(): Result<Unit> = Result.success(Unit)
+}
 
-    companion object {
-        val NoOp = AuthSessionCleanup { Result.success(Unit) }
+class FirebaseAuthSessionCleanup @Inject constructor(
+    @param:ApplicationContext private val context: Context,
+    private val pushTokenRepository: PushTokenRepository
+) : AuthSessionCleanup {
+    override suspend fun beforeSignOut(): Result<Unit> {
+        val tokenCleanup = pushTokenRepository.deleteCurrentToken()
+        if (tokenCleanup.isFailure) return tokenCleanup
+        // Firebase sign-out must still complete if the platform credential provider
+        // cannot clear its optional UI state. Auto-select is disabled on the next login.
+        GoogleCredentialSignIn.clearCredentialState(context)
+        return Result.success(Unit)
     }
 }
