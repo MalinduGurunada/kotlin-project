@@ -17,6 +17,7 @@ import {
   runTransaction,
   setDoc,
   setLogLevel,
+  serverTimestamp,
   Timestamp,
   updateDoc,
   where,
@@ -80,6 +81,21 @@ function incomeReference(firestore, uid, incomeId) {
 
 function expenseReference(firestore, uid, expenseId) {
   return doc(firestore, "users", uid, "expenses", expenseId);
+}
+
+function fcmTokenReference(firestore, uid, tokenId = "registration-hash") {
+  return doc(firestore, "users", uid, "fcmRegistrations", tokenId);
+}
+
+function fcmTokenDocument(uid, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    userId: uid,
+    installationId: "firebase-installation-id",
+    platform: "android",
+    updatedAt: serverTimestamp(),
+    ...overrides,
+  };
 }
 
 function categoryReference(firestore, uid, categoryId) {
@@ -646,6 +662,32 @@ test("existing expense authorization remains owner-scoped", async () => {
   );
   await expectDenied(updateDoc(expenseReference(otherFirestore, "user-a", "expense-1"), { note: "denied" }));
   await expectDenied(deleteDoc(expenseReference(otherFirestore, "user-a", "expense-1")));
+  await expectAllowed(deleteDoc(ownerReference));
+});
+
+test("FCM tokens are owner-written, write-only, schema-checked, and cross-account isolated", async () => {
+  const owner = userFirestore("user-a");
+  const other = userFirestore("user-b");
+  const anonymous = anonymousFirestore();
+  const ownerReference = fcmTokenReference(owner, "user-a");
+
+  await expectAllowed(setDoc(ownerReference, fcmTokenDocument("user-a")));
+  await expectDenied(getDoc(ownerReference));
+  await expectDenied(getDocs(collection(owner, "users", "user-a", "fcmRegistrations")));
+  await expectDenied(setDoc(fcmTokenReference(other, "user-a"), fcmTokenDocument("user-a")));
+  await expectDenied(setDoc(fcmTokenReference(anonymous, "user-a"), fcmTokenDocument("user-a")));
+  await expectDenied(setDoc(
+    fcmTokenReference(owner, "user-a", "forged-owner"),
+    fcmTokenDocument("user-b"),
+  ));
+  await expectDenied(setDoc(
+    fcmTokenReference(owner, "user-a", "extra-field"),
+    fcmTokenDocument("user-a", { unexpected: true }),
+  ));
+  await expectAllowed(setDoc(ownerReference, fcmTokenDocument("user-a", {
+    installationId: "refreshed-firebase-installation-id",
+  })));
+  await expectDenied(deleteDoc(fcmTokenReference(other, "user-a")));
   await expectAllowed(deleteDoc(ownerReference));
 });
 

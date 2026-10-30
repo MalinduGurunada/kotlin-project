@@ -1,12 +1,17 @@
 package com.example.personalfinanceapp.navigation
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavOptionsBuilder
@@ -14,6 +19,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import com.example.personalfinanceapp.feature.auth.GoogleCredentialResult
+import com.example.personalfinanceapp.feature.auth.GoogleCredentialSignIn
 import com.example.personalfinanceapp.core.model.Expense
 import com.example.personalfinanceapp.feature.auth.ui.AuthNavigationState
 import com.example.personalfinanceapp.feature.auth.ui.AuthViewModel
@@ -37,9 +44,18 @@ import com.example.personalfinanceapp.feature.income.ui.IncomeViewModel
 import com.example.personalfinanceapp.feature.income.ui.shiftIncomeMonth
 import com.example.personalfinanceapp.feature.receivable.ui.ReceivableScreen
 import com.example.personalfinanceapp.feature.receivable.ui.ReceivableViewModel
+import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigationDecision
+import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigationResolver
+import com.example.personalfinanceapp.feature.notification.FinanceReviewPayload
 import com.example.personalfinanceapp.feature.recurring.ui.DueItemsScreen
 import com.example.personalfinanceapp.feature.recurring.ui.RecurringCommitmentsScreen
+import kotlinx.coroutines.launch
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
 internal fun NavHostController.returnToSignIn() {
     if (!popBackStack()) {
         navigate(Login) { launchSingleTop = true }
@@ -115,7 +131,7 @@ private fun NavHostController.navigateTo(
         AppNavigationTarget.OVERVIEW -> navigate(Overview) {
             replaceBackStackIfNeeded(replaceBackStack)
         }
-        AppNavigationTarget.ACTIVITY -> navigate(Activity) {
+        AppNavigationTarget.ACTIVITY -> navigate(ActivityRoute) {
             replaceBackStackIfNeeded(replaceBackStack)
         }
         AppNavigationTarget.GOALS -> navigate(Goals) {
@@ -147,19 +163,72 @@ private fun NavHostController.navigateTo(
 
 @Composable
 fun AppNavHost(
-    authViewModel: AuthViewModel = hiltViewModel()
+    authViewModel: AuthViewModel = hiltViewModel(),
+    notificationTarget: FinanceReviewPayload? = null,
+    onNotificationTargetConsumed: () -> Unit = {},
+    onAuthenticated: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val navigationState by authViewModel.navigationState.collectAsState()
     val loginUiState by authViewModel.loginUiState.collectAsState()
     val registerUiState by authViewModel.registerUiState.collectAsState()
     val resetUiState by authViewModel.passwordResetUiState.collectAsState()
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     var showRecordExpenseDialog by remember { mutableStateOf(false) }
+    var authenticatedStartupComplete by remember { mutableStateOf(false) }
 
-    LaunchedEffect(navigationState) {
-        startupTarget(navigationState)?.let { target ->
-            navController.navigateTo(target, replaceBackStack = true)
+    LaunchedEffect(navigationState, notificationTarget) {
+        when (navigationState) {
+            AuthNavigationState.Resolving -> Unit
+            AuthNavigationState.Unauthenticated -> {
+                authenticatedStartupComplete = false
+                navController.navigateTo(AppNavigationTarget.LOGIN, replaceBackStack = true)
+            }
+            AuthNavigationState.RegistrationSetup -> {
+                authenticatedStartupComplete = false
+                navController.navigateTo(
+                    AppNavigationTarget.REGISTRATION_SETUP,
+                    replaceBackStack = true
+                )
+            }
+            is AuthNavigationState.Authenticated -> {
+                onAuthenticated()
+                val authenticatedUserId =
+                    (navigationState as AuthNavigationState.Authenticated).userId
+                val pendingNotification = notificationTarget
+                if (pendingNotification != null) {
+                    val decision = FinanceReviewNavigationResolver.resolve(
+                        pendingNotification,
+                        authenticatedUserId
+                    )
+                    onNotificationTargetConsumed()
+                    when (decision) {
+                        FinanceReviewNavigationDecision.NAVIGATE_TO_ACTIVITY ->
+                            navController.navigateTo(
+                                AppNavigationTarget.ACTIVITY,
+                                replaceBackStack = true
+                            )
+                        FinanceReviewNavigationDecision.IGNORE,
+                        FinanceReviewNavigationDecision.WAIT_FOR_AUTH -> {
+                            if (!authenticatedStartupComplete) {
+                                navController.navigateTo(
+                                    AppNavigationTarget.OVERVIEW,
+                                    replaceBackStack = true
+                                )
+                            }
+                        }
+                    }
+                    authenticatedStartupComplete = true
+                } else if (!authenticatedStartupComplete) {
+                    navController.navigateTo(
+                        AppNavigationTarget.OVERVIEW,
+                        replaceBackStack = true
+                    )
+                    authenticatedStartupComplete = true
+                }
+            }
         }
     }
 
@@ -173,6 +242,28 @@ fun AppNavHost(
                 onEmailChanged = authViewModel::onLoginEmailChanged,
                 onPasswordChanged = authViewModel::onLoginPasswordChanged,
                 onLoginClicked = authViewModel::login,
+                onGoogleSignInClicked = {
+                    val requestId = authViewModel.beginGoogleSignIn()
+                        ?: return@LoginScreen
+                    val activity = context.findActivity()
+                    if (activity == null) {
+                        authViewModel.failGoogleSignIn(
+                            requestId,
+                            "Google sign-in is unavailable in this context."
+                        )
+                    } else {
+                        coroutineScope.launch {
+                            when (val result = GoogleCredentialSignIn.requestIdToken(activity)) {
+                                is GoogleCredentialResult.Success ->
+                                    authViewModel.completeGoogleSignIn(requestId, result.idToken)
+                                GoogleCredentialResult.Cancelled ->
+                                    authViewModel.cancelGoogleSignIn(requestId)
+                                is GoogleCredentialResult.Failure ->
+                                    authViewModel.failGoogleSignIn(requestId, result.message)
+                            }
+                        }
+                    }
+                },
                 onNavigateToRegister = { navController.navigate(Register) },
                 onNavigateToPasswordReset = { navController.navigate(PasswordReset) }
             )
@@ -270,7 +361,7 @@ fun AppNavHost(
             )
         }
 
-        composable<Activity> {
+        composable<ActivityRoute> {
             val expenseViewModel: ExpenseViewModel = hiltViewModel()
             val expenseUiState by expenseViewModel.uiState.collectAsState()
             val expenseSaveUiState by expenseViewModel.saveUiState.collectAsState()

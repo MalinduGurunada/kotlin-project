@@ -395,10 +395,18 @@ class FirestoreIncomeRepositoryEmulatorTest {
             }
             assertTrue("Transport-unavailable transaction unexpectedly succeeded", result.isFailure)
             val failure = result.exceptionOrNull()
-            assertTrue("Expected FirebaseFirestoreException but was $failure", failure is FirebaseFirestoreException)
+            assertTrue(
+                "Expected IncomeDeleteException.NetworkUnavailable but was $failure",
+                failure is IncomeDeleteException.NetworkUnavailable
+            )
+            val firestoreFailure = failure?.cause
+            assertTrue(
+                "Expected FirebaseFirestoreException cause but was $firestoreFailure",
+                firestoreFailure is FirebaseFirestoreException
+            )
             assertEquals(
                 FirebaseFirestoreException.Code.UNAVAILABLE,
-                (failure as FirebaseFirestoreException).code
+                (firestoreFailure as FirebaseFirestoreException).code
             )
         } finally {
             runCatching { unavailableAuth?.signOut() }

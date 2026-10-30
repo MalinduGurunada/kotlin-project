@@ -1,5 +1,6 @@
 package com.example.personalfinanceapp.feature.goal
 
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -46,6 +47,7 @@ class FirestoreGoalRepositoryEmulatorTest {
     @Before
     fun setUp() {
         requireAndroidEmulator()
+        requireLocalNetworkPermission()
         requireReachable(AUTH_PORT)
         requireReachable(FIRESTORE_PORT)
         val context = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
@@ -160,13 +162,53 @@ class FirestoreGoalRepositoryEmulatorTest {
 
     private fun requireAndroidEmulator() {
         val fingerprint = Build.FINGERPRINT.lowercase()
-        check(fingerprint.contains("generic") || fingerprint.contains("emulator")) {
+        check(
+            fingerprint.contains("generic") ||
+                fingerprint.contains("emulator") ||
+                fingerprint.contains("sdk_gphone")
+        ) {
             "Goal rules tests require an Android Emulator"
         }
     }
 
     private fun requireReachable(port: Int) {
         Socket().use { it.connect(InetSocketAddress(HOST, port), 1_500) }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun requireLocalNetworkPermission() {
+        if (Build.VERSION.SDK_INT < LOCAL_NETWORK_PERMISSION_MIN_API) return
+
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext.applicationContext
+        val packageName = context.packageName
+        val requestedPermissions = context.packageManager
+            .getPackageInfo(packageName, PackageManager.GET_PERMISSIONS)
+            .requestedPermissions
+            .orEmpty()
+
+        check(LOCAL_NETWORK_PERMISSION in requestedPermissions) {
+            "$LOCAL_NETWORK_PERMISSION is not declared by target package $packageName"
+        }
+
+        try {
+            instrumentation.uiAutomation.grantRuntimePermission(
+                packageName,
+                LOCAL_NETWORK_PERMISSION
+            )
+        } catch (exception: Exception) {
+            throw AssertionError(
+                "Unable to grant $LOCAL_NETWORK_PERMISSION to target package $packageName",
+                exception
+            )
+        }
+
+        check(
+            context.checkSelfPermission(LOCAL_NETWORK_PERMISSION) ==
+                PackageManager.PERMISSION_GRANTED
+        ) {
+            "$LOCAL_NETWORK_PERMISSION was not granted to target package $packageName"
+        }
     }
 
     private companion object {
@@ -176,6 +218,8 @@ class FirestoreGoalRepositoryEmulatorTest {
         const val FIRESTORE_PORT = 8080
         const val PASSWORD = "emulator-password-123"
         const val TIMEOUT_MS = 15_000L
+        const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
+        const val LOCAL_NETWORK_PERMISSION_MIN_API = 37
     }
 }
 

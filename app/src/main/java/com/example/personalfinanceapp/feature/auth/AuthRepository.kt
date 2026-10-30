@@ -28,6 +28,10 @@ interface AuthRepository {
         password: String
     ): Result<UserId>
 
+    suspend fun loginWithGoogleIdToken(idToken: String): Result<UserId> = Result.failure(
+        UnsupportedOperationException("Google sign-in is not supported")
+    )
+
     suspend fun register(
         email: String,
         password: String

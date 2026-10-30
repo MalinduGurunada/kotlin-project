@@ -103,6 +103,72 @@ class AuthViewModelTest {
     }
 
     @Test
+    fun googleLoginSuccessAuthenticatesAndDuplicateRequestsAreIgnored() = runTest {
+        val requestId = viewModel.beginGoogleSignIn()
+        assertTrue(requestId != null)
+        assertNull(viewModel.beginGoogleSignIn())
+
+        viewModel.completeGoogleSignIn(requestId!!, "google-id-token")
+        viewModel.completeGoogleSignIn(requestId, "duplicate-token")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, fakeAuthRepository.googleLoginCallCount)
+        assertEquals("google-user", fakeAuthRepository.currentUserId())
+        assertEquals(
+            AuthNavigationState.Authenticated("google-user"),
+            viewModel.navigationState.value
+        )
+    }
+
+    @Test
+    fun googleLoginCancellationRestoresIdleStateWithoutError() = runTest {
+        val requestId = viewModel.beginGoogleSignIn()!!
+
+        viewModel.cancelGoogleSignIn(requestId)
+
+        assertFalse(viewModel.loginUiState.value.isGoogleLoading)
+        assertNull(viewModel.loginUiState.value.errorMessage)
+        assertEquals(0, fakeAuthRepository.googleLoginCallCount)
+    }
+
+    @Test
+    fun googleLoginFailureShowsSafeErrorAndEmailLoginStillWorks() = runTest {
+        fakeAuthRepository.shouldFailGoogleLogin = true
+        val requestId = viewModel.beginGoogleSignIn()!!
+        viewModel.completeGoogleSignIn(requestId, "rejected-token")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "Google sign-in failed. Please try again.",
+            viewModel.loginUiState.value.errorMessage
+        )
+        fakeAuthRepository.shouldFailGoogleLogin = false
+        viewModel.onLoginEmailChanged("user@example.com")
+        viewModel.onLoginPasswordChanged("password123")
+        viewModel.login()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("user_user_at_example_com", fakeAuthRepository.currentUserId())
+    }
+
+    @Test
+    fun staleGoogleCallbackAfterAccountSwitchCannotReplaceCurrentAccount() = runTest {
+        val requestId = viewModel.beginGoogleSignIn()!!
+        fakeAuthRepository.simulateAccountSwitch("other-user", "other@example.com")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.completeGoogleSignIn(requestId, "stale-token")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(0, fakeAuthRepository.googleLoginCallCount)
+        assertEquals("other-user", fakeAuthRepository.currentUserId())
+        assertEquals(
+            AuthNavigationState.Authenticated("other-user"),
+            viewModel.navigationState.value
+        )
+    }
+
+    @Test
     fun registerWithMismatchedPasswordsShowsError() = runTest {
         fillValidRegistration()
         viewModel.onRegisterConfirmPasswordChanged("different123")
