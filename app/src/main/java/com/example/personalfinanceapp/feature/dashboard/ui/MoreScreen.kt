@@ -26,6 +26,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -59,6 +61,8 @@ private val DividerColor = Color(0xFFE9ECEA)
 @Composable
 fun MoreScreen(
     userName: String,
+    notificationsEnabled: Boolean = true,
+    onNotificationsEnabledChange: (Boolean) -> Unit = {},
     onCategoriesClick: () -> Unit,
     onExpensesClick: () -> Unit,
     onIncomeClick: () -> Unit,
@@ -135,6 +139,13 @@ fun MoreScreen(
             item {
                 Spacer(modifier = Modifier.height(4.dp))
                 ProfileSummaryCard(displayName = displayName, profileInitial = profileInitial)
+            }
+
+            item {
+                NotificationPreferenceCard(
+                    enabled = notificationsEnabled,
+                    onEnabledChange = onNotificationsEnabledChange
+                )
             }
 
             item {
@@ -278,6 +289,57 @@ fun MoreScreen(
             item {
                 Spacer(modifier = Modifier.height(8.dp))
             }
+        }
+    }
+}
+
+@Composable
+private fun NotificationPreferenceCard(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("notification_preference"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 76.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            MoreIconBadge(
+                icon = MoreIcons.Reminder,
+                contentDescription = null
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Notifications",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = TextPrimaryDark,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Finance reviews and account reminders",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondaryMuted
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChange,
+                modifier = Modifier.testTag("notification_preference_switch"),
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = TextPrimaryDark,
+                    checkedTrackColor = SecondaryPaleGreen
+                )
+            )
         }
     }
 }

@@ -47,6 +47,7 @@ import com.example.personalfinanceapp.feature.receivable.ui.ReceivableViewModel
 import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigationDecision
 import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigationResolver
 import com.example.personalfinanceapp.feature.notification.FinanceReviewPayload
+import com.example.personalfinanceapp.feature.notification.NotificationPreferencesViewModel
 import com.example.personalfinanceapp.feature.recurring.ui.DueItemsScreen
 import com.example.personalfinanceapp.feature.recurring.ui.RecurringCommitmentsScreen
 import kotlinx.coroutines.launch
@@ -166,7 +167,8 @@ fun AppNavHost(
     authViewModel: AuthViewModel = hiltViewModel(),
     notificationTarget: FinanceReviewPayload? = null,
     onNotificationTargetConsumed: () -> Unit = {},
-    onAuthenticated: () -> Unit = {}
+    onAuthenticated: () -> Unit = {},
+    onNotificationPermissionRequested: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val navigationState by authViewModel.navigationState.collectAsState()
@@ -298,9 +300,17 @@ fun AppNavHost(
         composable<Home> {
             val dashboardViewModel: DashboardViewModel = hiltViewModel()
             val uiState by dashboardViewModel.uiState.collectAsState()
+            val notificationPreferencesViewModel: NotificationPreferencesViewModel = hiltViewModel()
+            val notificationsEnabled by
+                notificationPreferencesViewModel.notificationsEnabled.collectAsState()
 
             MoreScreen(
                 userName = uiState.userName,
+                notificationsEnabled = notificationsEnabled,
+                onNotificationsEnabledChange = { enabled ->
+                    notificationPreferencesViewModel.setNotificationsEnabled(enabled)
+                    if (enabled) onNotificationPermissionRequested()
+                },
                 onCategoriesClick = {
                     navController.navigateTo(
                         managementTarget(ManagementDestination.CATEGORIES)

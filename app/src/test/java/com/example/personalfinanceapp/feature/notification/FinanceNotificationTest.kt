@@ -72,6 +72,21 @@ class FinanceNotificationTest {
         assertFalse(NotificationPermissionPolicy.shouldRequest(33, true, false, true))
         assertFalse(NotificationPermissionPolicy.shouldRequest(33, false, true, true))
         assertFalse(NotificationPermissionPolicy.shouldRequest(33, false, false, false))
+        assertTrue(NotificationPermissionPolicy.shouldRequest(
+            sdkInt = 33,
+            isGranted = false,
+            wasRequested = true,
+            isAuthenticated = true,
+            isUserInitiated = true
+        ))
+    }
+
+    @Test
+    fun deliveryRequiresMatchingAccountAndEnabledPreference() {
+        assertTrue(NotificationDeliveryPolicy.shouldDisplay("user-a", "user-a", true))
+        assertFalse(NotificationDeliveryPolicy.shouldDisplay("user-a", "user-a", false))
+        assertFalse(NotificationDeliveryPolicy.shouldDisplay("user-b", "user-a", true))
+        assertFalse(NotificationDeliveryPolicy.shouldDisplay(null, "user-a", true))
     }
 
     @Test
