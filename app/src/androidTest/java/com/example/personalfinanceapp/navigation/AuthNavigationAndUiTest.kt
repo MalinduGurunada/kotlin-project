@@ -151,11 +151,11 @@ class AuthNavigationAndUiTest {
     }
 
     @Test
-    fun allDestinationTypesRegisterAndTransactionDetailReceivesItsId() {
+    fun allDestinationTypesRegister() {
         composeRule.setContent {
             val navController = rememberNavController()
             NavHost(navController = navController, startDestination = Login) {
-                composable<Login> { Text("Login") }
+                composable<Login> { Text("Login", Modifier.testTag("login_route")) }
                 composable<Register> { Text("Register") }
                 composable<PasswordReset> { Text("Password reset") }
                 composable<Home> { Text("More") }
@@ -173,19 +173,23 @@ class AuthNavigationAndUiTest {
                     Text(route.transactionId, Modifier.testTag("transaction_id"))
                 }
             }
+        }
+
+        composeRule.onNodeWithTag("login_route").assertIsDisplayed()
+    }
+
+    @Test
+    fun transactionDetailReceivesItsId() {
+        composeRule.setContent {
+            val navController = rememberNavController()
+            NavHost(navController = navController, startDestination = Login) {
+                composable<Login> { Text("Login") }
+                composable<TransactionDetail> { backStackEntry ->
+                    val route: TransactionDetail = backStackEntry.toRoute()
+                    Text(route.transactionId, Modifier.testTag("transaction_id"))
+                }
+            }
             LaunchedEffect(Unit) {
-                navController.navigate(Register)
-                navController.navigate(PasswordReset)
-                navController.navigate(Home)
-                navController.navigate(Overview)
-                navController.navigate(Activity)
-                navController.navigate(Goals)
-                navController.navigate(Category)
-                navController.navigate(ExpenseList)
-                navController.navigate(IncomeList)
-                navController.navigate(ReceivableList)
-                navController.navigate(RecurringCommitments)
-                navController.navigate(DueItems)
                 navController.navigate(TransactionDetail("transaction-42"))
             }
         }

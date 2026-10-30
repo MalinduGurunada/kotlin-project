@@ -160,7 +160,15 @@ class FirestoreGoalRepositoryEmulatorTest {
 
     private fun requireAndroidEmulator() {
         val fingerprint = Build.FINGERPRINT.lowercase()
-        check(fingerprint.contains("generic") || fingerprint.contains("emulator")) {
+        val isEmulator =
+            fingerprint.contains("generic") ||
+                fingerprint.contains("emulator") ||
+                Build.MODEL.contains("emulator", ignoreCase = true) ||
+                Build.MODEL.contains("android sdk", ignoreCase = true) ||
+                Build.PRODUCT.contains("sdk", ignoreCase = true) ||
+                Build.HARDWARE.contains("ranchu", ignoreCase = true) ||
+                Build.HARDWARE.contains("goldfish", ignoreCase = true)
+        check(isEmulator) {
             "Goal rules tests require an Android Emulator"
         }
     }
@@ -171,7 +179,7 @@ class FirestoreGoalRepositoryEmulatorTest {
 
     private companion object {
         const val PROJECT_ID = "demo-personal-finance-income-rules"
-        const val HOST = "10.0.2.2"
+        const val HOST = "127.0.0.1"
         const val AUTH_PORT = 9099
         const val FIRESTORE_PORT = 8080
         const val PASSWORD = "emulator-password-123"
