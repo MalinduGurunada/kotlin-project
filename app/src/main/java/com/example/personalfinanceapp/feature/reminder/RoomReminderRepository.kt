@@ -41,4 +41,21 @@ class RoomReminderRepository @Inject constructor(
             Result.failure(e)
         }
     }
+
+    suspend fun removeReminder(id: String): Result<Unit> = try {
+        reminderDao.deleteReminder(id)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    suspend fun removeRecurringReminders(
+        userId: String,
+        recurringExpenseId: String
+    ): Result<Unit> = try {
+        reminderDao.deleteRecurringReminders(userId, recurringExpenseId)
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
 }

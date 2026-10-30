@@ -27,6 +27,12 @@ data object IncomeList
 data object ReceivableList
 
 @Serializable
+data object RecurringCommitments
+
+@Serializable
+data object DueItems
+
+@Serializable
 data object Overview
 
 @Serializable

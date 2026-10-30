@@ -18,7 +18,70 @@ service cloud.firestore {
              data.baseAmountMinor >= 0 &&
              data.spendingClass in ['COMMITTED', 'DISCRETIONARY'] &&
              data.paymentChannel in ['CASH', 'CARD', 'BANK', 'OTHER'] &&
-             data.occurredDate is string;
+             data.occurredDate is string &&
+             (!('recurringExpenseId' in data) ||
+               data.recurringExpenseId == null ||
+               data.recurringExpenseId is string) &&
+             (!('recurringOccurrenceId' in data) ||
+               data.recurringOccurrenceId == null ||
+               data.recurringOccurrenceId is string);
+    }
+
+    function isValidRecurringExpenseData(data, userId, recurringId) {
+      return data.keys().hasAll([
+               'id', 'userId', 'title', 'categoryId', 'expectedAmountMinor',
+               'frequency', 'intervalCount', 'anchorDate', 'startDate',
+               'endDate', 'status', 'paymentChannel', 'channelLabel',
+               'reminderEnabled', 'reminderLeadDays'
+             ]) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'title', 'categoryId', 'expectedAmountMinor',
+               'frequency', 'intervalCount', 'anchorDate', 'startDate',
+               'endDate', 'status', 'paymentChannel', 'channelLabel',
+               'reminderEnabled', 'reminderLeadDays'
+             ]) &&
+             data.id == recurringId &&
+             data.userId == userId &&
+             data.title is string && data.title.trim().size() > 0 && data.title.size() <= 80 &&
+             data.categoryId is string && data.categoryId.size() > 0 &&
+             exists(/databases/$(database)/documents/users/$(userId)/categories/$(data.categoryId)) &&
+             data.expectedAmountMinor is int && data.expectedAmountMinor > 0 &&
+             data.frequency in ['WEEKLY', 'MONTHLY', 'YEARLY'] &&
+             data.intervalCount is int && data.intervalCount > 0 && data.intervalCount <= 120 &&
+             isIsoDate(data.anchorDate) &&
+             isIsoDate(data.startDate) &&
+             (data.endDate == null || isIsoDate(data.endDate)) &&
+             data.status in ['ACTIVE', 'PAUSED', 'CANCELLED'] &&
+             data.paymentChannel in ['CASH', 'CARD', 'BANK', 'OTHER'] &&
+             (data.channelLabel == null || data.channelLabel is string) &&
+             data.reminderEnabled is bool &&
+             data.reminderLeadDays is int &&
+             data.reminderLeadDays >= 0 && data.reminderLeadDays <= 365;
+    }
+
+    function isValidRecurringOccurrenceData(data, userId, occurrenceId) {
+      return data.keys().hasAll([
+               'id', 'userId', 'recurringExpenseId', 'dueDate',
+               'status', 'expenseId', 'actionAt'
+             ]) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'recurringExpenseId', 'dueDate',
+               'status', 'expenseId', 'actionAt'
+             ]) &&
+             data.id == occurrenceId &&
+             data.userId == userId &&
+             data.recurringExpenseId is string && data.recurringExpenseId.size() > 0 &&
+             isIsoDate(data.dueDate) &&
+             occurrenceId == data.recurringExpenseId + '_' + data.dueDate &&
+             exists(/databases/$(database)/documents/users/$(userId)/recurringExpenses/$(data.recurringExpenseId)) &&
+             data.status in ['CONFIRMED', 'SKIPPED'] &&
+             data.actionAt is timestamp &&
+             ((data.status == 'CONFIRMED' &&
+               data.expenseId == 'recurring_' + occurrenceId &&
+               existsAfter(/databases/$(database)/documents/users/$(userId)/expenses/$(data.expenseId)) &&
+               getAfter(/databases/$(database)/documents/users/$(userId)/expenses/$(data.expenseId)).data.recurringExpenseId == data.recurringExpenseId &&
+               getAfter(/databases/$(database)/documents/users/$(userId)/expenses/$(data.expenseId)).data.recurringOccurrenceId == occurrenceId) ||
+              (data.status == 'SKIPPED' && data.expenseId == null));
     }
 
     // Category documents use the exact field set written by FirestoreCategoryRepository.
@@ -317,6 +380,30 @@ service cloud.firestore {
       match /expenses/{expenseId} {
         allow read, delete: if isOwner(userId);
         allow create, update: if isOwner(userId) && isValidExpenseData(request.resource.data, userId);
+      }
+
+      // Recurring templates are retained when paused or cancelled.
+      match /recurringExpenses/{recurringId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+                              isValidRecurringExpenseData(
+                                request.resource.data,
+                                userId,
+                                recurringId
+                              );
+        allow delete: if false;
+      }
+
+      // Only confirmed and skipped actions are persisted; pending dates are derived.
+      match /recurringOccurrences/{occurrenceId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                      isValidRecurringOccurrenceData(
+                        request.resource.data,
+                        userId,
+                        occurrenceId
+                      );
+        allow update, delete: if false;
       }
 
       // UID-scoped expense categories. Categories are archived, never deleted.

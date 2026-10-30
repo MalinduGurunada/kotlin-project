@@ -27,7 +27,8 @@ users/{uid}
 |-- expenses/{expenseId}        implemented repository/rules path
 |-- categories/{categoryId}     proposed Firestore path
 |-- receivables/{receivableId}  proposed Firestore path
-|-- recurringExpenses/{id}      proposed Firestore path
+|-- recurringExpenses/{id}      recurring commitment templates
+|-- recurringOccurrences/{id}   immutable confirmed/skipped occurrence ledger
 `-- goals/{goalId}              proposed Firestore path
     `-- contributions/{id}      proposed Firestore path
 ```
@@ -312,13 +313,14 @@ The following sections preserve the model-aligned design for features without Fi
 
 ### `users/{uid}/recurringExpenses/{recurringId}`
 
-**Status: PROPOSED.** Only `FakeRecurringRepository` exists.
+**Status: IMPLEMENTED.** `FirestoreRecurringRepository` stores owner-scoped templates.
 
 **Purpose:** Scheduling templates for expected recurring costs, not confirmed Expense records.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `id` | string | Yes | Must equal `{recurringId}` |
+| `userId` | string | Yes | Must match the authenticated path owner |
 | `title` | string | Yes | Trimmed, non-blank title |
 | `categoryId` | string | Yes | User-owned Category reference |
 | `expectedAmountMinor` | integer | Yes | Positive LKR minor-unit estimate |
@@ -326,18 +328,21 @@ The following sections preserve the model-aligned design for features without Fi
 | `intervalCount` | integer | Yes | Positive number of frequency units |
 | `anchorDate` | string | Yes | ISO recurrence anchor date |
 | `startDate` | string | Yes | ISO first-active date |
-| `endDate` | string | Optional | ISO date not before `startDate` |
-| `active` | boolean | Yes | Scheduling state |
+| `endDate` | string/null | Yes | Optional ISO date not before `startDate` |
+| `status` | string | Yes | `ACTIVE`, `PAUSED`, or `CANCELLED` |
+| `paymentChannel` | string | Yes | `CASH`, `CARD`, `BANK`, or `OTHER` |
+| `channelLabel` | string/null | Yes | Optional account/channel label |
 | `reminderEnabled` | boolean | Yes | Reminder preference |
 | `reminderLeadDays` | integer | Yes | Non-negative number of days |
 
-**Relationships:** `categoryId` refers to a user-owned Category. A template has no automatic accounting relationship to Expense; confirmation would require a separate Expense record.
+**Relationships:** `categoryId` refers to a user-owned Category. Confirming an occurrence atomically creates a linked Expense.
 
-**Validation if implemented:** Match the fake checks for non-blank ID/title/category, positive amount/interval, valid date order, and non-negative reminder lead time. Also enforce exact types/enums/dates and define short-month anchor behavior before use.
+**Validation:** Rules enforce exact fields, ownership, an existing user category, positive amounts/intervals, supported enums, ISO dates, and bounded reminder lead days. Short months clamp to their last day while later months continue to use the original anchor day.
 
 ```json
 {
   "id": "recurring-example-001",
+  "userId": "firebase-uid",
   "title": "Internet bill",
   "categoryId": "bills",
   "expectedAmountMinor": 350000,
@@ -345,11 +350,30 @@ The following sections preserve the model-aligned design for features without Fi
   "intervalCount": 1,
   "anchorDate": "2026-10-15",
   "startDate": "2026-10-15",
-  "active": true,
+  "endDate": null,
+  "status": "ACTIVE",
+  "paymentChannel": "BANK",
+  "channelLabel": "ComBank CASA",
   "reminderEnabled": true,
   "reminderLeadDays": 2
 }
 ```
+
+### `users/{uid}/recurringOccurrences/{occurrenceId}`
+
+**Status: IMPLEMENTED.** Pending dates are calculated from the template. Only user actions are persisted.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | string | Yes | `{recurringId}_{YYYY-MM-DD}` |
+| `userId` | string | Yes | Must match the authenticated path owner |
+| `recurringExpenseId` | string | Yes | Existing recurring template |
+| `dueDate` | string | Yes | ISO date |
+| `status` | string | Yes | `CONFIRMED` or `SKIPPED` |
+| `expenseId` | string/null | Yes | Deterministic linked Expense ID when confirmed |
+| `actionAt` | timestamp | Yes | Server action timestamp |
+
+Occurrence documents cannot be updated or deleted. A confirmed occurrence and its linked Expense must be created in the same atomic transaction. The deterministic IDs prevent duplicate payment records.
 
 ### `users/{uid}/goals/{goalId}`
 

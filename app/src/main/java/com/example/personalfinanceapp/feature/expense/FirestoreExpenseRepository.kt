@@ -75,6 +75,8 @@ class FirestoreExpenseRepository @Inject constructor(
 
                     val note = doc.getString("note")
                     val channelLabel = doc.getString("channelLabel")
+                    val recurringExpenseId = doc.getString("recurringExpenseId")
+                    val recurringOccurrenceId = doc.getString("recurringOccurrenceId")
 
                     Expense(
                         id = doc.id,
@@ -92,7 +94,9 @@ class FirestoreExpenseRepository @Inject constructor(
                         ),
                         occurredDate = occurredDate,
                         note = note,
-                        channelLabel = channelLabel
+                        channelLabel = channelLabel,
+                        recurringExpenseId = recurringExpenseId,
+                        recurringOccurrenceId = recurringOccurrenceId
                     )
                 }.getOrNull()
             }.filter { expense ->
@@ -145,7 +149,9 @@ class FirestoreExpenseRepository @Inject constructor(
             "rateDate" to expense.money.rateDate.toString(),
             "occurredDate" to expense.occurredDate.toString(),
             "note" to expense.note,
-            "channelLabel" to expense.channelLabel
+            "channelLabel" to expense.channelLabel,
+            "recurringExpenseId" to expense.recurringExpenseId,
+            "recurringOccurrenceId" to expense.recurringOccurrenceId
         )
 
         docRef.set(data)
