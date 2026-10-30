@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.feature.auth.AuthRepository
+import com.example.personalfinanceapp.feature.auth.AuthSessionCleanup
 import com.example.personalfinanceapp.feature.auth.PendingRegistration
 import com.example.personalfinanceapp.feature.auth.PendingRegistrationPhase
 import com.example.personalfinanceapp.feature.auth.PendingRegistrationState
@@ -52,7 +53,8 @@ sealed interface AuthNavigationState {
 @HiltViewModel
 class AuthViewModel @Inject constructor(
     private val authRepository: AuthRepository,
-    private val pendingRegistrationStore: PendingRegistrationStore
+    private val pendingRegistrationStore: PendingRegistrationStore,
+    private val authSessionCleanup: AuthSessionCleanup = AuthSessionCleanup.NoOp
 ) : ViewModel() {
 
     private var pendingRegistrationState = readPendingRegistrationState()
@@ -431,6 +433,10 @@ class AuthViewModel @Inject constructor(
         viewModelScope.launch {
             val result = authRepository.signOut()
             if (result.isFailure) return@launch
+
+            if (signingOutUserId != null) {
+                authSessionCleanup.clearForUser(signingOutUserId)
+            }
 
             if (protectsInFlightCreation) {
                 _authState.value = null

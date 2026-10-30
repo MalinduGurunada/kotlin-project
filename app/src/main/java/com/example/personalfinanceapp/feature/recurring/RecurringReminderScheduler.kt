@@ -6,57 +6,85 @@ import android.content.Context
 import android.content.Intent
 import com.example.personalfinanceapp.core.database.ReminderEntity
 import com.example.personalfinanceapp.core.model.RecurringExpense
+import com.example.personalfinanceapp.core.model.UserId
+import com.example.personalfinanceapp.feature.auth.AuthSessionCleanup
 import com.example.personalfinanceapp.feature.reminder.RoomReminderRepository
 import com.google.firebase.auth.FirebaseAuth
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.time.Clock
 import java.time.LocalDate
-import java.time.LocalTime
 import java.time.ZoneId
 import javax.inject.Inject
+import javax.inject.Singleton
 
+@Singleton
 class RecurringReminderScheduler @Inject constructor(
     private val reminderRepository: RoomReminderRepository,
     private val firebaseAuth: FirebaseAuth,
+    private val deliveryStore: RecurringReminderDeliveryStore,
+    private val clock: Clock,
     @param:ApplicationContext private val context: Context
-) {
-    suspend fun sync(
+) : AuthSessionCleanup, RecurringReminderCoordinator {
+
+    private val syncMutex = Mutex()
+
+    override suspend fun sync(
         recurringExpense: RecurringExpense,
         dueDates: List<LocalDate>
-    ): Result<Unit> {
+    ): Result<Unit> = syncMutex.withLock {
         val uid = firebaseAuth.currentUser?.uid
-            ?: return Result.failure(IllegalStateException("User is not authenticated"))
-        reminderRepository.observeReminders(uid).first()
+            ?: return@withLock Result.failure(IllegalStateException("User is not authenticated"))
+        val existing = reminderRepository.observeReminders(uid).first()
             .filter { it.recurringExpenseId == recurringExpense.id }
-            .forEach(::cancelAlarm)
+        existing.forEach(::cancelAlarm)
         reminderRepository.removeRecurringReminders(uid, recurringExpense.id).getOrElse {
-            return Result.failure(it)
+            return@withLock Result.failure(it)
         }
         if (!recurringExpense.active || !recurringExpense.reminderEnabled) {
-            return Result.success(Unit)
+            return@withLock Result.success(Unit)
         }
-        dueDates.distinct().forEach { dueDate ->
+        val deliveredIds = existing.filter { it.isDelivered }.mapTo(mutableSetOf()) { it.id }
+        for (dueDate in dueDates.distinct()) {
             val reminder = buildReminder(uid, recurringExpense, dueDate)
-            reminderRepository.addReminder(reminder).getOrElse { return Result.failure(it) }
-            scheduleAlarm(reminder)
+            val wasDelivered = reminder.id in deliveredIds ||
+                deliveryStore.wasDelivered(uid, reminder.id)
+            val triggerAt = RecurringReminderSchedulePolicy.triggerAtMillis(
+                reminder = reminder,
+                wasDelivered = wasDelivered,
+                now = clock.instant(),
+                zoneId = ZoneId.systemDefault()
+            ) ?: continue
+            reminderRepository.addReminder(reminder).getOrElse {
+                return@withLock Result.failure(it)
+            }
+            scheduleAlarm(reminder, triggerAt)
         }
-        return Result.success(Unit)
+        Result.success(Unit)
     }
 
-    suspend fun cancelOccurrence(recurringExpenseId: String, dueDate: LocalDate): Result<Unit> {
+    override suspend fun cancelOccurrence(
+        recurringExpenseId: String,
+        dueDate: LocalDate
+    ): Result<Unit> {
         val id = reminderId(recurringExpenseId, dueDate)
         cancelAlarmById(id)
         return reminderRepository.removeReminder(id)
     }
 
-    private fun scheduleAlarm(reminder: ReminderEntity) {
+    override suspend fun clearForUser(userId: UserId): Result<Unit> {
+        val reminders = runCatching {
+            reminderRepository.observeReminders(userId).first()
+        }.getOrElse { return Result.failure(it) }
+
+        reminders.forEach(::cancelAlarm)
+        return reminderRepository.clearUserRemindersOnLogout(userId)
+    }
+
+    private fun scheduleAlarm(reminder: ReminderEntity, triggerAt: Long) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val scheduled = LocalDate.parse(reminder.remindOnIso)
-            .atTime(LocalTime.of(9, 0))
-            .atZone(ZoneId.systemDefault())
-            .toInstant()
-            .toEpochMilli()
-        val triggerAt = maxOf(scheduled, System.currentTimeMillis() + 5_000L)
         alarmManager.setAndAllowWhileIdle(
             AlarmManager.RTC_WAKEUP,
             triggerAt,
@@ -66,7 +94,9 @@ class RecurringReminderScheduler @Inject constructor(
 
     private fun cancelAlarm(reminder: ReminderEntity) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarmManager.cancel(pendingIntent(reminder))
+        val pending = pendingIntent(reminder)
+        alarmManager.cancel(pending)
+        pending.cancel()
     }
 
     private fun cancelAlarmById(id: String) {
@@ -91,6 +121,7 @@ class RecurringReminderScheduler @Inject constructor(
             .putExtra(RecurringReminderAlarmReceiver.EXTRA_TITLE, reminder.title)
             .putExtra(RecurringReminderAlarmReceiver.EXTRA_AMOUNT_MINOR, reminder.amountMinor)
             .putExtra(RecurringReminderAlarmReceiver.EXTRA_DUE_DATE, reminder.dueDateIso)
+            .putExtra(RecurringReminderAlarmReceiver.EXTRA_USER_ID, reminder.userId)
         return PendingIntent.getBroadcast(
             context,
             reminder.id.hashCode(),
