@@ -17,6 +17,7 @@ class FcmTokenSyncCoordinator @Inject constructor(
     private val preferenceStore: NotificationPreferenceStore
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val fcmOperations = FcmOperationExecutor(scope)
     private var started = false
 
     fun start() {
@@ -47,20 +48,26 @@ class FcmTokenSyncCoordinator @Inject constructor(
     }
 
     private fun register(expectedUserId: String) {
-        messaging.isAutoInitEnabled = true
-        messaging.register().addOnCompleteListener { task ->
+        fcmOperations.execute {
             if (
-                task.isSuccessful &&
-                auth.currentUser?.uid == expectedUserId &&
-                preferenceStore.isEnabled(expectedUserId)
-            ) {
-                scope.launch { tokenRepository.syncCurrentToken() }
+                auth.currentUser?.uid != expectedUserId ||
+                !preferenceStore.isEnabled(expectedUserId)
+            ) return@execute
+            messaging.isAutoInitEnabled = true
+            messaging.register().addOnCompleteListener { task ->
+                if (
+                    task.isSuccessful &&
+                    auth.currentUser?.uid == expectedUserId &&
+                    preferenceStore.isEnabled(expectedUserId)
+                ) {
+                    scope.launch { tokenRepository.syncCurrentToken() }
+                }
             }
         }
     }
 
     private fun unregister(expectedUserId: String) {
-        scope.launch {
+        fcmOperations.execute {
             val cleanup = tokenRepository.deleteCurrentToken()
             if (
                 cleanup.isSuccess &&
@@ -71,5 +78,13 @@ class FcmTokenSyncCoordinator @Inject constructor(
                 messaging.unregister()
             }
         }
+    }
+}
+
+internal class FcmOperationExecutor(
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+) {
+    fun execute(operation: suspend () -> Unit) {
+        scope.launch { operation() }
     }
 }
