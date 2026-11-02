@@ -11,17 +11,57 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.personalfinanceapp.R
 import com.example.personalfinanceapp.feature.reminder.ReminderNotificationHelper
+import com.example.personalfinanceapp.feature.reminder.RoomReminderRepository
+import com.google.firebase.auth.FirebaseAuth
+import dagger.hilt.android.AndroidEntryPoint
 import java.math.BigDecimal
+import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
+@AndroidEntryPoint
 class RecurringReminderAlarmReceiver : BroadcastReceiver() {
+
+    @Inject
+    lateinit var deliveryStore: RecurringReminderDeliveryStore
+
+    @Inject
+    lateinit var reminderRepository: RoomReminderRepository
+
     override fun onReceive(context: Context, intent: Intent) {
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
+        val pendingResult = goAsync()
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                deliverIfAllowed(context, intent)
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
+
+    private suspend fun deliverIfAllowed(context: Context, intent: Intent) {
+        val permissionGranted =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+        val id = intent.getStringExtra(EXTRA_REMINDER_ID) ?: return
+        val scheduledUserId = intent.getStringExtra(EXTRA_USER_ID)
+        val currentUserId = FirebaseAuth.getInstance().currentUser?.uid
+        if (!RecurringReminderDeliveryPolicy.claimDeliveryIfAllowed(
+                scheduledUserId = scheduledUserId,
+                currentUserId = currentUserId,
+                notificationPermissionGranted = permissionGranted,
+                claimDelivery = {
+                    deliveryStore.claimDelivery(checkNotNull(scheduledUserId), id)
+                }
+            )
         ) return
 
-        val id = intent.getStringExtra(EXTRA_REMINDER_ID) ?: return
+        reminderRepository.markDelivered(id)
         val title = intent.getStringExtra(EXTRA_TITLE) ?: "Recurring payment"
         val amountMinor = intent.getLongExtra(EXTRA_AMOUNT_MINOR, 0L)
         val dueDate = intent.getStringExtra(EXTRA_DUE_DATE).orEmpty()
@@ -43,5 +83,6 @@ class RecurringReminderAlarmReceiver : BroadcastReceiver() {
         const val EXTRA_TITLE = "recurring_reminder_title"
         const val EXTRA_AMOUNT_MINOR = "recurring_reminder_amount_minor"
         const val EXTRA_DUE_DATE = "recurring_reminder_due_date"
+        const val EXTRA_USER_ID = "recurring_reminder_user_id"
     }
 }

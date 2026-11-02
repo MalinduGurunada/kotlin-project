@@ -27,6 +27,7 @@ class AuthViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var fakeAuthRepository: FakeAuthRepository
     private lateinit var pendingStore: InMemoryPendingRegistrationStore
+    private lateinit var sessionCleanup: RecordingSessionCleanup
     private lateinit var viewModel: AuthViewModel
 
     @Before
@@ -34,7 +35,8 @@ class AuthViewModelTest {
         Dispatchers.setMain(testDispatcher)
         fakeAuthRepository = FakeAuthRepository()
         pendingStore = InMemoryPendingRegistrationStore()
-        viewModel = AuthViewModel(fakeAuthRepository, pendingStore)
+        sessionCleanup = RecordingSessionCleanup()
+        viewModel = AuthViewModel(fakeAuthRepository, pendingStore, sessionCleanup)
     }
 
     @After
@@ -413,6 +415,25 @@ class AuthViewModelTest {
     }
 
     @Test
+    fun reminderCleanupFailureDoesNotPreventSignOut() = runTest {
+        sessionCleanup.failure = IllegalStateException("cleanup failed")
+        viewModel.onLoginEmailChanged("user@example.com")
+        viewModel.onLoginPasswordChanged("password123")
+        viewModel.login()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.signOut()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(fakeAuthRepository.observeAuthState().first())
+        assertEquals(listOf("user_user_at_example_com"), sessionCleanup.clearedUserIds)
+        assertEquals(
+            AuthNavigationState.Unauthenticated,
+            viewModel.navigationState.value
+        )
+    }
+
+    @Test
     fun passwordResetSuccessUpdatesState() = runTest {
         viewModel.onResetEmailChanged("user@example.com")
         viewModel.sendPasswordReset()
@@ -447,6 +468,7 @@ class AuthViewModelTest {
             AuthNavigationState.Unauthenticated,
             viewModel.navigationState.value
         )
+        assertEquals(listOf("user_user_at_example_com"), sessionCleanup.clearedUserIds)
     }
 
     @Test
@@ -945,6 +967,16 @@ class AuthViewModelTest {
 
         fun validRegistration(): PendingRegistration? {
             return (read() as? PendingRegistrationState.Valid)?.registration
+        }
+    }
+
+    private class RecordingSessionCleanup : AuthPostSignOutCleanup {
+        val clearedUserIds = mutableListOf<String>()
+        var failure: Exception? = null
+
+        override suspend fun clearForUser(userId: String): Result<Unit> {
+            clearedUserIds += userId
+            return failure?.let { Result.failure(it) } ?: Result.success(Unit)
         }
     }
 

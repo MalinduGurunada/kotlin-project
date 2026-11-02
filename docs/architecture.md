@@ -196,13 +196,13 @@ Both `FakeExpenseRepository` and `FirestoreExpenseRepository` exist; Hilt binds 
 
 `Contribution` has `id`, `goalId`, `amountMinor`, `kind`, `occurredDate`, and optional `reversesId` and `note`. Kinds are `OPENING`, `ALLOCATION`, and `REVERSAL`. Contributions model allocation to a goal; they are not automatically Income or Expense. Reversals preserve history by adding a negative record rather than editing the original.
 
-Only `FakeGoalRepository` exists. It validates goal IDs/names, positive targets, and date order. Contributions are append-only by stable ID: an identical retry is idempotent, a conflicting reuse fails, and a reversal must exactly negate one unreversed non-reversal contribution in the same goal.
+`FakeGoalRepository` and `FirestoreGoalRepository` implement this contract. The production repository stores goals and append-only contributions beneath the authenticated user's path, rejects stale-owner writes, and uses an atomic reversal claim so one original contribution can be reversed only once. Identical retries are idempotent while conflicting ID reuse fails.
 
 ### Recurring expense
 
-`RecurringExpense` has `id`, `title`, `categoryId`, `expectedAmountMinor`, `frequency`, `intervalCount`, `anchorDate`, `startDate`, optional `endDate`, `active`, `reminderEnabled`, and `reminderLeadDays`. Frequencies are `WEEKLY`, `MONTHLY`, and `YEARLY`.
+`RecurringExpense` has `id`, `title`, `categoryId`, `expectedAmountMinor`, `frequency`, `intervalCount`, `anchorDate`, `startDate`, optional `endDate`, `status`, payment-channel metadata, `reminderEnabled`, and `reminderLeadDays`. Frequencies are `WEEKLY`, `MONTHLY`, and `YEARLY`; statuses are `ACTIVE`, `PAUSED`, and `CANCELLED`.
 
-It is a scheduling template, not a confirmed Expense. `FakeRecurringRepository` validates non-blank identity/title/category, positive amount and interval, date order, and non-negative reminder lead time. No Firestore repository, occurrence generation, skip handling, notification delivery, or template-to-Expense conversion is implemented.
+It remains a scheduling template rather than an Expense. `FirestoreRecurringRepository` persists templates and immutable confirmed/skipped occurrence records. Confirmation atomically creates one deterministic linked Expense; retrying the same occurrence returns that Expense instead of duplicating it. `RecurringViewModel` derives pending dates, supports confirm/skip and pause/resume/cancel, and synchronizes Android alarms. Reminder delivery requires notification permission and the scheduled owner to still be authenticated. Logout cancels known alarms and clears that user's local reminder records; the owner check also blocks stale alarms after logout or account switching.
 
 ### Receivable
 
@@ -249,7 +249,7 @@ The Firestore observer queries `users/{uid}/incomes` with `startDate <= occurred
 | `CategoryRepository` | `observeCategories()` | add, rename, archive | In-memory fake only |
 | `IncomeRepository` | owner-tagged/list date-range observation | save/delete, including owner-bound variants | Firestore production binding plus in-memory fake |
 | `ExpenseRepository` | date-range observation | save/delete | Firestore production binding plus in-memory fake |
-| `GoalRepository` | goals and contributions by goal | save/archive goal, add contribution | In-memory fake only |
+| `GoalRepository` | goals and contributions by goal | save/archive goal, add contribution/reversal | Firestore production binding plus in-memory fake |
 | `RecurringRepository` | recurring templates and occurrence ledger | save, pause/resume/cancel, confirm/skip | Firestore with in-memory fake for tests |
 | `ReceivableRepository` | receivables | save, archive/restore | In-memory fake only |
 
@@ -263,7 +263,7 @@ Kotlin supplies null safety, data classes, sealed/serializable routes, coroutine
 
 ### Jetpack Compose and Material 3
 
-Compose renders immutable state declaratively, while Material 3 provides the design system. Authentication, Home, Expense, and Income screens are implemented; the existence of shared models does not imply screens for Category, Goal, Recurring Expense, or Receivable.
+Compose renders immutable state declaratively, while Material 3 provides the design system. Authentication, dashboard, Category, Expense, Income, Receivable, Goal summary, Recurring Commitments, Due Items, and More/Preferences screens are implemented. Goal creation and contribution-management controls remain outside the current UI.
 
 ### Single-activity architecture
 
@@ -271,11 +271,11 @@ One `MainActivity` hosts the Compose tree and `AppNavHost`. This centralizes app
 
 ### MVVM
 
-ViewModels coordinate lifecycle-aware state and asynchronous work while repositories isolate persistence. This separation is implemented for Authentication, Expense, and Income; features with only fake repositories do not yet have a complete UI/ViewModel path.
+ViewModels coordinate lifecycle-aware state and asynchronous work while repositories isolate persistence. Authentication, dashboard, Category, Expense, Income, Receivable, and Recurring features use this separation. Goal progress is consumed by the dashboard, while full goal-management UI remains incomplete.
 
 ### Hilt
 
-`FinanceApplication` and `MainActivity` enable Hilt. Modules currently bind Authentication, Category, Exchange Rate, Expense, and Income dependencies. Income and Expense select Firestore repositories; Category selects its fake; no modules claim Firebase persistence for the remaining proposed features.
+`FinanceApplication` and `MainActivity` enable Hilt. Modules bind Authentication, Category, Exchange Rate, Expense, Income, Goal, Receivable, Recurring, reminder coordination, and shared clock/database dependencies. Production finance repositories use Firestore where their modules specify it.
 
 ### Coroutines and Flow
 
@@ -296,10 +296,10 @@ Income data is stored below `users/{uid}/incomes/{incomeId}`. The client uses th
 ### General security architecture
 
 - Firebase Authentication is the identity authority; a UID supplied by UI state or document content is never authentication proof.
-- Firestore client access is scoped below `users/{uid}`, and checked-in rules require `request.auth.uid == uid` for implemented Income and Expense paths.
-- Unmatched rule paths are denied. Proposed Category, Receivable, Recurring, Goal, Contribution, and preference paths are therefore not client-accessible merely because they are documented.
+- Firestore client access is scoped below `users/{uid}`, and checked-in rules require `request.auth.uid == uid` for implemented Category, Income, Expense, Receivable, Recurring, Goal, and Contribution paths.
+- Unmatched rule paths are denied. Preference paths are not client-accessible merely because they are documented.
 - Income additionally verifies owner continuity in its observer, ViewModel callbacks/drafts, authentication generation, and repository commands. The current Expense implementation does not yet claim those Income-specific safeguards.
-- Logout removes protected navigation state. Feature listeners/state must also be cancelled or cleared on UID changes; this behavior is implemented and regression-tested for Income.
+- Logout removes protected navigation state. Feature listeners/state must also be cancelled or cleared on UID changes; Income and Goal observation are account-aware, while recurring reminders additionally carry an owner guard and are cleared during sign-out.
 - Local Firebase caches may retain bytes on disk. Cached data must never be treated as authority for a different UID, and shared-device/cache policy still requires deployment-environment verification.
 - Privileged administration belongs outside the Android client. Rules and Emulator Suite tests are necessary, while deployment evidence must be recorded separately.
 
@@ -311,4 +311,6 @@ UID-scoped Android DataStore remains proposed as the authoritative preference st
 
 - **M02 complete:** shared `Money` model, validation, exact conversion, precision limits, `HALF_UP` rounding, overflow handling, and tests.
 - **M03 complete:** Income list/add/edit/delete UI, automatic/manual exchange rates, validation, historical snapshots, ViewModel behavior, owner-bound Firestore observation/save/delete, mapping, DI, rules, and regression coverage.
+- **R06 implemented:** recurring commitment list/editor, due-item actions, deterministic due dates, pause/resume/cancel, atomic confirmation-to-Expense, skip handling, reminder scheduling, navigation, rules, and focused tests.
+- **R07 verification:** goal ledger regressions, recurring idempotency, restart resynchronization, notification permission, logout/account-switch protection, and cross-feature regression coverage.
 - **Outside M03:** UID-scoped DataStore preferences and completing the remaining finance features. Firebase deployment status must be tracked separately from repository implementation.
