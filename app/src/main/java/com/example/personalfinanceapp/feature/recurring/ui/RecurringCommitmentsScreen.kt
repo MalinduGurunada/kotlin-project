@@ -27,6 +27,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -44,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,6 +75,9 @@ import com.example.personalfinanceapp.ui.theme.SecondaryPaleGreen
 import com.example.personalfinanceapp.ui.theme.SurfaceWhite
 import com.example.personalfinanceapp.ui.theme.TextPrimaryDark
 import com.example.personalfinanceapp.ui.theme.TextSecondaryMuted
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 
 private val RecurringBackground = Color(0xFFF7F9F7)
 private val OverdueBackground = Color(0xFFFFECEA)
@@ -405,6 +411,7 @@ fun RecurringCommitmentEditorScreen(
 ) {
     var categoryExpanded by remember { mutableStateOf(false) }
     var channelExpanded by remember { mutableStateOf(false) }
+    var showDueDatePicker by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -421,6 +428,34 @@ fun RecurringCommitmentEditorScreen(
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             onReminderEnabledChanged(enabled)
+        }
+    }
+    if (showDueDatePicker) {
+        val selectedDate = runCatching { LocalDate.parse(state.dueDate) }.getOrNull()
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = selectedDate?.toUtcEpochMillis()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDueDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis
+                            ?.toLocalDateUtc()
+                            ?.let { onDueDateChanged(it.toString()) }
+                        showDueDatePicker = false
+                    }
+                ) {
+                    Text("Select")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDueDatePicker = false }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
         }
     }
     Scaffold(
@@ -527,13 +562,27 @@ fun RecurringCommitmentEditorScreen(
                 )
             }
             item {
-                OutlinedTextField(
-                    state.dueDate,
-                    onDueDateChanged,
-                    label = { Text("Next scheduled due date (YYYY-MM-DD)") },
-                    singleLine = true,
+                OutlinedButton(
+                    onClick = { showDueDatePicker = true },
                     modifier = Modifier.fillMaxWidth().testTag("commitment_due_date")
-                )
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Text(
+                            "Next scheduled due date",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = TextSecondaryMuted
+                        )
+                        Text(
+                            state.dueDate,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = TextPrimaryDark
+                        )
+                    }
+                    Text("Choose date")
+                }
             }
             item { SectionTitle("Alert Frequency", "Push & in-app reminders") }
             item {
@@ -625,3 +674,9 @@ internal fun PaymentConfirmationDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
+
+private fun LocalDate.toUtcEpochMillis(): Long =
+    atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+
+private fun Long.toLocalDateUtc(): LocalDate =
+    Instant.ofEpochMilli(this).atZone(ZoneOffset.UTC).toLocalDate()
