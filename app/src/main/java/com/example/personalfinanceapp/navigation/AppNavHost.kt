@@ -94,6 +94,11 @@ internal fun startupTarget(state: AuthNavigationState): AppNavigationTarget? = w
     is AuthNavigationState.Authenticated -> AppNavigationTarget.OVERVIEW
 }
 
+internal fun authenticatedAccountChanged(
+    previousUserId: String?,
+    currentUserId: String
+): Boolean = previousUserId != null && previousUserId != currentUserId
+
 internal fun dashboardTarget(destination: NavDestination): AppNavigationTarget = when (destination) {
     NavDestination.OVERVIEW -> AppNavigationTarget.OVERVIEW
     NavDestination.ACTIVITY -> AppNavigationTarget.ACTIVITY
@@ -180,16 +185,21 @@ fun AppNavHost(
 
     var showRecordExpenseDialog by remember { mutableStateOf(false) }
     var authenticatedStartupComplete by remember { mutableStateOf(false) }
+    var activeAuthenticatedUserId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(navigationState, notificationTarget) {
         when (navigationState) {
             AuthNavigationState.Resolving -> Unit
             AuthNavigationState.Unauthenticated -> {
                 authenticatedStartupComplete = false
+                activeAuthenticatedUserId = null
+                showRecordExpenseDialog = false
                 navController.navigateTo(AppNavigationTarget.LOGIN, replaceBackStack = true)
             }
             AuthNavigationState.RegistrationSetup -> {
                 authenticatedStartupComplete = false
+                activeAuthenticatedUserId = null
+                showRecordExpenseDialog = false
                 navController.navigateTo(
                     AppNavigationTarget.REGISTRATION_SETUP,
                     replaceBackStack = true
@@ -199,6 +209,11 @@ fun AppNavHost(
                 onAuthenticated()
                 val authenticatedUserId =
                     (navigationState as AuthNavigationState.Authenticated).userId
+                if (authenticatedAccountChanged(activeAuthenticatedUserId, authenticatedUserId)) {
+                    authenticatedStartupComplete = false
+                    showRecordExpenseDialog = false
+                }
+                activeAuthenticatedUserId = authenticatedUserId
                 val pendingNotification = notificationTarget
                 if (pendingNotification != null) {
                     val decision = FinanceReviewNavigationResolver.resolve(

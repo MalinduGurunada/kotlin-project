@@ -7,6 +7,8 @@ import com.example.personalfinanceapp.core.model.Money
 import com.example.personalfinanceapp.core.model.PaymentChannel
 import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.core.model.SpendingClass
+import com.example.personalfinanceapp.feature.auth.accountScopedData
+import com.example.personalfinanceapp.feature.auth.observeUserIds
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.channels.awaitClose
@@ -29,13 +31,16 @@ class FirestoreExpenseRepository @Inject constructor(
     override fun observeExpenses(
         startDate: LocalDate,
         endDateExclusive: LocalDate
-    ): Flow<List<Expense>> = callbackFlow {
-        val uid = currentUserId
-        if (uid == null) {
-            trySend(emptyList())
-            awaitClose { }
-            return@callbackFlow
+    ): Flow<List<Expense>> = firebaseAuth.observeUserIds()
+        .accountScopedData(emptyList()) { uid ->
+            observeExpensesForOwner(uid, startDate, endDateExclusive)
         }
+
+    private fun observeExpensesForOwner(
+        uid: String,
+        startDate: LocalDate,
+        endDateExclusive: LocalDate
+    ): Flow<List<Expense>> = callbackFlow {
 
         val collectionRef = firestore
             .collection("users")
@@ -43,8 +48,12 @@ class FirestoreExpenseRepository @Inject constructor(
             .collection("expenses")
 
         val listener = collectionRef.addSnapshotListener { snapshot, error ->
-            if (error != null || snapshot == null) {
-                trySend(emptyList())
+            if (error != null) {
+                close(error)
+                return@addSnapshotListener
+            }
+            if (snapshot == null) {
+                close(IllegalStateException("Expense listener returned no snapshot"))
                 return@addSnapshotListener
             }
 

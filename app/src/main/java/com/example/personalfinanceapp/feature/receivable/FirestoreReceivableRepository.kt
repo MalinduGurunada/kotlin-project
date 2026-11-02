@@ -4,21 +4,18 @@ import com.example.personalfinanceapp.core.model.DocumentId
 import com.example.personalfinanceapp.core.model.Receivable
 import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.feature.auth.AuthRepository
+import com.example.personalfinanceapp.feature.auth.accountScopedData
 import com.google.android.gms.tasks.Task
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.nio.CharBuffer
@@ -31,15 +28,11 @@ class FirestoreReceivableRepository @Inject constructor(
     private val firestore: FirebaseFirestore
 ) : ReceivableRepository {
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     override fun observeReceivableSnapshots(): Flow<ReceivableObservationSnapshot> =
         authRepository.observeAuthState()
-            .distinctUntilChanged()
-            .flatMapLatest { uid ->
-                if (uid.isNullOrBlank()) flowOf(ReceivableObservationSnapshot.signedOut())
-                else observeOwner(uid).map { ReceivableObservationSnapshot.forOwner(uid, it) }
+            .accountScopedData(ReceivableObservationSnapshot.signedOut()) { uid ->
+                observeOwner(uid).map { ReceivableObservationSnapshot.forOwner(uid, it) }
             }
-            .buffer(0)
 
     override suspend fun saveReceivable(receivable: Receivable): Result<Unit> =
         saveInternal(null, receivable)
