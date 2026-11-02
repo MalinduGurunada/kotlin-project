@@ -44,9 +44,11 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -115,6 +117,7 @@ fun RecurringCommitmentsScreen(
             onDueDateChanged = viewModel::updateDueDate,
             onReminderEnabledChanged = viewModel::updateReminderEnabled,
             onReminderLeadDaysChanged = viewModel::updateReminderLeadDays,
+            onReminderTimeChanged = viewModel::updateReminderTimeMinutes,
             onSave = viewModel::saveForm
         )
         return
@@ -327,7 +330,9 @@ private fun CommitmentCard(
             }
             if (recurring.reminderEnabled && nextItem != null) {
                 Text(
-                    "Reminder ${recurring.reminderLeadDays} day(s) before • ${recurring.paymentChannel.name}",
+                    "Reminder ${recurring.reminderLeadDays} day(s) before at " +
+                        "${formatReminderTime(recurring.reminderTimeMinutes)} • " +
+                        recurring.paymentChannel.name,
                     color = TextSecondaryMuted
                 )
             }
@@ -407,11 +412,13 @@ fun RecurringCommitmentEditorScreen(
     onDueDateChanged: (String) -> Unit,
     onReminderEnabledChanged: (Boolean) -> Unit,
     onReminderLeadDaysChanged: (Long) -> Unit,
+    onReminderTimeChanged: (Int) -> Unit,
     onSave: () -> Unit
 ) {
     var categoryExpanded by remember { mutableStateOf(false) }
     var channelExpanded by remember { mutableStateOf(false) }
     var showDueDatePicker by remember { mutableStateOf(false) }
+    var showReminderTimePicker by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -458,6 +465,34 @@ fun RecurringCommitmentEditorScreen(
             DatePicker(state = datePickerState)
         }
     }
+    if (showReminderTimePicker) {
+        val timePickerState = rememberTimePickerState(
+            initialHour = state.reminderTimeMinutes / 60,
+            initialMinute = state.reminderTimeMinutes % 60,
+            is24Hour = false
+        )
+        AlertDialog(
+            onDismissRequest = { showReminderTimePicker = false },
+            modifier = Modifier.testTag("commitment_reminder_time_dialog"),
+            title = { Text("Choose reminder time") },
+            text = { TimePicker(state = timePickerState) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onReminderTimeChanged(timePickerState.hour * 60 + timePickerState.minute)
+                        showReminderTimePicker = false
+                    }
+                ) {
+                    Text("Select")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReminderTimePicker = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
     Scaffold(
         modifier = Modifier.testTag("recurring_editor_screen"),
         containerColor = RecurringBackground,
@@ -470,7 +505,10 @@ fun RecurringCommitmentEditorScreen(
         }
     ) { padding ->
         LazyColumn(
-            Modifier.fillMaxSize().padding(padding),
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .testTag("recurring_editor_list"),
             contentPadding = PaddingValues(18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -605,6 +643,31 @@ fun RecurringCommitmentEditorScreen(
                     }
                 }
             }
+            if (state.reminderEnabled) item {
+                OutlinedButton(
+                    onClick = { showReminderTimePicker = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("commitment_reminder_time")
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Text(
+                            "Reminder time",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = TextSecondaryMuted
+                        )
+                        Text(
+                            formatReminderTime(state.reminderTimeMinutes),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = TextPrimaryDark
+                        )
+                    }
+                    Text("Choose time")
+                }
+            }
             state.errorMessage?.let { message -> item { Text(message, color = WarningRed) } }
             item {
                 Button(
@@ -680,3 +743,15 @@ private fun LocalDate.toUtcEpochMillis(): Long =
 
 private fun Long.toLocalDateUtc(): LocalDate =
     Instant.ofEpochMilli(this).atZone(ZoneOffset.UTC).toLocalDate()
+
+internal fun formatReminderTime(minutesAfterMidnight: Int): String {
+    require(minutesAfterMidnight in 0 until 24 * 60)
+    val hour24 = minutesAfterMidnight / 60
+    val minute = minutesAfterMidnight % 60
+    val hour12 = when (val converted = hour24 % 12) {
+        0 -> 12
+        else -> converted
+    }
+    val suffix = if (hour24 < 12) "AM" else "PM"
+    return "$hour12:${minute.toString().padStart(2, '0')} $suffix"
+}

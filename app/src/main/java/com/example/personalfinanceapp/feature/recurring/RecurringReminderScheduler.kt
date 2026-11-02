@@ -151,6 +151,7 @@ class RecurringReminderScheduler @Inject constructor(
                 amountMinor = recurringExpense.expectedAmountMinor,
                 dueDateIso = dueDate.toString(),
                 remindOnIso = dueDate.minusDays(recurringExpense.reminderLeadDays).toString(),
+                reminderTimeMinutes = recurringExpense.reminderTimeMinutes,
                 recurringExpenseId = recurringExpense.id,
                 recurringOccurrenceId = occurrenceId
             )

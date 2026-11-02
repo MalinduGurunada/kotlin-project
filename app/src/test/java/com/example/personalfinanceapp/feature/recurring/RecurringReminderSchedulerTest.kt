@@ -22,7 +22,8 @@ class RecurringReminderSchedulerTest {
             anchorDate = LocalDate.of(2026, 10, 31),
             startDate = LocalDate.of(2026, 10, 31),
             reminderEnabled = true,
-            reminderLeadDays = 2L
+            reminderLeadDays = 2L,
+            reminderTimeMinutes = 18 * 60 + 30
         )
 
         val reminder = RecurringReminderScheduler.buildReminder(
@@ -32,6 +33,7 @@ class RecurringReminderSchedulerTest {
         )
 
         assertEquals("2026-10-29", reminder.remindOnIso)
+        assertEquals(18 * 60 + 30, reminder.reminderTimeMinutes)
         assertEquals("electricity_2026-10-31", reminder.recurringOccurrenceId)
         assertEquals("reminder_electricity_2026-10-31", reminder.id)
     }
@@ -78,6 +80,41 @@ class RecurringReminderSchedulerTest {
         assertEquals(
             Instant.parse("2026-10-31T09:00:00Z").toEpochMilli(),
             triggerAt
+        )
+    }
+
+    @Test
+    fun selectedPmTimeControlsTheAlarmTrigger() {
+        val reminder = reminder(remindOnIso = "2026-10-31").copy(
+            reminderTimeMinutes = 18 * 60 + 30
+        )
+
+        val triggerAt = RecurringReminderSchedulePolicy.triggerAtMillis(
+            reminder = reminder,
+            wasDelivered = false,
+            now = Instant.parse("2026-10-30T12:00:00Z"),
+            zoneId = ZoneOffset.UTC
+        )
+
+        assertEquals(
+            Instant.parse("2026-10-31T18:30:00Z").toEpochMilli(),
+            triggerAt
+        )
+    }
+
+    @Test
+    fun invalidTimeIsNotScheduled() {
+        val reminder = reminder(remindOnIso = "2026-10-31").copy(
+            reminderTimeMinutes = 24 * 60
+        )
+
+        assertNull(
+            RecurringReminderSchedulePolicy.triggerAtMillis(
+                reminder = reminder,
+                wasDelivered = false,
+                now = Instant.parse("2026-10-30T12:00:00Z"),
+                zoneId = ZoneOffset.UTC
+            )
         )
     }
 

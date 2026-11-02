@@ -82,6 +82,14 @@ class FakeRecurringRepository : RecurringRepository {
             )
         }
 
+        if (recurringExpense.reminderTimeMinutes !in 0 until 24 * 60) {
+            return@withLock Result.failure(
+                IllegalArgumentException(
+                    "Reminder time must be within a day"
+                )
+            )
+        }
+
         val current = recurringExpenses.value
 
         val existingIndex = current.indexOfFirst {

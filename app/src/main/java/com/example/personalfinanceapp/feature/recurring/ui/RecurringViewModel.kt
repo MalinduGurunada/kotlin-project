@@ -82,6 +82,7 @@ data class RecurringFormState(
     val dueDate: String,
     val reminderEnabled: Boolean = false,
     val reminderLeadDays: Long = 2L,
+    val reminderTimeMinutes: Int = 9 * 60,
     val status: RecurringStatus = RecurringStatus.ACTIVE,
     val isSaving: Boolean = false,
     val errorMessage: String? = null
@@ -169,6 +170,7 @@ class RecurringViewModel @Inject constructor(
                 recurring.status.name,
                 recurring.reminderEnabled.toString(),
                 recurring.reminderLeadDays.toString(),
+                recurring.reminderTimeMinutes.toString(),
                 pendingDates.joinToString()
             ).joinToString("|")
             if (reminderSignatures[recurring.id] != signature) {
@@ -233,6 +235,7 @@ class RecurringViewModel @Inject constructor(
             dueDate = item.anchorDate.toString(),
             reminderEnabled = item.reminderEnabled,
             reminderLeadDays = item.reminderLeadDays,
+            reminderTimeMinutes = item.reminderTimeMinutes,
             status = item.status
         )
     }
@@ -252,6 +255,9 @@ class RecurringViewModel @Inject constructor(
     fun updateDueDate(value: String) = updateForm { it.copy(dueDate = value, errorMessage = null) }
     fun updateReminderEnabled(value: Boolean) = updateForm { it.copy(reminderEnabled = value) }
     fun updateReminderLeadDays(value: Long) = updateForm { it.copy(reminderLeadDays = value) }
+    fun updateReminderTimeMinutes(value: Int) = updateForm {
+        if (value in 0 until 24 * 60) it.copy(reminderTimeMinutes = value) else it
+    }
 
     fun saveForm() {
         val form = _formState.value ?: return
@@ -282,7 +288,8 @@ class RecurringViewModel @Inject constructor(
             paymentChannel = form.paymentChannel,
             channelLabel = form.channelLabel.trim().takeIf(String::isNotEmpty),
             reminderEnabled = form.reminderEnabled,
-            reminderLeadDays = form.reminderLeadDays
+            reminderLeadDays = form.reminderLeadDays,
+            reminderTimeMinutes = form.reminderTimeMinutes
         )
         _formState.value = form.copy(isSaving = true, errorMessage = null)
         viewModelScope.launch {

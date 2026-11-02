@@ -79,6 +79,7 @@ class RecurringViewModelTest {
         viewModel.updateDueDate("2026-10-31")
         viewModel.updateReminderEnabled(true)
         viewModel.updateReminderLeadDays(0L)
+        viewModel.updateReminderTimeMinutes(18 * 60 + 30)
         viewModel.saveForm()
         dispatcher.scheduler.advanceUntilIdle()
 
@@ -86,6 +87,10 @@ class RecurringViewModelTest {
         assertEquals(
             listOf(LocalDate.of(2026, 10, 31)),
             coordinator.syncCalls.single().dueDates
+        )
+        assertEquals(
+            18 * 60 + 30,
+            coordinator.syncCalls.single().recurringExpense.reminderTimeMinutes
         )
     }
 

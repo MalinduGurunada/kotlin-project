@@ -238,6 +238,9 @@ class FirestoreRecurringRepository @Inject constructor(
             "End date cannot be before start date"
         }
         require(item.reminderLeadDays >= 0L) { "Reminder lead days cannot be negative" }
+        require(item.reminderTimeMinutes in 0 until MINUTES_PER_DAY) {
+            "Reminder time must be within a day"
+        }
     }
 }
 
@@ -256,7 +259,8 @@ private fun RecurringExpense.toFirestoreMap(uid: String): Map<String, Any?> = ha
     "paymentChannel" to paymentChannel.name,
     "channelLabel" to channelLabel?.trim()?.takeIf { it.isNotEmpty() },
     "reminderEnabled" to reminderEnabled,
-    "reminderLeadDays" to reminderLeadDays
+    "reminderLeadDays" to reminderLeadDays,
+    "reminderTimeMinutes" to reminderTimeMinutes
 )
 
 private fun toRecurringExpense(document: DocumentSnapshot): RecurringExpense? = runCatching {
@@ -276,9 +280,14 @@ private fun toRecurringExpense(document: DocumentSnapshot): RecurringExpense? = 
         ),
         channelLabel = document.getString("channelLabel"),
         reminderEnabled = document.getBoolean("reminderEnabled") ?: false,
-        reminderLeadDays = document.getLong("reminderLeadDays") ?: 0L
+        reminderLeadDays = document.getLong("reminderLeadDays") ?: 0L,
+        reminderTimeMinutes = document.getLong("reminderTimeMinutes")?.toInt()
+            ?: DEFAULT_REMINDER_TIME_MINUTES
     )
 }.getOrNull()
+
+private const val MINUTES_PER_DAY = 24 * 60
+private const val DEFAULT_REMINDER_TIME_MINUTES = 9 * 60
 
 private fun toOccurrence(document: DocumentSnapshot): RecurringOccurrence? = runCatching {
     RecurringOccurrence(
