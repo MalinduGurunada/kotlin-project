@@ -68,6 +68,14 @@ class NavigationPolicyTest {
             AppNavigationTarget.RECEIVABLES,
             managementTarget(ManagementDestination.RECEIVABLES)
         )
+        assertEquals(
+            AppNavigationTarget.RECURRING,
+            managementTarget(ManagementDestination.RECURRING)
+        )
+        assertEquals(
+            AppNavigationTarget.DUE_ITEMS,
+            managementTarget(ManagementDestination.DUE_ITEMS)
+        )
     }
 
     @Test
