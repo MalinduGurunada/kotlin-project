@@ -228,7 +228,8 @@ private fun DueItemCard(
             )
             if (item.recurringExpense.reminderEnabled) {
                 Text(
-                    "Alert ${item.recurringExpense.reminderLeadDays} day(s) before",
+                    "Alert ${item.recurringExpense.reminderLeadDays} day(s) before at " +
+                        formatReminderTime(item.recurringExpense.reminderTimeMinutes),
                     color = TextSecondaryMuted
                 )
             }

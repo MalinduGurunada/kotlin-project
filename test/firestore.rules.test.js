@@ -260,6 +260,7 @@ function recurringDocument(userId, recurringId, overrides = {}) {
     channelLabel: "ComBank CASA",
     reminderEnabled: true,
     reminderLeadDays: 2,
+    reminderTimeMinutes: 540,
     ...overrides,
   };
 }
@@ -826,6 +827,18 @@ test("recurring commitments are owner scoped, validated, and never deleted", asy
     setDoc(
       recurringReference(owner, "user-a", "invalid"),
       recurringDocument("user-a", "invalid", { intervalCount: 0 }),
+    ),
+  );
+  await expectDenied(
+    setDoc(
+      recurringReference(owner, "user-a", "invalid-time"),
+      recurringDocument("user-a", "invalid-time", { reminderTimeMinutes: 1440 }),
+    ),
+  );
+  await expectAllowed(
+    setDoc(
+      recurringReference(owner, "user-a", "legacy-time"),
+      withoutField(recurringDocument("user-a", "legacy-time"), "reminderTimeMinutes"),
     ),
   );
 });

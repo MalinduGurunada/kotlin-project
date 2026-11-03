@@ -78,6 +78,10 @@ class FirestoreRecurringRepositoryEmulatorTest {
         seedCategory(userId)
         val recurring = recurringExpense()
         assertTrue(repository.saveRecurringExpense(recurring).isSuccess)
+        val storedRecurring = firestore.document("users/$userId/recurringExpenses/${recurring.id}")
+            .get(Source.SERVER)
+            .awaitRecurringTask()
+        assertEquals(18L * 60L + 30L, storedRecurring.getLong("reminderTimeMinutes"))
         val dueDate = LocalDate.of(2026, 10, 31)
 
         val first = repository.confirmPayment(
@@ -161,7 +165,8 @@ class FirestoreRecurringRepositoryEmulatorTest {
         anchorDate = LocalDate.of(2026, 10, 31),
         startDate = LocalDate.of(2026, 10, 31),
         reminderEnabled = true,
-        reminderLeadDays = 2L
+        reminderLeadDays = 2L,
+        reminderTimeMinutes = 18 * 60 + 30
     )
 
     private fun suffix() = UUID.randomUUID().toString().replace("-", "")

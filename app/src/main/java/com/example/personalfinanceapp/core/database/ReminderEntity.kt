@@ -8,6 +8,7 @@ data class ReminderEntity(
     val amountMinor: Long,
     val dueDateIso: String,
     val remindOnIso: String = dueDateIso,
+    val reminderTimeMinutes: Int = 9 * 60,
     val isDelivered: Boolean = false,
     val reminderType: String = "RECURRING_BILL",
     val recurringExpenseId: String? = null,

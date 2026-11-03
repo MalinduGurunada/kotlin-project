@@ -36,7 +36,8 @@ data class RecurringExpense(
     val paymentChannel: PaymentChannel = PaymentChannel.BANK,
     val channelLabel: String? = null,
     val reminderEnabled: Boolean = false,
-    val reminderLeadDays: Long = 0L
+    val reminderLeadDays: Long = 0L,
+    val reminderTimeMinutes: Int = 9 * 60
 ) {
     val active: Boolean
         get() = status == RecurringStatus.ACTIVE

@@ -53,7 +53,7 @@ service cloud.firestore {
                'id', 'userId', 'title', 'categoryId', 'expectedAmountMinor',
                'frequency', 'intervalCount', 'anchorDate', 'startDate',
                'endDate', 'status', 'paymentChannel', 'channelLabel',
-               'reminderEnabled', 'reminderLeadDays'
+               'reminderEnabled', 'reminderLeadDays', 'reminderTimeMinutes'
              ]) &&
              data.id == recurringId &&
              data.userId == userId &&
@@ -71,7 +71,11 @@ service cloud.firestore {
              (data.channelLabel == null || data.channelLabel is string) &&
              data.reminderEnabled is bool &&
              data.reminderLeadDays is int &&
-             data.reminderLeadDays >= 0 && data.reminderLeadDays <= 365;
+             data.reminderLeadDays >= 0 && data.reminderLeadDays <= 365 &&
+             (!('reminderTimeMinutes' in data) ||
+               (data.reminderTimeMinutes is int &&
+                data.reminderTimeMinutes >= 0 &&
+                data.reminderTimeMinutes < 1440));
     }
 
     function isValidRecurringOccurrenceData(data, userId, occurrenceId) {

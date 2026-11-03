@@ -334,6 +334,7 @@ The following sections preserve the model-aligned design for features without Fi
 | `channelLabel` | string/null | Yes | Optional account/channel label |
 | `reminderEnabled` | boolean | Yes | Reminder preference |
 | `reminderLeadDays` | integer | Yes | Non-negative number of days |
+| `reminderTimeMinutes` | integer | No | Local minutes after midnight (`0..1439`); missing legacy values default to `540` (9:00 AM) |
 
 **Relationships:** `categoryId` refers to a user-owned Category. Confirming an occurrence atomically creates a linked Expense.
 
@@ -355,7 +356,8 @@ The following sections preserve the model-aligned design for features without Fi
   "paymentChannel": "BANK",
   "channelLabel": "ComBank CASA",
   "reminderEnabled": true,
-  "reminderLeadDays": 2
+  "reminderLeadDays": 2,
+  "reminderTimeMinutes": 1110
 }
 ```
 
