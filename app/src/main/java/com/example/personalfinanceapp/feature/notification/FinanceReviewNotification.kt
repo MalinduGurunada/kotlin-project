@@ -34,12 +34,27 @@ data class FinanceReviewPayload(
         }
 
         fun fromIntent(intent: Intent?): FinanceReviewPayload? {
-            if (intent?.getStringExtra(EXTRA_TYPE) != TYPE_FINANCE_REVIEW) return null
-            val userId = intent.getStringExtra(EXTRA_USER_ID)?.trim().validIdentifier()
-                ?: return null
-            val reviewId = intent.getStringExtra(EXTRA_REVIEW_ID)?.trim().validIdentifier()
-                ?: return null
-            return FinanceReviewPayload(userId, reviewId, "", "")
+            intent ?: return null
+            if (intent.getStringExtra(EXTRA_TYPE) == TYPE_FINANCE_REVIEW) {
+                val userId = intent.getStringExtra(EXTRA_USER_ID)?.trim().validIdentifier()
+                    ?: return null
+                val reviewId = intent.getStringExtra(EXTRA_REVIEW_ID)?.trim().validIdentifier()
+                    ?: return null
+                return FinanceReviewPayload(userId, reviewId, "", "")
+            }
+
+            // Notification messages displayed by FCM while the app is backgrounded
+            // place Console custom-data values directly in the launcher intent.
+            return parse(
+                mapOf(
+                    "type" to intent.getStringExtra("type").orEmpty(),
+                    "destination" to intent.getStringExtra("destination").orEmpty(),
+                    "userId" to intent.getStringExtra("userId").orEmpty(),
+                    "reviewId" to intent.getStringExtra("reviewId").orEmpty(),
+                    "title" to intent.getStringExtra("title").orEmpty(),
+                    "body" to intent.getStringExtra("body").orEmpty()
+                )
+            )
         }
 
         private fun String?.validIdentifier(): String? =
@@ -73,9 +88,10 @@ object NotificationPermissionPolicy {
         sdkInt: Int = Build.VERSION.SDK_INT,
         isGranted: Boolean,
         wasRequested: Boolean,
-        isAuthenticated: Boolean
+        isAuthenticated: Boolean,
+        isUserInitiated: Boolean = false
     ): Boolean = sdkInt >= Build.VERSION_CODES.TIRAMISU &&
         !isGranted &&
-        !wasRequested &&
+        (!wasRequested || isUserInitiated) &&
         isAuthenticated
 }

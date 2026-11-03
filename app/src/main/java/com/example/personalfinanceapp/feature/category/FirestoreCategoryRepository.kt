@@ -3,6 +3,8 @@ package com.example.personalfinanceapp.feature.category
 import com.example.personalfinanceapp.core.model.Category
 import com.example.personalfinanceapp.core.model.DocumentId
 import com.example.personalfinanceapp.core.model.SpendingClass
+import com.example.personalfinanceapp.feature.auth.accountScopedData
+import com.example.personalfinanceapp.feature.auth.observeUserIds
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.channels.awaitClose
@@ -24,17 +26,17 @@ class FirestoreCategoryRepository @Inject constructor(
     private fun getCategoryCollection(uid: String) =
         firestore.collection("users").document(uid).collection("categories")
 
-    override fun observeCategories(): Flow<List<Category>> = callbackFlow {
-        val uid = currentUserId
-        if (uid == null) {
-            trySend(emptyList())
-            awaitClose { }
-            return@callbackFlow
-        }
+    override fun observeCategories(): Flow<List<Category>> = firebaseAuth.observeUserIds()
+        .accountScopedData(emptyList(), ::observeCategoriesForOwner)
 
+    private fun observeCategoriesForOwner(uid: String): Flow<List<Category>> = callbackFlow {
         val listener = getCategoryCollection(uid).addSnapshotListener { snapshot, error ->
-            if (error != null || snapshot == null) {
-                trySend(emptyList())
+            if (error != null) {
+                close(error)
+                return@addSnapshotListener
+            }
+            if (snapshot == null) {
+                close(IllegalStateException("Category listener returned no snapshot"))
                 return@addSnapshotListener
             }
 

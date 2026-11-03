@@ -47,6 +47,7 @@ import com.example.personalfinanceapp.feature.receivable.ui.ReceivableViewModel
 import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigationDecision
 import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigationResolver
 import com.example.personalfinanceapp.feature.notification.FinanceReviewPayload
+import com.example.personalfinanceapp.feature.notification.NotificationPreferencesViewModel
 import com.example.personalfinanceapp.feature.recurring.ui.DueItemsScreen
 import com.example.personalfinanceapp.feature.recurring.ui.RecurringCommitmentsScreen
 import kotlinx.coroutines.launch
@@ -92,6 +93,11 @@ internal fun startupTarget(state: AuthNavigationState): AppNavigationTarget? = w
     AuthNavigationState.RegistrationSetup -> AppNavigationTarget.REGISTRATION_SETUP
     is AuthNavigationState.Authenticated -> AppNavigationTarget.OVERVIEW
 }
+
+internal fun authenticatedAccountChanged(
+    previousUserId: String?,
+    currentUserId: String
+): Boolean = previousUserId != null && previousUserId != currentUserId
 
 internal fun dashboardTarget(destination: NavDestination): AppNavigationTarget = when (destination) {
     NavDestination.OVERVIEW -> AppNavigationTarget.OVERVIEW
@@ -166,7 +172,8 @@ fun AppNavHost(
     authViewModel: AuthViewModel = hiltViewModel(),
     notificationTarget: FinanceReviewPayload? = null,
     onNotificationTargetConsumed: () -> Unit = {},
-    onAuthenticated: () -> Unit = {}
+    onAuthenticated: () -> Unit = {},
+    onNotificationPermissionRequested: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val navigationState by authViewModel.navigationState.collectAsState()
@@ -178,16 +185,21 @@ fun AppNavHost(
 
     var showRecordExpenseDialog by remember { mutableStateOf(false) }
     var authenticatedStartupComplete by remember { mutableStateOf(false) }
+    var activeAuthenticatedUserId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(navigationState, notificationTarget) {
         when (navigationState) {
             AuthNavigationState.Resolving -> Unit
             AuthNavigationState.Unauthenticated -> {
                 authenticatedStartupComplete = false
+                activeAuthenticatedUserId = null
+                showRecordExpenseDialog = false
                 navController.navigateTo(AppNavigationTarget.LOGIN, replaceBackStack = true)
             }
             AuthNavigationState.RegistrationSetup -> {
                 authenticatedStartupComplete = false
+                activeAuthenticatedUserId = null
+                showRecordExpenseDialog = false
                 navController.navigateTo(
                     AppNavigationTarget.REGISTRATION_SETUP,
                     replaceBackStack = true
@@ -197,6 +209,11 @@ fun AppNavHost(
                 onAuthenticated()
                 val authenticatedUserId =
                     (navigationState as AuthNavigationState.Authenticated).userId
+                if (authenticatedAccountChanged(activeAuthenticatedUserId, authenticatedUserId)) {
+                    authenticatedStartupComplete = false
+                    showRecordExpenseDialog = false
+                }
+                activeAuthenticatedUserId = authenticatedUserId
                 val pendingNotification = notificationTarget
                 if (pendingNotification != null) {
                     val decision = FinanceReviewNavigationResolver.resolve(
@@ -298,9 +315,17 @@ fun AppNavHost(
         composable<Home> {
             val dashboardViewModel: DashboardViewModel = hiltViewModel()
             val uiState by dashboardViewModel.uiState.collectAsState()
+            val notificationPreferencesViewModel: NotificationPreferencesViewModel = hiltViewModel()
+            val notificationsEnabled by
+                notificationPreferencesViewModel.notificationsEnabled.collectAsState()
 
             MoreScreen(
                 userName = uiState.userName,
+                notificationsEnabled = notificationsEnabled,
+                onNotificationsEnabledChange = { enabled ->
+                    notificationPreferencesViewModel.setNotificationsEnabled(enabled)
+                    if (enabled) onNotificationPermissionRequested()
+                },
                 onCategoriesClick = {
                     navController.navigateTo(
                         managementTarget(ManagementDestination.CATEGORIES)

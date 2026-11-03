@@ -10,6 +10,7 @@ import javax.inject.Inject
 class FinanceMessagingService : FirebaseMessagingService() {
     @Inject lateinit var auth: FirebaseAuth
     @Inject lateinit var notificationHelper: FinanceNotificationHelper
+    @Inject lateinit var notificationPreferenceStore: NotificationPreferenceStore
     @Inject lateinit var tokenSyncCoordinator: FcmTokenSyncCoordinator
 
     override fun onRegistered(installationId: String) {
@@ -18,7 +19,12 @@ class FinanceMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val payload = FinanceReviewPayload.parse(message.data) ?: return
-        if (auth.currentUser?.uid != payload.userId) return
+        if (!NotificationDeliveryPolicy.shouldDisplay(
+                authenticatedUserId = auth.currentUser?.uid,
+                payloadUserId = payload.userId,
+                notificationsEnabled = notificationPreferenceStore.isEnabled(payload.userId)
+            )
+        ) return
         notificationHelper.show(payload)
     }
 }

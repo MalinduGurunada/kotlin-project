@@ -8,6 +8,8 @@ import com.example.personalfinanceapp.core.model.RecurringOccurrence
 import com.example.personalfinanceapp.core.model.RecurringOccurrenceStatus
 import com.example.personalfinanceapp.core.model.RecurringStatus
 import com.example.personalfinanceapp.core.model.SpendingClass
+import com.example.personalfinanceapp.feature.auth.accountScopedData
+import com.example.personalfinanceapp.feature.auth.observeUserIds
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
@@ -28,13 +30,10 @@ class FirestoreRecurringRepository @Inject constructor(
     private val firebaseAuth: FirebaseAuth
 ) : RecurringRepository {
 
-    override fun observeRecurringExpenses(): Flow<List<RecurringExpense>> = callbackFlow {
-        val uid = firebaseAuth.currentUser?.uid
-        if (uid == null) {
-            trySend(emptyList())
-            awaitClose { }
-            return@callbackFlow
-        }
+    override fun observeRecurringExpenses(): Flow<List<RecurringExpense>> =
+        firebaseAuth.observeUserIds().accountScopedData(emptyList(), ::observeRecurringForOwner)
+
+    private fun observeRecurringForOwner(uid: String): Flow<List<RecurringExpense>> = callbackFlow {
         val listener = recurringCollection(uid).addSnapshotListener { snapshot, error ->
             if (error != null || snapshot == null) {
                 close(error ?: IllegalStateException("Unable to load recurring commitments"))
@@ -45,13 +44,10 @@ class FirestoreRecurringRepository @Inject constructor(
         awaitClose { listener.remove() }
     }.distinctUntilChanged()
 
-    override fun observeOccurrences(): Flow<List<RecurringOccurrence>> = callbackFlow {
-        val uid = firebaseAuth.currentUser?.uid
-        if (uid == null) {
-            trySend(emptyList())
-            awaitClose { }
-            return@callbackFlow
-        }
+    override fun observeOccurrences(): Flow<List<RecurringOccurrence>> =
+        firebaseAuth.observeUserIds().accountScopedData(emptyList(), ::observeOccurrencesForOwner)
+
+    private fun observeOccurrencesForOwner(uid: String): Flow<List<RecurringOccurrence>> = callbackFlow {
         val listener = occurrenceCollection(uid).addSnapshotListener { snapshot, error ->
             if (error != null || snapshot == null) {
                 close(error ?: IllegalStateException("Unable to load recurring occurrences"))

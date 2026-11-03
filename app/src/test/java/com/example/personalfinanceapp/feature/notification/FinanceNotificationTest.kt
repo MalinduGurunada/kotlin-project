@@ -1,12 +1,30 @@
 package com.example.personalfinanceapp.feature.notification
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FinanceNotificationTest {
+    @Test
+    fun fcmStartupOperationsAreDispatchedOffTheCallingThread() {
+        val callingThread = Thread.currentThread()
+        val completed = CountDownLatch(1)
+        var operationThread: Thread? = null
+
+        FcmOperationExecutor().execute {
+            operationThread = Thread.currentThread()
+            completed.countDown()
+        }
+
+        assertTrue("FCM operation did not complete", completed.await(5, TimeUnit.SECONDS))
+        assertNotSame(callingThread, operationThread)
+    }
+
     @Test
     fun validFinanceReviewPayloadIsParsed() {
         val payload = FinanceReviewPayload.parse(
@@ -72,6 +90,21 @@ class FinanceNotificationTest {
         assertFalse(NotificationPermissionPolicy.shouldRequest(33, true, false, true))
         assertFalse(NotificationPermissionPolicy.shouldRequest(33, false, true, true))
         assertFalse(NotificationPermissionPolicy.shouldRequest(33, false, false, false))
+        assertTrue(NotificationPermissionPolicy.shouldRequest(
+            sdkInt = 33,
+            isGranted = false,
+            wasRequested = true,
+            isAuthenticated = true,
+            isUserInitiated = true
+        ))
+    }
+
+    @Test
+    fun deliveryRequiresMatchingAccountAndEnabledPreference() {
+        assertTrue(NotificationDeliveryPolicy.shouldDisplay("user-a", "user-a", true))
+        assertFalse(NotificationDeliveryPolicy.shouldDisplay("user-a", "user-a", false))
+        assertFalse(NotificationDeliveryPolicy.shouldDisplay("user-b", "user-a", true))
+        assertFalse(NotificationDeliveryPolicy.shouldDisplay(null, "user-a", true))
     }
 
     @Test

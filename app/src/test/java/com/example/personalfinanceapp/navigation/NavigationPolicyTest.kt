@@ -3,7 +3,9 @@ package com.example.personalfinanceapp.navigation
 import com.example.personalfinanceapp.feature.auth.ui.AuthNavigationState
 import com.example.personalfinanceapp.feature.dashboard.ui.NavDestination
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NavigationPolicyTest {
@@ -22,6 +24,13 @@ class NavigationPolicyTest {
             AppNavigationTarget.LOGIN,
             startupTarget(AuthNavigationState.Unauthenticated)
         )
+    }
+
+    @Test
+    fun authenticatedAccountReplacementRequiresSessionUiReset() {
+        assertFalse(authenticatedAccountChanged(null, "user-a"))
+        assertFalse(authenticatedAccountChanged("user-a", "user-a"))
+        assertTrue(authenticatedAccountChanged("user-a", "user-b"))
     }
 
     @Test
