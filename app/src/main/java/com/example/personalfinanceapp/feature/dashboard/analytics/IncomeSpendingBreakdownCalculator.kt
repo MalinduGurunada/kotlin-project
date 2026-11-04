@@ -2,11 +2,13 @@ package com.example.personalfinanceapp.feature.dashboard.analytics
 
 import com.example.personalfinanceapp.core.model.Expense
 import com.example.personalfinanceapp.core.model.Income
+import com.example.personalfinanceapp.core.model.IncomeEntryKind
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.feature.income.CryptoResultCalculator
 import com.example.personalfinanceapp.feature.income.signedBaseAmountMinor
+import java.math.BigInteger
 import java.time.LocalDate
 
 data class SourceBreakdownItem(
@@ -22,12 +24,22 @@ data class CategoryBreakdownItem(
     val percentage: Int
 )
 
+enum class CryptoResultState(val label: String) {
+    NO_ACTIVITY("NO ACTIVITY"),
+    BREAK_EVEN("BREAK EVEN"),
+    GAIN("REALIZED NET GAIN"),
+    LOSS("REALIZED NET LOSS")
+}
+
 data class CryptoYtdResult(
     val totalGainLkrMinor: Long = 0L,
     val totalLossLkrMinor: Long = 0L,
     val netPnlLkrMinor: Long = 0L,
-    val pnlLabel: String = "REALIZED GAIN"
-)
+    val state: CryptoResultState = CryptoResultState.NO_ACTIVITY
+) {
+    val pnlLabel: String
+        get() = state.label
+}
 
 data class MonthlyAnalyticsBreakdown(
     val incomeSourceBreakdown: List<SourceBreakdownItem> = emptyList(),
@@ -46,34 +58,49 @@ object IncomeSpendingBreakdownCalculator {
         currentMonthIncomes: List<Income>,
         currentMonthExpenses: List<Expense>,
         previousMonthExpenses: List<Expense> = emptyList(),
-        yearToDateCryptoIncomes: List<Income> = emptyList()
+        yearToDateCryptoIncomes: List<Income> = emptyList(),
+        categoryNamesById: Map<String, String> = emptyMap()
     ): MonthlyAnalyticsBreakdown {
 
         // Income Source Breakdown
-        val totalIncomeMinor = currentMonthIncomes.fold(0L) { total, income ->
-            Math.addExact(total, income.signedBaseAmountMinor())
+        val sourceTotals = currentMonthIncomes.groupBy { it.source }
+            .map { (source, items) ->
+                source to items.fold(0L) { total, income ->
+                    Math.addExact(total, income.signedBaseAmountMinor())
+                }
+            }
+        val totalIncomeActivity = sourceTotals.fold(BigInteger.ZERO) { total, (_, amount) ->
+            total.add(BigInteger.valueOf(amount).abs())
         }
-        val sourceBreakdown = if (totalIncomeMinor > 0) {
-            currentMonthIncomes.groupBy { it.source }
-                .map { (source, items) ->
-                    val sum = items.fold(0L) { total, income ->
-                        Math.addExact(total, income.signedBaseAmountMinor())
-                    }
-                    val pct = ((sum.toDouble() / totalIncomeMinor) * 100).toInt()
-                    SourceBreakdownItem(source.name, sum, pct)
-                }.sortedByDescending { it.totalLkrMinor }
+        val sourceBreakdown = if (totalIncomeActivity.signum() > 0) {
+            sourceTotals.map { (source, sum) ->
+                SourceBreakdownItem(
+                    sourceName = source.name,
+                    totalLkrMinor = sum,
+                    percentage = percentageOf(BigInteger.valueOf(sum).abs(), totalIncomeActivity)
+                )
+            }.sortedByDescending { BigInteger.valueOf(it.totalLkrMinor).abs() }
         } else {
             emptyList()
         }
 
         // Expense Category Breakdown
-        val totalExpenseMinor = currentMonthExpenses.sumOf { it.money.baseAmountMinor }
+        val totalExpenseMinor = currentMonthExpenses.fold(0L) { total, expense ->
+            Math.addExact(total, expense.money.baseAmountMinor)
+        }
         val categoryBreakdown = if (totalExpenseMinor > 0) {
             currentMonthExpenses.groupBy { it.categoryId }
                 .map { (catId, items) ->
-                    val sum = items.sumOf { it.money.baseAmountMinor }
-                    val catName = items.firstOrNull()?.categoryNameSnapshot ?: catId
-                    val pct = ((sum.toDouble() / totalExpenseMinor) * 100).toInt()
+                    val sum = items.fold(0L) { total, expense ->
+                        Math.addExact(total, expense.money.baseAmountMinor)
+                    }
+                    val catName = categoryNamesById[catId]
+                        ?: items.firstOrNull()?.categoryNameSnapshot?.takeIf(String::isNotBlank)
+                        ?: catId
+                    val pct = percentageOf(
+                        BigInteger.valueOf(sum),
+                        BigInteger.valueOf(totalExpenseMinor)
+                    )
                     CategoryBreakdownItem(catId, catName, sum, pct)
                 }.sortedByDescending { it.totalLkrMinor }
         } else {
@@ -83,31 +110,40 @@ object IncomeSpendingBreakdownCalculator {
         // Committed vs Discretionary Spending Ratio
         val committedSum = currentMonthExpenses
             .filter { it.spendingClass == SpendingClass.COMMITTED }
-            .sumOf { it.money.baseAmountMinor }
+            .fold(0L) { total, expense -> Math.addExact(total, expense.money.baseAmountMinor) }
         val discretionarySum = currentMonthExpenses
             .filter { it.spendingClass == SpendingClass.DISCRETIONARY }
-            .sumOf { it.money.baseAmountMinor }
+            .fold(0L) { total, expense -> Math.addExact(total, expense.money.baseAmountMinor) }
 
         val committedPct = if (totalExpenseMinor > 0) {
-            ((committedSum.toDouble() / totalExpenseMinor) * 100).toInt()
+            percentageOf(
+                BigInteger.valueOf(committedSum),
+                BigInteger.valueOf(totalExpenseMinor)
+            )
         } else 0
         val discretionaryPct = if (totalExpenseMinor > 0) {
             100 - committedPct
         } else 0
 
         // Month-over-Month Comparison
-        val prevExpenseMinor = previousMonthExpenses.sumOf { it.money.baseAmountMinor }
+        val prevExpenseMinor = previousMonthExpenses.fold(0L) { total, expense ->
+            Math.addExact(total, expense.money.baseAmountMinor)
+        }
         val momChangePct = if (prevExpenseMinor > 0) {
-            ((totalExpenseMinor - prevExpenseMinor).toDouble() / prevExpenseMinor) * 100.0
+            (Math.subtractExact(totalExpenseMinor, prevExpenseMinor).toDouble() /
+                prevExpenseMinor.toDouble()) * 100.0
         } else 0.0
 
         // Crypto Year-to-Date Results
-        val ytdBounds = yearToDateCryptoIncomes.map { it.occurredDate }
+        val cryptoActivity = yearToDateCryptoIncomes.filter {
+            it.source == IncomeSource.CRYPTO && it.entryKind == IncomeEntryKind.REALIZED_PNL
+        }
+        val ytdBounds = cryptoActivity.map { it.occurredDate }
         val cryptoTotals = if (ytdBounds.isEmpty()) {
             com.example.personalfinanceapp.feature.income.CryptoResultTotals()
         } else {
             CryptoResultCalculator.calculate(
-                incomes = yearToDateCryptoIncomes,
+                incomes = cryptoActivity,
                 startDateInclusive = ytdBounds.minOrNull()!!,
                 endDateExclusive = ytdBounds.maxOrNull()!!.plusDays(1)
             )
@@ -115,7 +151,12 @@ object IncomeSpendingBreakdownCalculator {
         val gainMinor = cryptoTotals.totalGainLkrMinor
         val lossMinor = cryptoTotals.totalLossLkrMinor
         val netCryptoPnl = cryptoTotals.netLkrMinor
-        val cryptoLabel = if (netCryptoPnl >= 0) "REALIZED NET GAIN" else "REALIZED NET LOSS"
+        val cryptoState = when {
+            cryptoActivity.isEmpty() -> CryptoResultState.NO_ACTIVITY
+            netCryptoPnl > 0L -> CryptoResultState.GAIN
+            netCryptoPnl < 0L -> CryptoResultState.LOSS
+            else -> CryptoResultState.BREAK_EVEN
+        }
 
         return MonthlyAnalyticsBreakdown(
             incomeSourceBreakdown = sourceBreakdown,
@@ -129,8 +170,14 @@ object IncomeSpendingBreakdownCalculator {
                 totalGainLkrMinor = gainMinor,
                 totalLossLkrMinor = lossMinor,
                 netPnlLkrMinor = netCryptoPnl,
-                pnlLabel = cryptoLabel
+                state = cryptoState
             )
         )
+    }
+
+    private fun percentageOf(part: BigInteger, total: BigInteger): Int = if (total.signum() > 0) {
+        part.multiply(BigInteger.valueOf(100L)).divide(total).toInt()
+    } else {
+        0
     }
 }

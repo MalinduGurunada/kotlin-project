@@ -30,6 +30,7 @@ import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
 import com.example.personalfinanceapp.feature.category.ui.CategoryScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.ActivityScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.DashboardViewModel
+import com.example.personalfinanceapp.feature.dashboard.ui.IncomeSpendingBreakdownScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.MoreScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.NavDestination
 import com.example.personalfinanceapp.feature.dashboard.ui.OverviewScreen
@@ -333,6 +334,9 @@ fun AppNavHost(
                         managementTarget(ManagementDestination.CATEGORIES)
                     )
                 },
+                onFinancialSummariesClick = {
+                    navController.navigate(FinancialSummaries)
+                },
                 onExpensesClick = {
                     navController.navigateTo(
                         managementTarget(ManagementDestination.EXPENSES)
@@ -625,6 +629,17 @@ fun AppNavHost(
 
         composable<DueItems> {
             DueItemsScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable<FinancialSummaries> {
+            val dashboardViewModel: DashboardViewModel = hiltViewModel()
+            val summaryUiState by dashboardViewModel.financialSummaryState.collectAsState()
+
+            IncomeSpendingBreakdownScreen(
+                uiState = summaryUiState,
+                onPeriodSelected = dashboardViewModel::selectFinancialSummaryPeriod,
+                onBackClicked = { navController.popBackStack() }
+            )
         }
     }
 }

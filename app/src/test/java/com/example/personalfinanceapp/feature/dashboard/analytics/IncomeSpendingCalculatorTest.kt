@@ -114,6 +114,62 @@ class IncomeSpendingCalculatorTest {
         )
 
         assertEquals(100_000_00L, breakdown.cryptoYtdResult.netPnlLkrMinor)
+        assertEquals(CryptoResultState.GAIN, breakdown.cryptoYtdResult.state)
         assertEquals("REALIZED NET GAIN", breakdown.cryptoYtdResult.pnlLabel)
+    }
+
+    @Test
+    fun cryptoSummaryDistinguishesNoActivityBreakEvenGainAndLoss() {
+        fun result(vararg incomes: Income) = IncomeSpendingBreakdownCalculator.calculateBreakdown(
+            currentMonthIncomes = emptyList(),
+            currentMonthExpenses = emptyList(),
+            yearToDateCryptoIncomes = incomes.toList()
+        ).cryptoYtdResult
+
+        assertEquals(CryptoResultState.NO_ACTIVITY, result().state)
+        assertEquals(
+            CryptoResultState.BREAK_EVEN,
+            result(
+                createIncome("gain", IncomeSource.CRYPTO, 100_00L, PnlDirection.GAIN),
+                createIncome("loss", IncomeSource.CRYPTO, 100_00L, PnlDirection.LOSS)
+            ).state
+        )
+        assertEquals(
+            CryptoResultState.GAIN,
+            result(createIncome("gain-only", IncomeSource.CRYPTO, 1_00L, PnlDirection.GAIN)).state
+        )
+        assertEquals(
+            CryptoResultState.LOSS,
+            result(createIncome("loss-only", IncomeSource.CRYPTO, 1_00L, PnlDirection.LOSS)).state
+        )
+    }
+
+    @Test
+    fun sourceBreakdownIncludesRealisedLossMagnitudeAndUsesCurrentCategoryName() {
+        val salary = createIncome("salary", IncomeSource.SALARY, 300_00L)
+        val cryptoLoss = createIncome(
+            "crypto-loss",
+            IncomeSource.CRYPTO,
+            100_00L,
+            PnlDirection.LOSS
+        )
+        val expense = createExpense(
+            id = "expense",
+            categoryId = "food",
+            amountMinor = 50_00L,
+            spendingClass = SpendingClass.DISCRETIONARY
+        ).copy(categoryNameSnapshot = "Old food name")
+
+        val breakdown = IncomeSpendingBreakdownCalculator.calculateBreakdown(
+            currentMonthIncomes = listOf(salary, cryptoLoss),
+            currentMonthExpenses = listOf(expense),
+            categoryNamesById = mapOf("food" to "Food & Dining")
+        )
+
+        assertEquals(75, breakdown.incomeSourceBreakdown[0].percentage)
+        assertEquals(IncomeSource.CRYPTO.name, breakdown.incomeSourceBreakdown[1].sourceName)
+        assertEquals(-100_00L, breakdown.incomeSourceBreakdown[1].totalLkrMinor)
+        assertEquals(25, breakdown.incomeSourceBreakdown[1].percentage)
+        assertEquals("Food & Dining", breakdown.expenseCategoryBreakdown.single().categoryName)
     }
 }
