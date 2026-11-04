@@ -4,6 +4,7 @@ import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.Income
 import com.example.personalfinanceapp.core.model.IncomeEntryKind
 import com.example.personalfinanceapp.core.model.IncomeSource
+import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.core.money.MoneyConverter
 import java.math.BigDecimal
@@ -18,8 +19,18 @@ object IncomeValidator {
 
             val money = income.money
 
-            require(money.baseAmountMinor > 0L) {
-                "Income amount must be greater than zero"
+            val cryptoCalculation = income.cryptoRealizedDetails?.let { details ->
+                CryptoRealizedCalculator.calculate(details).getOrElse { throw it }
+            }
+
+            if (cryptoCalculation == null) {
+                require(money.baseAmountMinor > 0L) {
+                    "Income amount must be greater than zero"
+                }
+            } else {
+                require(money.baseAmountMinor >= 0L) {
+                    "Realised result cannot store a negative magnitude"
+                }
             }
 
             val recalculatedMoney = when (money.originalCurrency) {
@@ -48,18 +59,34 @@ object IncomeValidator {
                         "LKR exchange rate must be 1"
                     }
 
-                    MoneyConverter.fromLkr(
-                        amountInput = money.originalAmountDecimal,
-                        transactionDate = money.rateDate
-                    ).getOrElse { throw it }
+                    if (cryptoCalculation == null) {
+                        MoneyConverter.fromLkr(
+                            amountInput = money.originalAmountDecimal,
+                            transactionDate = money.rateDate
+                        ).getOrElse { throw it }
+                    } else {
+                        MoneyConverter.fromLkrNonNegative(
+                            amountInput = money.originalAmountDecimal,
+                            transactionDate = money.rateDate
+                        ).getOrElse { throw it }
+                    }
                 }
 
-                CurrencyCode.USD -> MoneyConverter.fromUsd(
-                    amountInput = money.originalAmountDecimal,
-                    rateLkrPerUsdInput = money.rateLkrPerUnitDecimal,
-                    rateSource = money.rateSource,
-                    rateDate = money.rateDate
-                ).getOrElse { throw it }
+                CurrencyCode.USD -> if (cryptoCalculation == null) {
+                    MoneyConverter.fromUsd(
+                        amountInput = money.originalAmountDecimal,
+                        rateLkrPerUsdInput = money.rateLkrPerUnitDecimal,
+                        rateSource = money.rateSource,
+                        rateDate = money.rateDate
+                    ).getOrElse { throw it }
+                } else {
+                    MoneyConverter.fromUsdNonNegative(
+                        amountInput = money.originalAmountDecimal,
+                        rateLkrPerUsdInput = money.rateLkrPerUnitDecimal,
+                        rateSource = money.rateSource,
+                        rateDate = money.rateDate
+                    ).getOrElse { throw it }
+                }
             }
 
             require(
@@ -78,6 +105,22 @@ object IncomeValidator {
                 require(income.pnlDirection != null) {
                     "Select whether the crypto transaction is a gain or loss"
                 }
+
+                if (cryptoCalculation != null) {
+                    require(income.pnlDirection == cryptoCalculation.direction) {
+                        "Crypto realised result direction does not match proceeds, cost basis, and fees"
+                    }
+                    require(
+                        money.originalAmountDecimal.toBigDecimalOrNull()
+                            ?.compareTo(cryptoCalculation.signedResultOriginal.abs()) == 0
+                    ) {
+                        "Crypto realised result amount does not match proceeds, cost basis, and fees"
+                    }
+                } else {
+                    require(income.pnlDirection != PnlDirection.BREAK_EVEN) {
+                        "Break-even crypto records require proceeds, cost basis, and fees"
+                    }
+                }
             } else {
                 require(
                     income.entryKind == IncomeEntryKind.RECEIPT
@@ -87,6 +130,9 @@ object IncomeValidator {
 
                 require(income.pnlDirection == null) {
                     "Profit or loss direction is only used for crypto transactions"
+                }
+                require(income.cryptoRealizedDetails == null) {
+                    "Crypto realised details are only used for crypto transactions"
                 }
             }
 

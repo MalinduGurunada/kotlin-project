@@ -1,6 +1,7 @@
 package com.example.personalfinanceapp.feature.income
 
 import com.example.personalfinanceapp.core.model.Income
+import com.example.personalfinanceapp.core.model.CryptoRealizedDetails
 import com.example.personalfinanceapp.core.model.IncomeEntryKind
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.PnlDirection
@@ -620,5 +621,38 @@ class IncomeFirestoreMapperTest {
         val nested = mutableDocument()
         mutableMoney(nested)["exchangeRateTimestamp"] = "2026-10-21T00:00:00Z"
         assertMappingFailure(nested, "money.exchangeRateTimestamp")
+    }
+
+    @Test
+    fun roundTripsStructuredCryptoBreakEvenAndKeepsLegacyDocumentsCompatible() {
+        val structured = Income(
+            id = "crypto-zero",
+            source = IncomeSource.CRYPTO,
+            entryKind = IncomeEntryKind.REALIZED_PNL,
+            money = MoneyConverter.fromLkrNonNegative("0", occurredDate).getOrThrow(),
+            occurredDate = occurredDate,
+            pnlDirection = PnlDirection.BREAK_EVEN,
+            cryptoRealizedDetails = CryptoRealizedDetails("600", "600", "0")
+        )
+
+        val fields = IncomeFirestoreMapper.toFirestoreMap(structured)
+        val reconstructed = IncomeFirestoreMapper.fromFirestoreMap(structured.id, fields)
+
+        assertEquals(structured, reconstructed)
+        assertTrue(fields.containsKey("cryptoRealizedDetails"))
+
+        val legacy = lkrIncome(
+            id = "legacy-gain",
+            source = IncomeSource.CRYPTO,
+            entryKind = IncomeEntryKind.REALIZED_PNL,
+            pnlDirection = PnlDirection.GAIN
+        )
+        assertEquals(
+            legacy,
+            IncomeFirestoreMapper.fromFirestoreMap(
+                legacy.id,
+                IncomeFirestoreMapper.toFirestoreMap(legacy)
+            )
+        )
     }
 }

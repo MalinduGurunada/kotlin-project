@@ -85,11 +85,20 @@ Stored original amount/currency, rate, source, rate date, and LKR minor result f
 | `entryKind` | string | Yes | `RECEIPT` or `REALIZED_PNL`, constrained by source |
 | `money` | map | Yes | Exact six-field shape defined above |
 | `occurredDate` | string | Yes | ISO date-only string |
-| `pnlDirection` | string | Conditional | `GAIN` or `LOSS`; required for Crypto and absent for regular receipts |
+| `pnlDirection` | string | Conditional | `GAIN`, `LOSS`, or `BREAK_EVEN`; required for Crypto and absent for regular receipts |
 | `projectReference` | string | Optional | Current UI exposes it for Freelance and stores blank input as absent |
 | `receivableId` | string | Optional | Domain link; not entered by the current Income editor |
 | `assetSymbol` | string | Optional | Optional Crypto asset symbol |
+| `cryptoRealizedDetails` | map | Optional | New realised-Crypto entries store exact `costBasisOriginalDecimal`, `saleProceedsOriginalDecimal`, and `feesOriginalDecimal` strings; absent on legacy Crypto records |
 | `note` | string | Optional | User note |
+
+For structured Crypto entries, all three detail values use `money.originalCurrency` and the same
+historical rate snapshot. The signed result is `sale proceeds - cost basis - fees`.
+`money.originalAmountDecimal` and `money.baseAmountMinor` store the absolute result magnitude while
+`pnlDirection` stores its sign. A zero result is represented by `BREAK_EVEN` with zero money fields.
+Legacy Crypto documents without `cryptoRealizedDetails` remain valid, but cannot use `BREAK_EVEN`.
+Sale proceeds are calculation metadata only: no gross proceeds or cash withdrawal is persisted as a
+second Income receipt.
 
 The mapper accepts only the required fields plus the documented optional fields and rejects unknown fields. It validates schema version, types, supported enum names, ISO dates, document/path ID equality, and the domain/money contract.
 

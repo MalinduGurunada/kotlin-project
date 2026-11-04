@@ -214,6 +214,31 @@ function cryptoIncome(incomeId, pnlDirection) {
   });
 }
 
+function structuredCryptoIncome(incomeId, {
+  proceeds = "1000.00",
+  costBasis = "600.00",
+  fees = "50.00",
+  result = "350.00",
+  resultMinor = 35000,
+  direction = "GAIN",
+} = {}) {
+  return incomeDocument(incomeId, {
+    source: "CRYPTO",
+    entryKind: "REALIZED_PNL",
+    pnlDirection: direction,
+    assetSymbol: "BTC",
+    money: {
+      originalAmountDecimal: result,
+      baseAmountMinor: resultMinor,
+    },
+    cryptoRealizedDetails: {
+      costBasisOriginalDecimal: costBasis,
+      saleProceedsOriginalDecimal: proceeds,
+      feesOriginalDecimal: fees,
+    },
+  });
+}
+
 function expenseDocument(userId, expenseId) {
   return {
     id: expenseId,
@@ -529,6 +554,15 @@ test("all supported income business cases are accepted", async () => {
     incomeDocument("adsense", { source: "ADSENSE" }),
     cryptoIncome("crypto-gain", "GAIN"),
     cryptoIncome("crypto-loss", "LOSS"),
+    structuredCryptoIncome("crypto-structured-gain"),
+    structuredCryptoIncome("crypto-structured-loss", {
+      proceeds: "500.00", costBasis: "600.00", fees: "25.00",
+      result: "125.00", resultMinor: 12500, direction: "LOSS",
+    }),
+    structuredCryptoIncome("crypto-break-even", {
+      proceeds: "600.00", costBasis: "600.00", fees: "0",
+      result: "0", resultMinor: 0, direction: "BREAK_EVEN",
+    }),
     incomeDocument("lkr-rate-scale", { money: { rateLkrPerUnitDecimal: "1.0" } }),
     incomeDocument("lkr-rate-scientific", { money: { rateLkrPerUnitDecimal: "10e-1" } }),
     usdIncome("usd-auto", "EXCHANGE_RATE_API_REFERENCE"),
@@ -547,6 +581,50 @@ test("all supported income business cases are accepted", async () => {
     await expectAllowed(
       setDoc(incomeReference(firestore, "user-a", validDocument.id), validDocument),
     );
+  }
+});
+
+test("structured crypto schema permits zero break-even but rejects malformed or non-crypto details", async () => {
+  const firestore = userFirestore("user-a");
+  await expectAllowed(setDoc(
+    incomeReference(firestore, "user-a", "break-even"),
+    structuredCryptoIncome("break-even", {
+      proceeds: "600", costBasis: "600", fees: "0",
+      result: "0", resultMinor: 0, direction: "BREAK_EVEN",
+    }),
+  ));
+
+  await expectDenied(setDoc(
+    incomeReference(firestore, "user-a", "legacy-zero"),
+    incomeDocument("legacy-zero", {
+      source: "CRYPTO",
+      entryKind: "REALIZED_PNL",
+      pnlDirection: "GAIN",
+      money: { originalAmountDecimal: "0", baseAmountMinor: 0 },
+    }),
+  ));
+
+  const nonCrypto = incomeDocument("non-crypto-details", {
+    cryptoRealizedDetails: structuredCryptoIncome("unused").cryptoRealizedDetails,
+  });
+  await expectDenied(setDoc(incomeReference(firestore, "user-a", "non-crypto-details"), nonCrypto));
+
+  const malformed = structuredCryptoIncome("malformed");
+  malformed.cryptoRealizedDetails.unexpected = "field";
+  await expectDenied(setDoc(incomeReference(firestore, "user-a", "malformed"), malformed));
+});
+
+test("retrying a structured crypto save to the same owner and ID is idempotent", async () => {
+  const firestore = userFirestore("user-a");
+  const reference = incomeReference(firestore, "user-a", "stable-id");
+  const data = structuredCryptoIncome("stable-id");
+
+  await expectAllowed(setDoc(reference, data));
+  await expectAllowed(setDoc(reference, data));
+  const snapshot = await assertSucceeds(getDoc(reference));
+  allowedAssertions += 1;
+  if (snapshot.data().money.baseAmountMinor !== 35000) {
+    throw new Error("Retry changed the structured crypto result");
   }
 });
 

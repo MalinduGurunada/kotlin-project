@@ -13,6 +13,9 @@ import com.example.personalfinanceapp.feature.auth.AuthRepository
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateException
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateRepository
 import com.example.personalfinanceapp.feature.income.IncomeRepository
+import com.example.personalfinanceapp.feature.income.CryptoRealizedCalculation
+import com.example.personalfinanceapp.feature.income.CryptoRealizedCalculator
+import com.example.personalfinanceapp.feature.income.signedBaseAmountMinor
 import com.example.personalfinanceapp.feature.income.IncomeObservationSnapshot
 import com.example.personalfinanceapp.feature.income.IncomeDeleteException
 import com.example.personalfinanceapp.feature.income.IncomeValidator
@@ -199,6 +202,9 @@ class IncomeViewModel @Inject constructor(
             originalIncome = income,
             selectedSource = income.source,
             amountText = income.money.originalAmountDecimal,
+            saleProceedsText = income.cryptoRealizedDetails?.saleProceedsOriginalDecimal.orEmpty(),
+            costBasisText = income.cryptoRealizedDetails?.costBasisOriginalDecimal.orEmpty(),
+            feesText = income.cryptoRealizedDetails?.feesOriginalDecimal ?: "0",
             transactionDate = income.occurredDate,
             projectReference = income.projectReference.orEmpty(),
             availableReceivables = receivablesForOwner(snapshotOwnerId),
@@ -222,8 +228,11 @@ class IncomeViewModel @Inject constructor(
         _formState.value = null
     }
 
-    fun updateIncomeSource(source: IncomeSource) = updateForm { current ->
-        current.copy(
+    fun updateIncomeSource(source: IncomeSource) {
+        updateForm { current ->
+            val startsStructuredCrypto = source == IncomeSource.CRYPTO &&
+                (current.mode == IncomeEditorMode.ADD || current.originalIncome?.cryptoRealizedDetails != null)
+            current.copy(
             selectedSource = source,
             projectReference = if (source == IncomeSource.FREELANCE) {
                 current.projectReference
@@ -236,13 +245,35 @@ class IncomeViewModel @Inject constructor(
                 null
             },
             assetSymbol = if (source == IncomeSource.CRYPTO) current.assetSymbol else "",
+            saleProceedsText = if (startsStructuredCrypto) {
+                current.saleProceedsText.ifBlank { current.amountText }
+            } else current.saleProceedsText,
+            costBasisText = if (startsStructuredCrypto) current.costBasisText.ifBlank { "0" } else current.costBasisText,
+            feesText = if (startsStructuredCrypto) current.feesText.ifBlank { "0" } else current.feesText,
             pnlDirection = if (source == IncomeSource.CRYPTO) current.pnlDirection else null,
-            errors = current.errors.copy(pnlDirection = null, form = null),
+            errors = current.errors.copy(
+                saleProceeds = null,
+                costBasis = null,
+                fees = null,
+                pnlDirection = null,
+                form = null
+            ),
             saveError = null
         )
+        }
+        if (_formState.value?.usesCryptoBreakdown == true) refreshCryptoCalculation()
     }
 
     fun updateIncomeAmount(amount: String) {
+        val current = _formState.value
+        if (current?.usesCryptoBreakdown == true) {
+            updateCryptoInputs(
+                saleProceeds = amount,
+                costBasis = current.costBasisText.ifBlank { "0" },
+                fees = current.feesText.ifBlank { "0" }
+            )
+            return
+        }
         updateRateSelection { coordinator -> coordinator.updateAmountInput(amount) }
         updateForm { current ->
             current.copy(
@@ -251,6 +282,21 @@ class IncomeViewModel @Inject constructor(
                 saveError = null
             )
         }
+    }
+
+    fun updateCryptoSaleProceeds(amount: String) {
+        val current = _formState.value ?: return
+        updateCryptoInputs(amount, current.costBasisText, current.feesText)
+    }
+
+    fun updateCryptoCostBasis(amount: String) {
+        val current = _formState.value ?: return
+        updateCryptoInputs(current.saleProceedsText, amount, current.feesText)
+    }
+
+    fun updateCryptoFees(amount: String) {
+        val current = _formState.value ?: return
+        updateCryptoInputs(current.saleProceedsText, current.costBasisText, amount)
     }
 
     fun updateIncomeDate(date: LocalDate) {
@@ -397,6 +443,48 @@ class IncomeViewModel @Inject constructor(
 
     fun updateIncomeNote(note: String) = updateForm { current ->
         current.copy(note = note, saveError = null)
+    }
+
+    private fun updateCryptoInputs(
+        saleProceeds: String,
+        costBasis: String,
+        fees: String
+    ) {
+        val calculation = CryptoRealizedCalculator.calculate(
+            saleProceedsInput = saleProceeds,
+            costBasisInput = costBasis,
+            feesInput = fees
+        ).getOrNull()
+        updateRateSelection { coordinator ->
+            coordinator.updateAmountInput(calculation?.resultMagnitudeOriginalDecimal.orEmpty())
+        }
+        updateForm { current ->
+            current.copy(
+                saleProceedsText = saleProceeds,
+                costBasisText = costBasis,
+                feesText = fees,
+                amountText = calculation?.resultMagnitudeOriginalDecimal.orEmpty(),
+                pnlDirection = calculation?.direction,
+                errors = current.errors.copy(
+                    saleProceeds = null,
+                    costBasis = null,
+                    fees = null,
+                    pnlDirection = null,
+                    rate = null,
+                    form = null
+                ),
+                saveError = null
+            )
+        }
+    }
+
+    private fun refreshCryptoCalculation() {
+        val current = _formState.value ?: return
+        updateCryptoInputs(
+            saleProceeds = current.saleProceedsText,
+            costBasis = current.costBasisText,
+            fees = current.feesText
+        )
     }
 
     fun saveIncome() {
@@ -564,7 +652,7 @@ class IncomeViewModel @Inject constructor(
         if (occurredDate == null) {
             errors = errors.copy(transactionDate = "Select a transaction date")
         }
-        if (draft.selectedSource == IncomeSource.CRYPTO && draft.pnlDirection == null) {
+        if (draft.selectedSource == IncomeSource.CRYPTO && !draft.usesCryptoBreakdown && draft.pnlDirection == null) {
             errors = errors.copy(pnlDirection = "Select gain or loss")
         }
         val selectedReceivable = draft.selectedReceivableId?.let { id ->
@@ -579,17 +667,34 @@ class IncomeViewModel @Inject constructor(
             }
         }
 
-        val amountFailure = MoneyValidator.parsePositiveAmount(draft.amountText).exceptionOrNull()
-        if (amountFailure != null) {
-            errors = errors.copy(amount = amountFailure.message ?: "Enter a valid amount")
+        var cryptoCalculation: CryptoRealizedCalculation? = null
+        if (draft.usesCryptoBreakdown) {
+            MoneyValidator.parseNonNegativeAmount(draft.saleProceedsText, "Sale proceeds")
+                .exceptionOrNull()?.let { errors = errors.copy(saleProceeds = it.message) }
+            MoneyValidator.parseNonNegativeAmount(draft.costBasisText, "Cost basis")
+                .exceptionOrNull()?.let { errors = errors.copy(costBasis = it.message) }
+            MoneyValidator.parseNonNegativeAmount(draft.feesText, "Fees")
+                .exceptionOrNull()?.let { errors = errors.copy(fees = it.message) }
+            if (!errors.hasErrors) {
+                cryptoCalculation = CryptoRealizedCalculator.calculate(
+                    saleProceedsInput = draft.saleProceedsText,
+                    costBasisInput = draft.costBasisText,
+                    feesInput = draft.feesText
+                ).getOrNull()
+            }
         }
+
+        val amountFailure = if (draft.usesCryptoBreakdown) null else {
+            MoneyValidator.parsePositiveAmount(draft.amountText).exceptionOrNull()
+        }
+        if (amountFailure != null) errors = errors.copy(amount = amountFailure.message ?: "Enter a valid amount")
 
         val coordinator = rateCoordinator
             ?.takeIf { rateDraftId == draft.draftId }
         val moneyResult = if (occurredDate == null || amountFailure != null || coordinator == null) {
             null
         } else {
-            coordinator.prepareMoneySnapshot()
+            coordinator.prepareMoneySnapshot(allowZero = draft.usesCryptoBreakdown)
         }
         val money = moneyResult?.getOrNull()
         moneyResult?.exceptionOrNull()?.let { failure ->
@@ -620,7 +725,7 @@ class IncomeViewModel @Inject constructor(
             },
             money = money,
             occurredDate = occurredDate,
-            pnlDirection = if (isCrypto) draft.pnlDirection else null,
+            pnlDirection = if (isCrypto) cryptoCalculation?.direction ?: draft.pnlDirection else null,
             projectReference = if (draft.selectedSource == IncomeSource.FREELANCE) {
                 draft.projectReference.trim().ifBlank { null }
             } else {
@@ -634,6 +739,7 @@ class IncomeViewModel @Inject constructor(
             } else {
                 null
             },
+            cryptoRealizedDetails = if (isCrypto) cryptoCalculation?.details else null,
             note = draft.note.trim().ifBlank { null }
         )
 
@@ -750,16 +856,7 @@ class IncomeViewModel @Inject constructor(
      */
     private fun calculateTotalLkrMinor(incomes: List<Income>): Long =
         incomes.fold(0L) { total, income ->
-            val signedAmount = if (
-                income.source == IncomeSource.CRYPTO &&
-                income.entryKind == IncomeEntryKind.REALIZED_PNL &&
-                income.pnlDirection == PnlDirection.LOSS
-            ) {
-                Math.negateExact(income.money.baseAmountMinor)
-            } else {
-                income.money.baseAmountMinor
-            }
-            Math.addExact(total, signedAmount)
+            Math.addExact(total, income.signedBaseAmountMinor())
         }
 
     private data class ObservationRequest(
