@@ -3,6 +3,7 @@ package com.example.personalfinanceapp.feature.dashboard
 import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.Contribution
 import com.example.personalfinanceapp.core.model.ContributionKind
+import com.example.personalfinanceapp.core.model.CryptoRealizedDetails
 import com.example.personalfinanceapp.core.model.Expense
 import com.example.personalfinanceapp.core.model.Goal
 import com.example.personalfinanceapp.core.model.Income
@@ -38,7 +39,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DashboardViewModelTest {
@@ -170,6 +174,139 @@ class DashboardViewModelTest {
         assertNotNull(cryptoActivity)
         assertTrue(cryptoActivity!!.isRedAmount)
         assertEquals("-LKR 25,000.00", cryptoActivity.amountText)
+    }
+
+    @Test
+    fun structuredCryptoResultsIntegrateWithAllIncomeSourcesAndExpenseClasses() = runTest {
+        val fixedClock = Clock.fixed(
+            Instant.parse("2026-11-04T00:00:00Z"),
+            ZoneOffset.UTC
+        )
+        val integratedViewModel = DashboardViewModel(
+            authRepository = fakeAuthRepository,
+            incomeRepository = fakeIncomeRepository,
+            expenseRepository = fakeExpenseRepository,
+            goalRepository = fakeGoalRepository,
+            clock = fixedClock
+        )
+        backgroundScope.launch { integratedViewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val transactionDate = LocalDate.of(2026, 11, 3)
+        suspend fun saveIncome(
+            id: String,
+            source: IncomeSource,
+            amountDecimal: String,
+            amountMinor: Long,
+            pnlDirection: PnlDirection? = null,
+            cryptoDetails: CryptoRealizedDetails? = null
+        ) {
+            fakeIncomeRepository.saveIncome(
+                Income(
+                    id = id,
+                    source = source,
+                    entryKind = if (source == IncomeSource.CRYPTO) {
+                        IncomeEntryKind.REALIZED_PNL
+                    } else {
+                        IncomeEntryKind.RECEIPT
+                    },
+                    money = Money(
+                        originalAmountDecimal = amountDecimal,
+                        originalCurrency = CurrencyCode.LKR,
+                        rateLkrPerUnitDecimal = "1.00",
+                        baseAmountMinor = amountMinor,
+                        rateSource = RateSource.LKR_FIXED,
+                        rateDate = transactionDate
+                    ),
+                    occurredDate = transactionDate,
+                    pnlDirection = pnlDirection,
+                    cryptoRealizedDetails = cryptoDetails
+                )
+            ).getOrThrow()
+        }
+
+        saveIncome("salary", IncomeSource.SALARY, "1000.00", 100_000L)
+        saveIncome("freelance", IncomeSource.FREELANCE, "200.00", 20_000L)
+        saveIncome("adsense", IncomeSource.ADSENSE, "100.00", 10_000L)
+        saveIncome(
+            id = "crypto-gain",
+            source = IncomeSource.CRYPTO,
+            amountDecimal = "350.00",
+            amountMinor = 35_000L,
+            pnlDirection = PnlDirection.GAIN,
+            cryptoDetails = CryptoRealizedDetails(
+                costBasisOriginalDecimal = "600.00",
+                saleProceedsOriginalDecimal = "1000.00",
+                feesOriginalDecimal = "50.00"
+            )
+        )
+        saveIncome(
+            id = "crypto-loss",
+            source = IncomeSource.CRYPTO,
+            amountDecimal = "125.00",
+            amountMinor = 12_500L,
+            pnlDirection = PnlDirection.LOSS,
+            cryptoDetails = CryptoRealizedDetails(
+                costBasisOriginalDecimal = "600.00",
+                saleProceedsOriginalDecimal = "500.00",
+                feesOriginalDecimal = "25.00"
+            )
+        )
+
+        fakeExpenseRepository.saveExpense(
+            Expense(
+                id = "committed-expense",
+                categoryId = "bills",
+                categoryNameSnapshot = "Bills",
+                spendingClass = SpendingClass.COMMITTED,
+                paymentChannel = PaymentChannel.BANK,
+                money = Money(
+                    originalAmountDecimal = "305.00",
+                    originalCurrency = CurrencyCode.LKR,
+                    rateLkrPerUnitDecimal = "1.00",
+                    baseAmountMinor = 30_500L,
+                    rateSource = RateSource.LKR_FIXED,
+                    rateDate = transactionDate
+                ),
+                occurredDate = transactionDate
+            )
+        ).getOrThrow()
+        fakeExpenseRepository.saveExpense(
+            Expense(
+                id = "discretionary-expense",
+                categoryId = "food",
+                categoryNameSnapshot = "Food",
+                spendingClass = SpendingClass.DISCRETIONARY,
+                paymentChannel = PaymentChannel.CARD,
+                money = Money(
+                    originalAmountDecimal = "200.00",
+                    originalCurrency = CurrencyCode.LKR,
+                    rateLkrPerUnitDecimal = "1.00",
+                    baseAmountMinor = 20_000L,
+                    rateSource = RateSource.LKR_FIXED,
+                    rateDate = transactionDate
+                ),
+                occurredDate = transactionDate
+            )
+        ).getOrThrow()
+
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = integratedViewModel.uiState.value
+        assertEquals(5, state.incomeCount)
+        assertEquals(152_500L, state.totalIncomeLkrMinor)
+        assertEquals(35_000L, state.monthlyCryptoResult.totalGainLkrMinor)
+        assertEquals(12_500L, state.monthlyCryptoResult.totalLossLkrMinor)
+        assertEquals(22_500L, state.monthlyCryptoResult.netLkrMinor)
+        assertEquals(state.monthlyCryptoResult, state.yearToDateCryptoResult)
+        assertEquals(2, state.expenseCount)
+        assertEquals(50_500L, state.totalExpenseLkrMinor)
+        assertEquals(30_500L, state.committedExpenseLkrMinor)
+        assertEquals(20_000L, state.discretionaryExpenseLkrMinor)
+        assertEquals(60, state.committedPercent)
+        assertEquals(40, state.discretionaryPercent)
+        assertEquals(102_000L, state.totalAvailableBalanceLkrMinor)
+        assertEquals(7, state.recentActivity.size)
     }
 
     @Test
