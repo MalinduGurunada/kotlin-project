@@ -42,4 +42,7 @@ data object ActivityRoute
 data object Goals
 
 @Serializable
+data class GoalDetail(val goalId: String)
+
+@Serializable
 data class TransactionDetail(val transactionId: String)

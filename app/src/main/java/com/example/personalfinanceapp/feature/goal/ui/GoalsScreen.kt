@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +52,45 @@ import com.example.personalfinanceapp.ui.theme.TextPrimaryDark
 import com.example.personalfinanceapp.ui.theme.TextSecondaryMuted
 import java.time.LocalDate
 import java.util.Locale
+
+@Composable
+fun GoalsScreen(
+    viewModel: GoalViewModel,
+    currentNavDestination: NavDestination = NavDestination.GOALS,
+    onNavDestinationSelected: (NavDestination) -> Unit,
+    onGoalSelected: (String) -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    var showCreateDialog by remember { mutableStateOf(false) }
+
+    GoalsScreen(
+        uiState = uiState,
+        currentNavDestination = currentNavDestination,
+        onNavDestinationSelected = onNavDestinationSelected,
+        onGoalSelected = onGoalSelected,
+        onCreateGoalClicked = { showCreateDialog = true }
+    )
+
+    if (showCreateDialog) {
+        CreateGoalDialog(
+            errorMessage = uiState.errorMessage,
+            onDismiss = {
+                showCreateDialog = false
+                viewModel.clearError()
+            },
+            onConfirm = { name, targetAmountLkr, targetDate ->
+                viewModel.saveGoal(
+                    id = null,
+                    name = name,
+                    targetAmountLkr = targetAmountLkr,
+                    startDate = LocalDate.now(),
+                    targetDate = targetDate
+                )
+                showCreateDialog = false
+            }
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

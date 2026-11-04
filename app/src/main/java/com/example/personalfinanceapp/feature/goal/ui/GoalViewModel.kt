@@ -9,14 +9,17 @@ import com.example.personalfinanceapp.feature.auth.AuthRepository
 import com.example.personalfinanceapp.feature.goal.GoalRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.math.BigInteger
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -61,57 +64,89 @@ class GoalViewModel @Inject constructor(
                 flowOf(GoalsUiState(isLoading = false))
             } else {
                 goalRepository.observeGoals().flatMapLatest { goals ->
-                    val activeId = _selectedGoalId.value ?: goals.firstOrNull()?.id
-                    val contributionsFlow = if (activeId != null) {
-                        goalRepository.observeContributions(activeId)
-                    } else {
-                        flowOf(emptyList())
-                    }
-
-                    combine(
-                        contributionsFlow,
-                        _selectedGoalId,
-                        _isLoading,
-                        _errorMessage
-                    ) { contributions, selectedId, isLoading, error ->
-                        val now = LocalDate.now()
-                        val mappedGoals = goals.map { goal ->
-                            val savedMinor = if (goal.id == activeId) {
-                                contributions.sumOf { it.amountMinor }
-                            } else 0L
-
-                            val savedLkr = savedMinor / 100
-                            val targetLkr = goal.targetAmountMinor / 100
-                            val remainingLkr = (targetLkr - savedLkr).coerceAtLeast(0)
-                            val pct = if (targetLkr > 0) ((savedLkr.toDouble() / targetLkr) * 100).toInt().coerceIn(0, 100) else 0
-
-                            val monthsLeft = ChronoUnit.MONTHS.between(now, goal.targetDate).coerceAtLeast(1)
-                            val requiredMonthly = if (remainingLkr > 0) remainingLkr / monthsLeft else 0L
-
-                            GoalItemUiState(
-                                id = goal.id,
-                                name = goal.name,
-                                targetAmountLkr = targetLkr,
-                                savedAmountLkr = savedLkr,
-                                remainingLkr = remainingLkr,
-                                progressPercent = pct,
-                                isCompleted = savedLkr >= targetLkr,
-                                isOverdue = now.isAfter(goal.targetDate) && savedLkr < targetLkr,
-                                requiredMonthlySavingsLkr = requiredMonthly,
-                                startDate = goal.startDate,
-                                targetDate = goal.targetDate
+                    if (goals.isEmpty()) {
+                        combine(
+                            _selectedGoalId,
+                            _isLoading,
+                            _errorMessage
+                        ) { _, isLoading, error ->
+                            GoalsUiState(
+                                goals = emptyList(),
+                                selectedGoalDetail = null,
+                                contributions = emptyList(),
+                                isLoading = isLoading,
+                                errorMessage = error
                             )
                         }
+                    } else {
+                        val flows: List<Flow<Pair<String, List<Contribution>>>> = goals.map { goal ->
+                            goalRepository.observeContributions(goal.id).map { goal.id to it }
+                        }
+                        val contributionsMapFlow = combine(flows) { pairs ->
+                            pairs.toMap()
+                        }
+                        combine(
+                            contributionsMapFlow,
+                            _selectedGoalId,
+                            _isLoading,
+                            _errorMessage
+                        ) { contributionsByGoalId, selectedId, isLoading, error ->
+                            val now = LocalDate.now()
+                            val mappedGoals = goals.map { goal ->
+                                val goalContributions = contributionsByGoalId[goal.id].orEmpty()
+                                val savedMinorBig = goalContributions.fold(BigInteger.ZERO) { total, contribution ->
+                                    total.add(BigInteger.valueOf(contribution.amountMinor))
+                                }
+                                val savedMinor = savedMinorBig
+                                    .max(BigInteger.valueOf(Long.MIN_VALUE))
+                                    .min(BigInteger.valueOf(Long.MAX_VALUE))
+                                    .toLong()
+                                
+                                val targetBig = BigInteger.valueOf(goal.targetAmountMinor)
+                                val remainingMinor = targetBig.subtract(savedMinorBig)
+                                    .max(BigInteger.ZERO)
+                                    .min(BigInteger.valueOf(Long.MAX_VALUE))
+                                    .toLong()
+                                val nonNegativeSaved = savedMinor.coerceAtLeast(0L)
+                                val pct = if (goal.targetAmountMinor > 0L) {
+                                    BigInteger.valueOf(nonNegativeSaved)
+                                        .multiply(BigInteger.valueOf(100L))
+                                        .divide(BigInteger.valueOf(goal.targetAmountMinor))
+                                        .min(BigInteger.valueOf(100L))
+                                        .toInt()
+                                } else 0
 
-                        val selectedDetail = mappedGoals.find { it.id == (selectedId ?: activeId) } ?: mappedGoals.firstOrNull()
+                                val monthsLeft = ChronoUnit.MONTHS.between(now, goal.targetDate).coerceAtLeast(1)
+                                val remainingLkr = remainingMinor / 100
+                                val requiredMonthly = if (remainingLkr > 0) remainingLkr / monthsLeft else 0L
 
-                        GoalsUiState(
-                            goals = mappedGoals,
-                            selectedGoalDetail = selectedDetail,
-                            contributions = contributions,
-                            isLoading = isLoading,
-                            errorMessage = error
-                        )
+                                GoalItemUiState(
+                                    id = goal.id,
+                                    name = goal.name,
+                                    targetAmountLkr = goal.targetAmountMinor / 100,
+                                    savedAmountLkr = savedMinor / 100,
+                                    remainingLkr = remainingLkr,
+                                    progressPercent = pct,
+                                    isCompleted = savedMinor >= goal.targetAmountMinor && goal.targetAmountMinor > 0L,
+                                    isOverdue = now.isAfter(goal.targetDate) && savedMinor < goal.targetAmountMinor,
+                                    requiredMonthlySavingsLkr = requiredMonthly,
+                                    startDate = goal.startDate,
+                                    targetDate = goal.targetDate
+                                )
+                            }
+
+                            val activeId = selectedId ?: mappedGoals.firstOrNull()?.id
+                            val selectedDetail = mappedGoals.find { it.id == activeId } ?: mappedGoals.firstOrNull()
+                            val activeContributions = selectedDetail?.id?.let { contributionsByGoalId[it] }.orEmpty()
+
+                            GoalsUiState(
+                                goals = mappedGoals,
+                                selectedGoalDetail = selectedDetail,
+                                contributions = activeContributions,
+                                isLoading = isLoading,
+                                errorMessage = error
+                            )
+                        }
                     }
                 }
             }
@@ -138,6 +173,10 @@ class GoalViewModel @Inject constructor(
         }
         if (targetAmountLkr <= 0) {
             _errorMessage.value = "Target amount must be greater than zero"
+            return
+        }
+        if (targetDate.isBefore(startDate)) {
+            _errorMessage.value = "Target date cannot be before start date"
             return
         }
 

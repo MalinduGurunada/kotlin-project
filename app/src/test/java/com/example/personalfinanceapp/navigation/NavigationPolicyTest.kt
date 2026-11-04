@@ -82,4 +82,9 @@ class NavigationPolicyTest {
     fun transactionDetailRoutePreservesTransactionId() {
         assertEquals("transaction-42", TransactionDetail("transaction-42").transactionId)
     }
+
+    @Test
+    fun goalDetailRoutePreservesGoalId() {
+        assertEquals("goal-m3", GoalDetail("goal-m3").goalId)
+    }
 }

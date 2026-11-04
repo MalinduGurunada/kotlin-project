@@ -30,7 +30,6 @@ import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
 import com.example.personalfinanceapp.feature.category.ui.CategoryScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.ActivityScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.DashboardViewModel
-import com.example.personalfinanceapp.feature.dashboard.ui.GoalsScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.MoreScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.NavDestination
 import com.example.personalfinanceapp.feature.dashboard.ui.OverviewScreen
@@ -38,6 +37,9 @@ import com.example.personalfinanceapp.feature.dashboard.ui.TransactionDetailScre
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseEditorDialog
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseListScreen
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseViewModel
+import com.example.personalfinanceapp.feature.goal.ui.GoalDetailScreen
+import com.example.personalfinanceapp.feature.goal.ui.GoalViewModel
+import com.example.personalfinanceapp.feature.goal.ui.GoalsScreen
 import com.example.personalfinanceapp.feature.income.ui.IncomeListScreen
 import com.example.personalfinanceapp.feature.income.ui.IncomeEditorScreen
 import com.example.personalfinanceapp.feature.income.ui.IncomeViewModel
@@ -461,16 +463,37 @@ fun AppNavHost(
         }
 
         composable<Goals> {
-            val dashboardViewModel: DashboardViewModel = hiltViewModel()
-            val uiState by dashboardViewModel.uiState.collectAsState()
+            val goalViewModel: GoalViewModel = hiltViewModel()
 
             GoalsScreen(
-                uiState = uiState,
+                viewModel = goalViewModel,
+                currentNavDestination = NavDestination.GOALS,
                 onNavDestinationSelected = { destination ->
                     if (destination != NavDestination.GOALS) {
                         navController.navigateTo(dashboardTarget(destination))
                     }
+                },
+                onGoalSelected = { goalId ->
+                    navController.navigate(GoalDetail(goalId))
                 }
+            )
+        }
+
+        composable<GoalDetail> { backStackEntry ->
+            val detailRoute: GoalDetail = backStackEntry.toRoute()
+            val parentEntry = remember(backStackEntry) {
+                runCatching { navController.getBackStackEntry(Goals) }.getOrNull()
+            }
+            val goalViewModel: GoalViewModel = if (parentEntry != null) {
+                hiltViewModel(parentEntry)
+            } else {
+                hiltViewModel()
+            }
+
+            GoalDetailScreen(
+                viewModel = goalViewModel,
+                goalId = detailRoute.goalId,
+                onBackClicked = { navController.popBackStack() }
             )
         }
 

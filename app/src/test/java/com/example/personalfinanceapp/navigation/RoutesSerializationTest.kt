@@ -21,9 +21,16 @@ class RoutesSerializationTest {
             serializer<Overview>(),
             serializer<ActivityRoute>(),
             serializer<Goals>(),
+            serializer<GoalDetail>(),
             serializer<TransactionDetail>()
         )
 
-        assertEquals(14, routeSerializers.size)
+        assertEquals(15, routeSerializers.size)
+    }
+
+    @Test
+    fun goalDetailRoutePreservesGoalId() {
+        val route = GoalDetail(goalId = "macbook-m3")
+        assertEquals("macbook-m3", route.goalId)
     }
 }
