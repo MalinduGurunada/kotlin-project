@@ -137,6 +137,7 @@ service cloud.firestore {
                'projectReference',
                'receivableId',
                'assetSymbol',
+               'cryptoRealizedDetails',
                'note'
              ]);
     }
@@ -150,6 +151,11 @@ service cloud.firestore {
       return value is string &&
              value.trim().matches('[0-9]+([.][0-9]{1,2})?') &&
              !value.trim().matches('0+([.]0{1,2})?');
+    }
+
+    function isNonNegativeAmountDecimal(value) {
+      return value is string &&
+             value.trim().matches('[0-9]+([.][0-9]{1,2})?');
     }
 
     function isPositiveRateDecimal(value) {
@@ -188,11 +194,11 @@ service cloud.firestore {
     }
 
     function hasValidMoneyTypes(money) {
-      return isPositiveAmountDecimal(money.originalAmountDecimal) &&
+      return isNonNegativeAmountDecimal(money.originalAmountDecimal) &&
              money.originalCurrency is string &&
              money.rateLkrPerUnitDecimal is string &&
              money.baseAmountMinor is int &&
-             money.baseAmountMinor > 0 &&
+             money.baseAmountMinor >= 0 &&
              money.rateSource is string &&
              isIsoDate(money.rateDate);
     }
@@ -215,17 +221,43 @@ service cloud.firestore {
       return (!('projectReference' in data) || data.projectReference is string) &&
              (!('receivableId' in data) || data.receivableId is string) &&
              (!('assetSymbol' in data) || data.assetSymbol is string) &&
+             (!('cryptoRealizedDetails' in data) || data.cryptoRealizedDetails is map) &&
              (!('note' in data) || data.note is string);
+    }
+
+    function hasValidCryptoRealizedDetails(data) {
+      return !('cryptoRealizedDetails' in data) ||
+             (data.source == 'CRYPTO' &&
+              data.entryKind == 'REALIZED_PNL' &&
+              data.cryptoRealizedDetails.keys().hasAll([
+                'costBasisOriginalDecimal',
+                'saleProceedsOriginalDecimal',
+                'feesOriginalDecimal'
+              ]) &&
+              data.cryptoRealizedDetails.keys().hasOnly([
+                'costBasisOriginalDecimal',
+                'saleProceedsOriginalDecimal',
+                'feesOriginalDecimal'
+              ]) &&
+              isNonNegativeAmountDecimal(data.cryptoRealizedDetails.costBasisOriginalDecimal) &&
+              isNonNegativeAmountDecimal(data.cryptoRealizedDetails.saleProceedsOriginalDecimal) &&
+              isNonNegativeAmountDecimal(data.cryptoRealizedDetails.feesOriginalDecimal));
     }
 
     function hasValidIncomeKind(data) {
       return (data.source == 'CRYPTO' &&
               data.entryKind == 'REALIZED_PNL' &&
               'pnlDirection' in data &&
-              data.pnlDirection in ['GAIN', 'LOSS']) ||
+              data.pnlDirection in ['GAIN', 'LOSS', 'BREAK_EVEN'] &&
+              (data.money.baseAmountMinor > 0 ||
+               ('cryptoRealizedDetails' in data &&
+                data.pnlDirection == 'BREAK_EVEN' &&
+                data.money.baseAmountMinor == 0))) ||
              (data.source in ['SALARY', 'FREELANCE', 'ADSENSE'] &&
               data.entryKind == 'RECEIPT' &&
-              !('pnlDirection' in data));
+              !('pnlDirection' in data) &&
+              !('cryptoRealizedDetails' in data) &&
+              data.money.baseAmountMinor > 0);
     }
 
     function hasValidReceivableFields(data) {
@@ -277,9 +309,14 @@ service cloud.firestore {
              isIsoDate(data.occurredDate) &&
              hasValidMoneyFields(data.money) &&
              hasValidMoneyTypes(data.money) &&
+             (isPositiveAmountDecimal(data.money.originalAmountDecimal) ||
+              ('cryptoRealizedDetails' in data &&
+               data.pnlDirection == 'BREAK_EVEN' &&
+               data.money.originalAmountDecimal.matches('0+([.]0{1,2})?'))) &&
              hasValidCurrencyAndRate(data) &&
              hasValidOptionalIncomeTypes(data) &&
              hasValidIncomeKind(data) &&
+             hasValidCryptoRealizedDetails(data) &&
              hasValidReceivableLink(data, userId);
     }
 

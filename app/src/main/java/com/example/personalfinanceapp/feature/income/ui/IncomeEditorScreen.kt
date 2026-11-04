@@ -60,6 +60,9 @@ fun IncomeEditorScreen(
     onBack: () -> Unit,
     onSourceChanged: (IncomeSource) -> Unit,
     onAmountChanged: (String) -> Unit,
+    onCryptoSaleProceedsChanged: (String) -> Unit = {},
+    onCryptoCostBasisChanged: (String) -> Unit = {},
+    onCryptoFeesChanged: (String) -> Unit = {},
     onDateChanged: (LocalDate) -> Unit,
     onCurrencyChanged: (CurrencyCode) -> Unit,
     onRateModeChanged: (IncomeRateSelectionMode) -> Unit,
@@ -237,24 +240,26 @@ fun IncomeEditorScreen(
                 }
             }
 
-            OutlinedTextField(
-                value = uiState.amountText,
-                onValueChange = onAmountChanged,
-                enabled = !uiState.isSaving,
-                label = { Text("Amount (${uiState.selectedCurrency.name})") },
-                supportingText = (uiState.errors.amount ?: uiState.amountValidationError)?.let { error ->
-                    { Text(error) }
-                },
-                isError = uiState.errors.amount != null || uiState.amountValidationError != null,
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Decimal,
-                    imeAction = ImeAction.Next
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("income-amount")
-            )
+            if (!uiState.usesCryptoBreakdown) {
+                OutlinedTextField(
+                    value = uiState.amountText,
+                    onValueChange = onAmountChanged,
+                    enabled = !uiState.isSaving,
+                    label = { Text("Amount (${uiState.selectedCurrency.name})") },
+                    supportingText = (uiState.errors.amount ?: uiState.amountValidationError)?.let { error ->
+                        { Text(error) }
+                    },
+                    isError = uiState.errors.amount != null || uiState.amountValidationError != null,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal,
+                        imeAction = ImeAction.Next
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("income-amount")
+                )
+            }
 
             if (uiState.selectedCurrency == CurrencyCode.USD) {
                 UsdRateControls(
@@ -338,34 +343,75 @@ fun IncomeEditorScreen(
             }
 
             if (uiState.selectedSource == IncomeSource.CRYPTO) {
-                Column(
-                    modifier = Modifier.testTag("income-pnl-direction"),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "Realized result",
-                        style = MaterialTheme.typography.labelLarge
+                if (uiState.usesCryptoBreakdown) {
+                    CryptoAmountField(
+                        value = uiState.saleProceedsText,
+                        onValueChanged = onCryptoSaleProceedsChanged,
+                        label = "Sale proceeds (${uiState.selectedCurrency.name})",
+                        error = uiState.errors.saleProceeds,
+                        enabled = !uiState.isSaving,
+                        testTag = "crypto-sale-proceeds"
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = uiState.pnlDirection == PnlDirection.GAIN,
-                            onClick = { onPnlDirectionChanged(PnlDirection.GAIN) },
-                            enabled = !uiState.isSaving
-                        )
-                        Text("Gain")
-                        RadioButton(
-                            selected = uiState.pnlDirection == PnlDirection.LOSS,
-                            onClick = { onPnlDirectionChanged(PnlDirection.LOSS) },
-                            enabled = !uiState.isSaving
-                        )
-                        Text("Loss")
+                    CryptoAmountField(
+                        value = uiState.costBasisText,
+                        onValueChanged = onCryptoCostBasisChanged,
+                        label = "Original cost basis (${uiState.selectedCurrency.name})",
+                        error = uiState.errors.costBasis,
+                        enabled = !uiState.isSaving,
+                        testTag = "crypto-cost-basis"
+                    )
+                    CryptoAmountField(
+                        value = uiState.feesText,
+                        onValueChanged = onCryptoFeesChanged,
+                        label = "Fees (${uiState.selectedCurrency.name})",
+                        error = uiState.errors.fees,
+                        enabled = !uiState.isSaving,
+                        testTag = "crypto-fees"
+                    )
+                    val resultLabel = when (uiState.pnlDirection) {
+                        PnlDirection.GAIN -> "Gain"
+                        PnlDirection.LOSS -> "Loss"
+                        PnlDirection.BREAK_EVEN -> "Break even"
+                        null -> "Enter proceeds, cost basis, and fees"
                     }
-                    uiState.errors.pnlDirection?.let { error ->
-                        Text(
-                            text = error,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
+                    Text(
+                        text = if (uiState.pnlDirection == null) resultLabel else {
+                            "$resultLabel: ${uiState.selectedCurrency.name} ${uiState.amountText}"
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.testTag("crypto-realized-result")
+                    )
+                    Text(
+                        text = "Only this net realised result is included in income; sale withdrawals are not counted again.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier.testTag("income-pnl-direction"),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(text = "Realized result", style = MaterialTheme.typography.labelLarge)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = uiState.pnlDirection == PnlDirection.GAIN,
+                                onClick = { onPnlDirectionChanged(PnlDirection.GAIN) },
+                                enabled = !uiState.isSaving
+                            )
+                            Text("Gain")
+                            RadioButton(
+                                selected = uiState.pnlDirection == PnlDirection.LOSS,
+                                onClick = { onPnlDirectionChanged(PnlDirection.LOSS) },
+                                enabled = !uiState.isSaving
+                            )
+                            Text("Loss")
+                        }
+                        uiState.errors.pnlDirection?.let { error ->
+                            Text(
+                                text = error,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
 
@@ -451,6 +497,31 @@ fun IncomeEditorScreen(
             }
         }
     }
+}
+
+@Composable
+private fun CryptoAmountField(
+    value: String,
+    onValueChanged: (String) -> Unit,
+    label: String,
+    error: String?,
+    enabled: Boolean,
+    testTag: String
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChanged,
+        enabled = enabled,
+        label = { Text(label) },
+        supportingText = error?.let { message -> { Text(message) } },
+        isError = error != null,
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Decimal,
+            imeAction = ImeAction.Next
+        ),
+        modifier = Modifier.fillMaxWidth().testTag(testTag)
+    )
 }
 
 @Composable

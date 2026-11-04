@@ -36,6 +36,7 @@ internal fun incomeSourceLabel(income: Income): String = when (income.source) {
     IncomeSource.CRYPTO -> when (income.pnlDirection) {
         PnlDirection.GAIN -> "Crypto Gain"
         PnlDirection.LOSS -> "Crypto Loss"
+        PnlDirection.BREAK_EVEN -> "Crypto Break Even"
         null -> "Crypto"
     }
 }

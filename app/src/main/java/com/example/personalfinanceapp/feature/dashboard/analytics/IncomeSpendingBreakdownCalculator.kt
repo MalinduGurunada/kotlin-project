@@ -5,6 +5,8 @@ import com.example.personalfinanceapp.core.model.Income
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.SpendingClass
+import com.example.personalfinanceapp.feature.income.CryptoResultCalculator
+import com.example.personalfinanceapp.feature.income.signedBaseAmountMinor
 import java.time.LocalDate
 
 data class SourceBreakdownItem(
@@ -48,11 +50,15 @@ object IncomeSpendingBreakdownCalculator {
     ): MonthlyAnalyticsBreakdown {
 
         // Income Source Breakdown
-        val totalIncomeMinor = currentMonthIncomes.sumOf { it.money.baseAmountMinor }
+        val totalIncomeMinor = currentMonthIncomes.fold(0L) { total, income ->
+            Math.addExact(total, income.signedBaseAmountMinor())
+        }
         val sourceBreakdown = if (totalIncomeMinor > 0) {
             currentMonthIncomes.groupBy { it.source }
                 .map { (source, items) ->
-                    val sum = items.sumOf { it.money.baseAmountMinor }
+                    val sum = items.fold(0L) { total, income ->
+                        Math.addExact(total, income.signedBaseAmountMinor())
+                    }
                     val pct = ((sum.toDouble() / totalIncomeMinor) * 100).toInt()
                     SourceBreakdownItem(source.name, sum, pct)
                 }.sortedByDescending { it.totalLkrMinor }
@@ -96,14 +102,19 @@ object IncomeSpendingBreakdownCalculator {
         } else 0.0
 
         // Crypto Year-to-Date Results
-        val cryptoIncomes = yearToDateCryptoIncomes.filter { it.source == IncomeSource.CRYPTO }
-        val gainMinor = cryptoIncomes
-            .filter { it.pnlDirection == PnlDirection.GAIN }
-            .sumOf { it.money.baseAmountMinor }
-        val lossMinor = cryptoIncomes
-            .filter { it.pnlDirection == PnlDirection.LOSS }
-            .sumOf { it.money.baseAmountMinor }
-        val netCryptoPnl = gainMinor - lossMinor
+        val ytdBounds = yearToDateCryptoIncomes.map { it.occurredDate }
+        val cryptoTotals = if (ytdBounds.isEmpty()) {
+            com.example.personalfinanceapp.feature.income.CryptoResultTotals()
+        } else {
+            CryptoResultCalculator.calculate(
+                incomes = yearToDateCryptoIncomes,
+                startDateInclusive = ytdBounds.minOrNull()!!,
+                endDateExclusive = ytdBounds.maxOrNull()!!.plusDays(1)
+            )
+        }
+        val gainMinor = cryptoTotals.totalGainLkrMinor
+        val lossMinor = cryptoTotals.totalLossLkrMinor
+        val netCryptoPnl = cryptoTotals.netLkrMinor
         val cryptoLabel = if (netCryptoPnl >= 0) "REALIZED NET GAIN" else "REALIZED NET LOSS"
 
         return MonthlyAnalyticsBreakdown(

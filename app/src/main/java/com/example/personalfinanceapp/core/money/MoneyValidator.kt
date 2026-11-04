@@ -42,4 +42,25 @@ object MoneyValidator {
 
         return Result.success(amount)
     }
+
+    fun parseNonNegativeAmount(
+        input: String,
+        fieldName: String = "Amount"
+    ): Result<BigDecimal> {
+        val cleanedInput = input.trim()
+        if (cleanedInput.isEmpty()) {
+            return Result.failure(IllegalArgumentException("$fieldName cannot be empty"))
+        }
+        if (!amountPattern.matches(cleanedInput)) {
+            return Result.failure(
+                IllegalArgumentException("Enter a valid ${fieldName.lowercase()} with up to 2 decimal places")
+            )
+        }
+
+        val amount = cleanedInput.toBigDecimalOrNull()
+        if (amount == null || amount < BigDecimal.ZERO) {
+            return Result.failure(IllegalArgumentException("$fieldName cannot be negative"))
+        }
+        return Result.success(amount)
+    }
 }

@@ -18,6 +18,9 @@ enum class IncomeEditorMode {
 
 data class IncomeFormErrors(
     val amount: String? = null,
+    val saleProceeds: String? = null,
+    val costBasis: String? = null,
+    val fees: String? = null,
     val transactionDate: String? = null,
     val rate: String? = null,
     val pnlDirection: String? = null,
@@ -25,6 +28,9 @@ data class IncomeFormErrors(
 ) {
     val hasErrors: Boolean
         get() = amount != null ||
+            saleProceeds != null ||
+            costBasis != null ||
+            fees != null ||
             transactionDate != null ||
             rate != null ||
             pnlDirection != null ||
@@ -38,6 +44,9 @@ data class IncomeFormUiState(
     val originalIncome: Income?,
     val selectedSource: IncomeSource,
     val amountText: String,
+    val saleProceedsText: String = "",
+    val costBasisText: String = "",
+    val feesText: String = "0",
     val transactionDate: LocalDate?,
     val selectedCurrency: CurrencyCode = CurrencyCode.LKR,
     val selectedRateMode: IncomeRateSelectionMode? = null,
@@ -59,6 +68,10 @@ data class IncomeFormUiState(
     val isSaving: Boolean = false,
     val saveError: String? = null
 ) {
+    val usesCryptoBreakdown: Boolean
+        get() = selectedSource == IncomeSource.CRYPTO &&
+            (mode == IncomeEditorMode.ADD || originalIncome?.cryptoRealizedDetails != null)
+
     init {
         require(draftId.isNotBlank()) { "Income draft ID cannot be empty" }
         require(ownerId.isNotBlank()) { "Income draft owner cannot be empty" }

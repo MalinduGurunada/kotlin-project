@@ -1,6 +1,7 @@
 package com.example.personalfinanceapp.feature.income
 
 import com.example.personalfinanceapp.core.model.CurrencyCode
+import com.example.personalfinanceapp.core.model.CryptoRealizedDetails
 import com.example.personalfinanceapp.core.model.Income
 import com.example.personalfinanceapp.core.model.IncomeEntryKind
 import com.example.personalfinanceapp.core.model.IncomeSource
@@ -46,7 +47,14 @@ object IncomeFirestoreMapper {
         "projectReference",
         "receivableId",
         "assetSymbol",
+        "cryptoRealizedDetails",
         "note"
+    )
+
+    private val requiredCryptoRealizedFields = setOf(
+        "costBasisOriginalDecimal",
+        "saleProceedsOriginalDecimal",
+        "feesOriginalDecimal"
     )
 
     private val requiredMoneyFields = setOf(
@@ -83,6 +91,16 @@ object IncomeFirestoreMapper {
             income.projectReference?.let { put("projectReference", it) }
             income.receivableId?.let { put("receivableId", it) }
             income.assetSymbol?.let { put("assetSymbol", it) }
+            income.cryptoRealizedDetails?.let { details ->
+                put(
+                    "cryptoRealizedDetails",
+                    linkedMapOf(
+                        "costBasisOriginalDecimal" to details.costBasisOriginalDecimal,
+                        "saleProceedsOriginalDecimal" to details.saleProceedsOriginalDecimal,
+                        "feesOriginalDecimal" to details.feesOriginalDecimal
+                    )
+                )
+            }
             income.note?.let { put("note", it) }
         }
     }
@@ -173,6 +191,37 @@ object IncomeFirestoreMapper {
             )
         )
 
+        val cryptoRealizedDetails = fields["cryptoRealizedDetails"]?.let {
+            val detailFields = requireMap(documentId, fields, "cryptoRealizedDetails")
+            requireExactFields(
+                documentId = documentId,
+                fieldPath = "cryptoRealizedDetails",
+                fields = detailFields,
+                requiredFields = requiredCryptoRealizedFields,
+                optionalFields = emptySet()
+            )
+            CryptoRealizedDetails(
+                costBasisOriginalDecimal = requireString(
+                    documentId,
+                    detailFields,
+                    "costBasisOriginalDecimal",
+                    "cryptoRealizedDetails.costBasisOriginalDecimal"
+                ),
+                saleProceedsOriginalDecimal = requireString(
+                    documentId,
+                    detailFields,
+                    "saleProceedsOriginalDecimal",
+                    "cryptoRealizedDetails.saleProceedsOriginalDecimal"
+                ),
+                feesOriginalDecimal = requireString(
+                    documentId,
+                    detailFields,
+                    "feesOriginalDecimal",
+                    "cryptoRealizedDetails.feesOriginalDecimal"
+                )
+            )
+        }
+
         val income = Income(
             id = storedId,
             source = source,
@@ -183,6 +232,7 @@ object IncomeFirestoreMapper {
             projectReference = optionalString(documentId, fields, "projectReference"),
             receivableId = optionalString(documentId, fields, "receivableId"),
             assetSymbol = optionalString(documentId, fields, "assetSymbol"),
+            cryptoRealizedDetails = cryptoRealizedDetails,
             note = optionalString(documentId, fields, "note")
         )
 
@@ -387,6 +437,10 @@ object IncomeFirestoreMapper {
             message?.contains("Regular income") == true -> "entryKind"
             message?.contains("gain or loss") == true -> "pnlDirection"
             message?.contains("Profit or loss direction") == true -> "pnlDirection"
+            message?.contains("Cost basis") == true -> "cryptoRealizedDetails.costBasisOriginalDecimal"
+            message?.contains("Sale proceeds") == true -> "cryptoRealizedDetails.saleProceedsOriginalDecimal"
+            message?.contains("Fees") == true -> "cryptoRealizedDetails.feesOriginalDecimal"
+            message?.contains("realised result", ignoreCase = true) == true -> "cryptoRealizedDetails"
             else -> "document"
         }
     }
