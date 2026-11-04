@@ -11,6 +11,7 @@ import androidx.compose.ui.test.performClick
 import com.example.personalfinanceapp.core.model.Category
 import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.feature.category.ui.CategoryScreenContent
+import com.example.personalfinanceapp.feature.category.ui.CategoryDialogState
 import com.example.personalfinanceapp.feature.category.ui.CategoryUiState
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 import org.junit.Assert.assertEquals
@@ -120,6 +121,42 @@ class CategoryScreenTest {
 
         composeTestRule.onNodeWithContentDescription("Archive Food").performClick()
         assertEquals(category, archivedCategory)
+    }
+
+    @Test
+    fun editDialog_whenClassificationChanged_submitsNameAndNewClassification() {
+        var submittedId: String? = null
+        var submittedName: String? = null
+        var submittedClass: SpendingClass? = null
+
+        composeTestRule.setContent {
+            PersonalFinanceAppTheme {
+                CategoryScreenContent(
+                    uiState = CategoryUiState.Success(
+                        activeCategories = emptyList(),
+                        archivedCategories = emptyList()
+                    ),
+                    activeDialog = CategoryDialogState.Rename(
+                        categoryId = "food",
+                        categoryName = "Food",
+                        spendingClass = SpendingClass.DISCRETIONARY
+                    ),
+                    onConfirmRename = { id, name, spendingClass ->
+                        submittedId = id
+                        submittedName = name
+                        submittedClass = spendingClass
+                    }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Edit Category").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("category_dialog_option_committed").performClick()
+        composeTestRule.onNodeWithTag("category_dialog_save").performClick()
+
+        assertEquals("food", submittedId)
+        assertEquals("Food", submittedName)
+        assertEquals(SpendingClass.COMMITTED, submittedClass)
     }
 
     @Test

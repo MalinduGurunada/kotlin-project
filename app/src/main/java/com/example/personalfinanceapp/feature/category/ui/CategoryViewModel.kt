@@ -85,9 +85,13 @@ class CategoryViewModel @Inject constructor(
         }
     }
 
-    fun renameCategory(id: DocumentId, newName: String) {
+    fun updateCategory(
+        id: DocumentId,
+        newName: String,
+        spendingClass: SpendingClass
+    ) {
         viewModelScope.launch {
-            val result = repository.renameCategory(id, newName.trim())
+            val result = repository.updateCategory(id, newName.trim(), spendingClass)
 
             result.fold(
                 onSuccess = {
@@ -96,7 +100,7 @@ class CategoryViewModel @Inject constructor(
                 onFailure = { exception ->
                     _events.emit(
                         CategoryEvent.ValidationFailed(
-                            exception.message ?: "Failed to rename category"
+                            exception.message ?: "Failed to update category"
                         )
                     )
                 }

@@ -118,15 +118,15 @@ class CategoryViewModelTest {
         assertEquals(SpendingClass.COMMITTED, newCategory.defaultSpendingClass)
     }
 
-    // 6. Rename valid: name changes, id stays same, CategorySaved event
+    // 6. Edit valid: name and spending class change, id stays same, CategorySaved event
     @Test
-    fun renameCategory_validNewName_updatesNameAndEmitsSavedEvent() = runTest {
+    fun updateCategory_validValues_updatesNameAndClassAndEmitsSavedEvent() = runTest {
         val events = mutableListOf<CategoryEvent>()
         val job = backgroundScope.launch(testDispatcher) {
             viewModel.events.collect { events.add(it) }
         }
 
-        viewModel.renameCategory("food", "Groceries")
+        viewModel.updateCategory("food", "Groceries", SpendingClass.COMMITTED)
 
         assertEquals(1, events.size)
         assertEquals(CategoryEvent.CategorySaved, events.first())
@@ -134,20 +134,21 @@ class CategoryViewModelTest {
         val state = viewModel.uiState.value as CategoryUiState.Success
         val updated = state.activeCategories.first { it.id == "food" }
         assertEquals("Groceries", updated.name)
+        assertEquals(SpendingClass.COMMITTED, updated.defaultSpendingClass)
 
         job.cancel()
     }
 
-    // 7. Rename to blank, and rename to another category's name: ValidationFailed, original name unchanged
+    // 7. Edit to blank, and edit to another category's name: ValidationFailed, original values unchanged
     @Test
-    fun renameCategory_blankOrDuplicateName_emitsValidationFailedAndKeepsOriginalName() = runTest {
+    fun updateCategory_blankOrDuplicateName_emitsValidationFailedAndKeepsOriginalValues() = runTest {
         val events = mutableListOf<CategoryEvent>()
         val job = backgroundScope.launch(testDispatcher) {
             viewModel.events.collect { events.add(it) }
         }
 
-        viewModel.renameCategory("food", "   ")
-        viewModel.renameCategory("food", "Transport")
+        viewModel.updateCategory("food", "   ", SpendingClass.COMMITTED)
+        viewModel.updateCategory("food", "Transport", SpendingClass.COMMITTED)
 
         assertEquals(2, events.size)
         assertTrue(events[0] is CategoryEvent.ValidationFailed)
@@ -156,6 +157,7 @@ class CategoryViewModelTest {
         val state = viewModel.uiState.value as CategoryUiState.Success
         val category = state.activeCategories.first { it.id == "food" }
         assertEquals("Food", category.name)
+        assertEquals(SpendingClass.DISCRETIONARY, category.defaultSpendingClass)
 
         job.cancel()
     }
@@ -199,7 +201,7 @@ class CategoryViewModelTest {
     @Test
     fun failedAction_neverReplacesListWithCategoryUiStateError() = runTest {
         viewModel.addCategory("", SpendingClass.DISCRETIONARY)
-        viewModel.renameCategory("food", "")
+        viewModel.updateCategory("food", "", SpendingClass.COMMITTED)
         viewModel.setCategoryArchived("non-existent-id", true)
 
         val state = viewModel.uiState.value

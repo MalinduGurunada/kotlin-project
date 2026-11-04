@@ -5,7 +5,9 @@ import com.example.personalfinanceapp.core.model.DocumentId
 import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.feature.auth.accountScopedData
 import com.example.personalfinanceapp.feature.auth.observeUserIds
+import com.google.android.gms.tasks.Task
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.CollectionReference
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -14,6 +16,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.suspendCancellableCoroutine
 import javax.inject.Inject
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class FirestoreCategoryRepository @Inject constructor(
     private val firestore: FirebaseFirestore,
@@ -30,7 +33,10 @@ class FirestoreCategoryRepository @Inject constructor(
         .accountScopedData(emptyList(), ::observeCategoriesForOwner)
 
     private fun observeCategoriesForOwner(uid: String): Flow<List<Category>> = callbackFlow {
-        val listener = getCategoryCollection(uid).addSnapshotListener { snapshot, error ->
+        val collection = getCategoryCollection(uid)
+        seedMissingDefaultCategories(collection)
+
+        val listener = collection.addSnapshotListener { snapshot, error ->
             if (error != null) {
                 close(error)
                 return@addSnapshotListener
@@ -66,6 +72,38 @@ class FirestoreCategoryRepository @Inject constructor(
             listener.remove()
         }
     }.distinctUntilChanged()
+
+    private suspend fun seedMissingDefaultCategories(
+        collection: CollectionReference
+    ) {
+        val snapshot = collection.get().awaitValue()
+        val existingIds = buildSet {
+            snapshot.documents.forEach { document ->
+                add(document.id)
+                document.getString("id")?.let(::add)
+            }
+        }
+        val existingNames = snapshot.documents.mapNotNullTo(mutableSetOf()) {
+            it.getString("name")
+        }
+        val missingCategories = missingDefaultCategories(existingIds, existingNames)
+
+        if (missingCategories.isEmpty()) return
+
+        val batch = firestore.batch()
+        missingCategories.forEach { category ->
+            batch.set(
+                collection.document(category.id),
+                mapOf(
+                    "id" to category.id,
+                    "name" to category.name,
+                    "defaultSpendingClass" to category.defaultSpendingClass.name,
+                    "archived" to false
+                )
+            )
+        }
+        batch.commit().awaitValue()
+    }
 
     override suspend fun addCategory(category: Category): Result<Unit> {
         val uid = currentUserId ?: return Result.failure(
@@ -115,6 +153,26 @@ class FirestoreCategoryRepository @Inject constructor(
         val uid = currentUserId ?: return Result.failure(
             IllegalStateException("User is not signed in")
         )
+        val snapshot = runCatching {
+            getCategoryCollection(uid).document(id).get().awaitValue()
+        }.getOrElse { exception ->
+            return Result.failure(exception)
+        }
+        val spendingClass = snapshot.getString("defaultSpendingClass")
+            ?.let { value -> runCatching { SpendingClass.valueOf(value) }.getOrNull() }
+            ?: SpendingClass.DISCRETIONARY
+
+        return updateCategory(id, newName, spendingClass)
+    }
+
+    override suspend fun updateCategory(
+        id: DocumentId,
+        newName: String,
+        spendingClass: SpendingClass
+    ): Result<Unit> {
+        val uid = currentUserId ?: return Result.failure(
+            IllegalStateException("User is not signed in")
+        )
 
         val name = newName.trim()
         if (name.isBlank()) {
@@ -129,7 +187,8 @@ class FirestoreCategoryRepository @Inject constructor(
             collectionRef.get().addOnSuccessListener { snapshot ->
                 val existingDocs = snapshot.documents
                 val duplicateNameExists = existingDocs.any { doc ->
-                    doc.id != id && doc.getString("name")?.equals(name, ignoreCase = true) == true
+                    doc.id != id && doc.getString("name")?.let(::normalizeCategoryName) ==
+                        normalizeCategoryName(name)
                 }
 
                 if (duplicateNameExists) {
@@ -139,7 +198,12 @@ class FirestoreCategoryRepository @Inject constructor(
                     return@addOnSuccessListener
                 }
 
-                collectionRef.document(id).update("name", name)
+                collectionRef.document(id).update(
+                    mapOf(
+                        "name" to name,
+                        "defaultSpendingClass" to spendingClass.name
+                    )
+                )
                     .addOnSuccessListener {
                         continuation.resume(Result.success(Unit))
                     }
@@ -166,5 +230,17 @@ class FirestoreCategoryRepository @Inject constructor(
                     continuation.resume(Result.failure(exception))
                 }
         }
+    }
+}
+
+private suspend fun <T> Task<T>.awaitValue(): T = suspendCancellableCoroutine { continuation ->
+    addOnSuccessListener { value ->
+        if (continuation.isActive) continuation.resume(value)
+    }
+    addOnFailureListener { exception ->
+        if (continuation.isActive) continuation.resumeWithException(exception)
+    }
+    addOnCanceledListener {
+        continuation.cancel()
     }
 }

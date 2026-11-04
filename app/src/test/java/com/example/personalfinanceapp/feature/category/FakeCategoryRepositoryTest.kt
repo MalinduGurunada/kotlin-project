@@ -73,12 +73,13 @@ class FakeCategoryRepositoryTest {
     }
 
     @Test
-    fun renameCategorySuccessfully() = runTest {
+    fun updateCategorySuccessfullyChangesNameAndSpendingClass() = runTest {
         val repository = FakeCategoryRepository()
 
-        val result = repository.renameCategory(
+        val result = repository.updateCategory(
             id = "food",
-            newName = "Meals"
+            newName = "Meals",
+            spendingClass = SpendingClass.COMMITTED
         )
 
         assertTrue(result.isSuccess)
@@ -87,6 +88,7 @@ class FakeCategoryRepositoryTest {
         val updatedCategory = categories.first { it.id == "food" }
 
         assertEquals("Meals", updatedCategory.name)
+        assertEquals(SpendingClass.COMMITTED, updatedCategory.defaultSpendingClass)
     }
 
     @Test
