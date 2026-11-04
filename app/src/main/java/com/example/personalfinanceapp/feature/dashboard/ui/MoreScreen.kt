@@ -64,6 +64,7 @@ fun MoreScreen(
     notificationsEnabled: Boolean = true,
     onNotificationsEnabledChange: (Boolean) -> Unit = {},
     onCategoriesClick: () -> Unit,
+    onFinancialSummariesClick: () -> Unit,
     onExpensesClick: () -> Unit,
     onIncomeClick: () -> Unit,
     onReceivablesClick: () -> Unit,
@@ -163,7 +164,8 @@ fun MoreScreen(
                             title = "Financial Summaries",
                             subtitle = "Monthly cash-flow reports and breakdowns",
                             icon = MoreIcons.Summary,
-                            status = "Coming soon"
+                            testTag = "more_financial_summaries",
+                            onClick = onFinancialSummariesClick
                         ),
                         MoreItem(
                             title = "Recurring Commitments",
@@ -696,6 +698,7 @@ private fun MoreScreenPreview() {
         MoreScreen(
             userName = "Himasha Perera",
             onCategoriesClick = {},
+            onFinancialSummariesClick = {},
             onExpensesClick = {},
             onIncomeClick = {},
             onReceivablesClick = {},

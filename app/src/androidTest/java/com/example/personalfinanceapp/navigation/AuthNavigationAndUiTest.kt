@@ -166,12 +166,14 @@ class AuthNavigationAndUiTest {
     @Test
     fun moreScreenExposesAllManagementDestinationsAndSignOut() {
         val destinations = mutableListOf<ManagementDestination>()
+        var financialSummariesClicked = false
         var signOutClicked = false
         composeRule.setContent {
             PersonalFinanceAppTheme(dynamicColor = false) {
                 MoreScreen(
                     userName = "Raveen",
                     onCategoriesClick = { destinations += ManagementDestination.CATEGORIES },
+                    onFinancialSummariesClick = { financialSummariesClicked = true },
                     onExpensesClick = { destinations += ManagementDestination.EXPENSES },
                     onIncomeClick = { destinations += ManagementDestination.INCOME },
                     onReceivablesClick = { destinations += ManagementDestination.RECEIVABLES },
@@ -185,6 +187,7 @@ class AuthNavigationAndUiTest {
 
         composeRule.onNodeWithText("More / Preferences").assertIsDisplayed()
         composeRule.onNodeWithTag("more_categories").performClick()
+        composeRule.onNodeWithTag("more_financial_summaries").performClick()
         composeRule.onNodeWithTag("more_recurring").performClick()
         composeRule.onNodeWithTag("more_due_items").performClick()
         listOf("more_expenses", "more_income", "more_receivables", "more_sign_out").forEach { tag ->
@@ -203,6 +206,7 @@ class AuthNavigationAndUiTest {
                 ),
                 destinations
             )
+            assertTrue(financialSummariesClicked)
             assertTrue(signOutClicked)
         }
     }

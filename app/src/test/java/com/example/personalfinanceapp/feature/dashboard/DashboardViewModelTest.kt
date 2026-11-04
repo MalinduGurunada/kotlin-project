@@ -1,6 +1,7 @@
 package com.example.personalfinanceapp.feature.dashboard
 
 import com.example.personalfinanceapp.core.model.CurrencyCode
+import com.example.personalfinanceapp.core.model.Category
 import com.example.personalfinanceapp.core.model.Contribution
 import com.example.personalfinanceapp.core.model.ContributionKind
 import com.example.personalfinanceapp.core.model.CryptoRealizedDetails
@@ -15,18 +16,29 @@ import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.feature.auth.FakeAuthRepository
+import com.example.personalfinanceapp.feature.category.FakeCategoryRepository
+import com.example.personalfinanceapp.feature.category.CategoryRepository
 import com.example.personalfinanceapp.feature.dashboard.ui.DashboardViewModel
+import com.example.personalfinanceapp.feature.dashboard.ui.FinancialSummaryPeriod
+import com.example.personalfinanceapp.feature.dashboard.ui.calculateNetCashFlowMarginPercent
 import com.example.personalfinanceapp.feature.dashboard.ui.calculateGoalProgressAmounts
+import com.example.personalfinanceapp.feature.dashboard.ui.financialMagnitude
+import com.example.personalfinanceapp.feature.dashboard.ui.financialSummaryBounds
+import com.example.personalfinanceapp.feature.dashboard.ui.financialSummaryLocalDate
 import com.example.personalfinanceapp.feature.expense.FakeExpenseRepository
+import com.example.personalfinanceapp.feature.expense.ExpenseRepository
 import com.example.personalfinanceapp.feature.goal.FakeGoalRepository
 import com.example.personalfinanceapp.feature.goal.GoalRepository
 import com.example.personalfinanceapp.feature.income.FakeIncomeRepository
+import com.example.personalfinanceapp.feature.income.IncomeObservationSnapshot
+import com.example.personalfinanceapp.feature.income.IncomeRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -39,9 +51,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.math.BigDecimal
+import java.math.BigInteger
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -51,6 +66,7 @@ class DashboardViewModelTest {
     private lateinit var fakeAuthRepository: FakeAuthRepository
     private lateinit var fakeIncomeRepository: FakeIncomeRepository
     private lateinit var fakeExpenseRepository: FakeExpenseRepository
+    private lateinit var fakeCategoryRepository: FakeCategoryRepository
     private lateinit var fakeGoalRepository: FakeGoalRepository
     private lateinit var viewModel: DashboardViewModel
 
@@ -60,12 +76,14 @@ class DashboardViewModelTest {
         fakeAuthRepository = FakeAuthRepository(initialUserId = "user-1", initialEmail = "himasha@example.com")
         fakeIncomeRepository = FakeIncomeRepository()
         fakeExpenseRepository = FakeExpenseRepository()
+        fakeCategoryRepository = FakeCategoryRepository()
         fakeGoalRepository = FakeGoalRepository()
 
         viewModel = DashboardViewModel(
             authRepository = fakeAuthRepository,
             incomeRepository = fakeIncomeRepository,
             expenseRepository = fakeExpenseRepository,
+            categoryRepository = fakeCategoryRepository,
             goalRepository = fakeGoalRepository
         )
     }
@@ -186,6 +204,7 @@ class DashboardViewModelTest {
             authRepository = fakeAuthRepository,
             incomeRepository = fakeIncomeRepository,
             expenseRepository = fakeExpenseRepository,
+            categoryRepository = fakeCategoryRepository,
             goalRepository = fakeGoalRepository,
             clock = fixedClock
         )
@@ -404,6 +423,7 @@ class DashboardViewModelTest {
             authRepository = fakeAuthRepository,
             incomeRepository = fakeIncomeRepository,
             expenseRepository = fakeExpenseRepository,
+            categoryRepository = fakeCategoryRepository,
             goalRepository = failingRepository
         )
         backgroundScope.launch { unavailableViewModel.uiState.collect() }
@@ -465,4 +485,248 @@ class DashboardViewModelTest {
         assertTrue(viewModel.uiState.value.isLoading)
         assertNull(viewModel.uiState.value.activeGoal)
     }
+
+    @Test
+    fun financialSummaryPeriodBoundsFollowCalendarMonthAndQuarter() {
+        val today = LocalDate.of(2026, 11, 4)
+
+        val month = financialSummaryBounds(today, FinancialSummaryPeriod.MONTH)
+        assertEquals(LocalDate.of(2026, 11, 1), month.startDate)
+        assertEquals(LocalDate.of(2026, 12, 1), month.endDateExclusive)
+        assertEquals(LocalDate.of(2026, 10, 1), month.previousStartDate)
+        assertEquals("November 2026", month.label)
+
+        val quarter = financialSummaryBounds(today, FinancialSummaryPeriod.QUARTER)
+        assertEquals(LocalDate.of(2026, 10, 1), quarter.startDate)
+        assertEquals(LocalDate.of(2027, 1, 1), quarter.endDateExclusive)
+        assertEquals(LocalDate.of(2026, 7, 1), quarter.previousStartDate)
+        assertEquals("Q4 2026", quarter.label)
+    }
+
+    @Test
+    fun financialSummaryUsesDeviceZoneAtMonthAndQuarterBoundary() {
+        val instant = Instant.parse("2026-12-31T20:00:00Z")
+        val utcClock = Clock.fixed(instant, ZoneOffset.UTC)
+
+        assertEquals(LocalDate.of(2026, 12, 31), LocalDate.now(utcClock))
+        val localDate = financialSummaryLocalDate(utcClock, ZoneId.of("Asia/Colombo"))
+        assertEquals(LocalDate.of(2027, 1, 1), localDate)
+
+        val bounds = financialSummaryBounds(localDate, FinancialSummaryPeriod.QUARTER)
+        assertEquals(LocalDate.of(2027, 1, 1), bounds.startDate)
+        assertEquals(LocalDate.of(2027, 4, 1), bounds.endDateExclusive)
+        assertEquals("Q1 2027", bounds.label)
+    }
+
+    @Test
+    fun financialSummaryMarginAndChartMagnitudeHandleExtremeLongValues() {
+        val expectedMargin = BigInteger.valueOf(Long.MIN_VALUE)
+            .multiply(BigInteger.valueOf(100L))
+
+        assertEquals(
+            expectedMargin,
+            calculateNetCashFlowMarginPercent(
+                totalIncomeMinor = 1L,
+                netCashFlowMinor = Long.MIN_VALUE
+            )
+        )
+        assertEquals(BigInteger.valueOf(Long.MAX_VALUE).add(BigInteger.ONE), financialMagnitude(Long.MIN_VALUE))
+        assertNull(calculateNetCashFlowMarginPercent(0L, Long.MIN_VALUE))
+    }
+
+    @Test
+    fun financialSummaryFiltersPersistedDataAndClearsOnSignOut() = runTest {
+        val fixedClock = Clock.fixed(
+            Instant.parse("2026-11-04T00:00:00Z"),
+            ZoneOffset.UTC
+        )
+        val summaryViewModel = DashboardViewModel(
+            authRepository = fakeAuthRepository,
+            incomeRepository = fakeIncomeRepository,
+            expenseRepository = fakeExpenseRepository,
+            categoryRepository = fakeCategoryRepository,
+            goalRepository = fakeGoalRepository,
+            clock = fixedClock
+        )
+        backgroundScope.launch { summaryViewModel.financialSummaryState.collect() }
+
+        fun money(amountMinor: Long, date: LocalDate) = Money(
+            originalAmountDecimal = BigDecimal.valueOf(amountMinor, 2).toPlainString(),
+            originalCurrency = CurrencyCode.LKR,
+            rateLkrPerUnitDecimal = "1.00",
+            baseAmountMinor = amountMinor,
+            rateSource = RateSource.LKR_FIXED,
+            rateDate = date
+        )
+
+        val novemberDate = LocalDate.of(2026, 11, 3)
+        val octoberDate = LocalDate.of(2026, 10, 12)
+        fakeIncomeRepository.saveIncome(
+            Income(
+                id = "november-salary",
+                source = IncomeSource.SALARY,
+                entryKind = IncomeEntryKind.RECEIPT,
+                money = money(10_000_000L, novemberDate),
+                occurredDate = novemberDate
+            )
+        ).getOrThrow()
+        fakeIncomeRepository.saveIncome(
+            Income(
+                id = "october-crypto-loss",
+                source = IncomeSource.CRYPTO,
+                entryKind = IncomeEntryKind.REALIZED_PNL,
+                money = money(1_000_000L, octoberDate),
+                occurredDate = octoberDate,
+                pnlDirection = PnlDirection.LOSS
+            )
+        ).getOrThrow()
+        fakeExpenseRepository.saveExpense(
+            Expense(
+                id = "november-food",
+                categoryId = "food",
+                categoryNameSnapshot = "Old category snapshot",
+                spendingClass = SpendingClass.DISCRETIONARY,
+                paymentChannel = PaymentChannel.CARD,
+                money = money(2_500_000L, novemberDate),
+                occurredDate = novemberDate
+            )
+        ).getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val month = summaryViewModel.financialSummaryState.value
+        assertEquals(10_000_000L, month.totalIncomeLkrMinor)
+        assertEquals(2_500_000L, month.totalExpenseLkrMinor)
+        assertEquals(7_500_000L, month.netCashFlowLkrMinor)
+        assertEquals(BigInteger.valueOf(75L), month.netCashFlowMarginPercent)
+        assertEquals("Food", month.analytics.expenseCategoryBreakdown.single().categoryName)
+        assertEquals(0L, month.analytics.cryptoYtdResult.netPnlLkrMinor)
+
+        summaryViewModel.selectFinancialSummaryPeriod(FinancialSummaryPeriod.QUARTER)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val quarter = summaryViewModel.financialSummaryState.value
+        assertEquals("Q4 2026", quarter.periodLabel)
+        assertEquals(9_000_000L, quarter.totalIncomeLkrMinor)
+        assertEquals(2_500_000L, quarter.totalExpenseLkrMinor)
+        assertEquals(6_500_000L, quarter.netCashFlowLkrMinor)
+        assertEquals(-1_000_000L, quarter.analytics.cryptoYtdResult.netPnlLkrMinor)
+        assertEquals(3, quarter.trendPoints.size)
+
+        fakeAuthRepository.signOut().getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val signedOut = summaryViewModel.financialSummaryState.value
+        assertEquals(0L, signedOut.totalIncomeLkrMinor)
+        assertEquals(0L, signedOut.totalExpenseLkrMinor)
+        assertTrue(signedOut.analytics.incomeSourceBreakdown.isEmpty())
+    }
+
+    @Test
+    fun financialSummaryAccountSwitchReplacesAllAccountScopedData() = runTest {
+        val date = LocalDate.of(2026, 11, 3)
+        fun money(amountMinor: Long) = Money(
+            originalAmountDecimal = BigDecimal.valueOf(amountMinor, 2).toPlainString(),
+            originalCurrency = CurrencyCode.LKR,
+            rateLkrPerUnitDecimal = "1.00",
+            baseAmountMinor = amountMinor,
+            rateSource = RateSource.LKR_FIXED,
+            rateDate = date
+        )
+        fun income(id: String, amountMinor: Long) = Income(
+            id = id,
+            source = IncomeSource.SALARY,
+            entryKind = IncomeEntryKind.RECEIPT,
+            money = money(amountMinor),
+            occurredDate = date
+        )
+        fun expense(id: String, categoryId: String, amountMinor: Long) = Expense(
+            id = id,
+            categoryId = categoryId,
+            categoryNameSnapshot = "Snapshot $categoryId",
+            spendingClass = SpendingClass.DISCRETIONARY,
+            paymentChannel = PaymentChannel.CARD,
+            money = money(amountMinor),
+            occurredDate = date
+        )
+
+        val incomesByOwner = mapOf(
+            "user-1" to listOf(income("a-income", 10_000_000L)),
+            "user-2" to listOf(income("b-income", 20_000_000L))
+        )
+        val expensesByOwner = mapOf(
+            "user-1" to listOf(expense("a-expense", "a-category", 1_000_000L)),
+            "user-2" to listOf(expense("b-expense", "b-category", 2_500_000L))
+        )
+        val categoriesByOwner = mapOf(
+            "user-1" to listOf(Category("a-category", "Account A category", SpendingClass.DISCRETIONARY)),
+            "user-2" to listOf(Category("b-category", "Account B category", SpendingClass.DISCRETIONARY))
+        )
+        val accountIncomeRepository = object : IncomeRepository {
+            override fun observeIncomeSnapshots(startDate: LocalDate, endDateExclusive: LocalDate) =
+                fakeAuthRepository.observeAuthState().map { ownerId ->
+                    if (ownerId == null) {
+                        IncomeObservationSnapshot.signedOut()
+                    } else {
+                        IncomeObservationSnapshot.forOwner(
+                            ownerId,
+                            incomesByOwner[ownerId].orEmpty().filter {
+                                !it.occurredDate.isBefore(startDate) &&
+                                    it.occurredDate.isBefore(endDateExclusive)
+                            }
+                        )
+                    }
+                }
+
+            override suspend fun saveIncome(income: Income) = unsupportedWrite()
+            override suspend fun saveIncomeForOwner(expectedOwnerId: String, income: Income) = unsupportedWrite()
+            override suspend fun deleteIncome(id: String) = unsupportedWrite()
+            override suspend fun deleteIncomeForOwner(expectedOwnerId: String, id: String) = unsupportedWrite()
+        }
+        val accountExpenseRepository = object : ExpenseRepository {
+            override fun observeExpenses(startDate: LocalDate, endDateExclusive: LocalDate) =
+                fakeAuthRepository.observeAuthState().map { ownerId ->
+                    ownerId?.let(expensesByOwner::get).orEmpty().filter {
+                        !it.occurredDate.isBefore(startDate) &&
+                            it.occurredDate.isBefore(endDateExclusive)
+                    }
+                }
+
+            override suspend fun saveExpense(expense: Expense) = unsupportedWrite()
+            override suspend fun deleteExpense(id: String) = unsupportedWrite()
+        }
+        val accountCategoryRepository = object : CategoryRepository {
+            override fun observeCategories() = fakeAuthRepository.observeAuthState()
+                .map { ownerId -> ownerId?.let(categoriesByOwner::get).orEmpty() }
+
+            override suspend fun addCategory(category: Category) = unsupportedWrite()
+            override suspend fun renameCategory(id: String, newName: String) = unsupportedWrite()
+            override suspend fun setCategoryArchived(id: String, archived: Boolean) = unsupportedWrite()
+        }
+        val summaryViewModel = DashboardViewModel(
+            authRepository = fakeAuthRepository,
+            incomeRepository = accountIncomeRepository,
+            expenseRepository = accountExpenseRepository,
+            categoryRepository = accountCategoryRepository,
+            goalRepository = fakeGoalRepository,
+            clock = Clock.fixed(Instant.parse("2026-11-04T00:00:00Z"), ZoneOffset.UTC)
+        )
+        backgroundScope.launch { summaryViewModel.financialSummaryState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val accountA = summaryViewModel.financialSummaryState.value
+        assertEquals(10_000_000L, accountA.totalIncomeLkrMinor)
+        assertEquals(1_000_000L, accountA.totalExpenseLkrMinor)
+        assertEquals("Account A category", accountA.analytics.expenseCategoryBreakdown.single().categoryName)
+
+        fakeAuthRepository.simulateAccountSwitch("user-2", "user2@example.com")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val accountB = summaryViewModel.financialSummaryState.value
+        assertEquals(20_000_000L, accountB.totalIncomeLkrMinor)
+        assertEquals(2_500_000L, accountB.totalExpenseLkrMinor)
+        assertEquals(17_500_000L, accountB.netCashFlowLkrMinor)
+        assertEquals("Account B category", accountB.analytics.expenseCategoryBreakdown.single().categoryName)
+    }
+
+    private fun unsupportedWrite(): Result<Unit> = Result.failure(UnsupportedOperationException())
 }

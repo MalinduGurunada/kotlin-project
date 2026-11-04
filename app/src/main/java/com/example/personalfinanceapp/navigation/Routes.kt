@@ -33,6 +33,9 @@ data object RecurringCommitments
 data object DueItems
 
 @Serializable
+data object FinancialSummaries
+
+@Serializable
 data object Overview
 
 @Serializable

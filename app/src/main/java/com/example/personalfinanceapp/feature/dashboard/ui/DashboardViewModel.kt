@@ -11,6 +11,9 @@ import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.feature.auth.AuthRepository
+import com.example.personalfinanceapp.feature.category.CategoryRepository
+import com.example.personalfinanceapp.feature.dashboard.analytics.IncomeSpendingBreakdownCalculator
+import com.example.personalfinanceapp.feature.dashboard.analytics.MonthlyAnalyticsBreakdown
 import com.example.personalfinanceapp.feature.expense.ExpenseRepository
 import com.example.personalfinanceapp.feature.goal.GoalRepository
 import com.example.personalfinanceapp.feature.income.IncomeRepository
@@ -20,6 +23,7 @@ import com.example.personalfinanceapp.feature.income.signedBaseAmountMinor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.catch
@@ -31,6 +35,8 @@ import kotlinx.coroutines.flow.stateIn
 import java.math.BigInteger
 import java.time.LocalDate
 import java.time.Clock
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
 
@@ -81,6 +87,130 @@ data class DashboardUiState(
     val errorMessage: String? = null
 )
 
+enum class FinancialSummaryPeriod {
+    MONTH,
+    QUARTER
+}
+
+data class FinancialTrendPoint(
+    val label: String,
+    val incomeLkrMinor: Long,
+    val expenseLkrMinor: Long,
+    val netCashFlowLkrMinor: Long
+)
+
+data class FinancialSummaryUiState(
+    val selectedPeriod: FinancialSummaryPeriod = FinancialSummaryPeriod.MONTH,
+    val periodLabel: String = "",
+    val comparisonLabel: String = "previous month",
+    val totalIncomeLkrMinor: Long = 0L,
+    val totalExpenseLkrMinor: Long = 0L,
+    val netCashFlowLkrMinor: Long = 0L,
+    val netCashFlowMarginPercent: BigInteger? = null,
+    val analytics: MonthlyAnalyticsBreakdown = MonthlyAnalyticsBreakdown(),
+    val trendPoints: List<FinancialTrendPoint> = emptyList(),
+    val hasPreviousPeriodExpenses: Boolean = false,
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null
+)
+
+internal data class FinancialSummaryBounds(
+    val startDate: LocalDate,
+    val endDateExclusive: LocalDate,
+    val previousStartDate: LocalDate,
+    val label: String,
+    val comparisonLabel: String
+)
+
+internal fun financialSummaryLocalDate(
+    clock: Clock,
+    zoneId: ZoneId = ZoneId.systemDefault()
+): LocalDate = LocalDate.now(clock.withZone(zoneId))
+
+internal fun calculateNetCashFlowMarginPercent(
+    totalIncomeMinor: Long,
+    netCashFlowMinor: Long
+): BigInteger? = if (totalIncomeMinor > 0L) {
+    BigInteger.valueOf(netCashFlowMinor)
+        .multiply(BigInteger.valueOf(100L))
+        .divide(BigInteger.valueOf(totalIncomeMinor))
+} else {
+    null
+}
+
+internal fun financialSummaryBounds(
+    today: LocalDate,
+    period: FinancialSummaryPeriod
+): FinancialSummaryBounds {
+    val startDate = when (period) {
+        FinancialSummaryPeriod.MONTH -> today.withDayOfMonth(1)
+        FinancialSummaryPeriod.QUARTER -> {
+            val firstMonth = ((today.monthValue - 1) / 3) * 3 + 1
+            LocalDate.of(today.year, firstMonth, 1)
+        }
+    }
+    val months = if (period == FinancialSummaryPeriod.MONTH) 1L else 3L
+    val endDateExclusive = startDate.plusMonths(months)
+    val label = when (period) {
+        FinancialSummaryPeriod.MONTH -> startDate.format(
+            DateTimeFormatter.ofPattern("MMMM yyyy", Locale.US)
+        )
+        FinancialSummaryPeriod.QUARTER ->
+            "Q${((startDate.monthValue - 1) / 3) + 1} ${startDate.year}"
+    }
+    return FinancialSummaryBounds(
+        startDate = startDate,
+        endDateExclusive = endDateExclusive,
+        previousStartDate = startDate.minusMonths(months),
+        label = label,
+        comparisonLabel = if (period == FinancialSummaryPeriod.MONTH) {
+            "previous month"
+        } else {
+            "previous quarter"
+        }
+    )
+}
+
+internal fun calculateFinancialTrend(
+    period: FinancialSummaryPeriod,
+    bounds: FinancialSummaryBounds,
+    incomes: List<Income>,
+    expenses: List<Expense>
+): List<FinancialTrendPoint> {
+    val windows = buildList {
+        if (period == FinancialSummaryPeriod.MONTH) {
+            var start = bounds.startDate
+            while (start.isBefore(bounds.endDateExclusive)) {
+                val end = minOf(start.plusDays(7), bounds.endDateExclusive)
+                add(Triple(start, end, "${start.dayOfMonth}-${end.minusDays(1).dayOfMonth}"))
+                start = end
+            }
+        } else {
+            var start = bounds.startDate
+            while (start.isBefore(bounds.endDateExclusive)) {
+                val end = start.plusMonths(1)
+                add(Triple(start, end, start.month.name.take(3).lowercase().replaceFirstChar { it.uppercase() }))
+                start = end
+            }
+        }
+    }
+
+    return windows.map { (start, end, label) ->
+        val incomeMinor = incomes.asSequence()
+            .filter { !it.occurredDate.isBefore(start) && it.occurredDate.isBefore(end) }
+            .fold(0L) { total, income -> Math.addExact(total, income.signedBaseAmountMinor()) }
+        val expenseMinor = expenses.asSequence()
+            .filter { !it.occurredDate.isBefore(start) && it.occurredDate.isBefore(end) }
+            .fold(0L) { total, expense -> Math.addExact(total, expense.money.baseAmountMinor) }
+        FinancialTrendPoint(
+            label = label,
+            incomeLkrMinor = incomeMinor,
+            expenseLkrMinor = expenseMinor,
+            netCashFlowLkrMinor = Math.subtractExact(incomeMinor, expenseMinor)
+        )
+    }
+}
+
 internal data class GoalProgressAmounts(
     val savedMinor: Long,
     val remainingMinor: Long,
@@ -112,6 +242,7 @@ class DashboardViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val incomeRepository: IncomeRepository,
     private val expenseRepository: ExpenseRepository,
+    private val categoryRepository: CategoryRepository,
     private val goalRepository: GoalRepository,
     private val clock: Clock = Clock.systemUTC()
 ) : ViewModel() {
@@ -121,6 +252,8 @@ class DashboardViewModel @Inject constructor(
     private val endDateExclusive = now.withDayOfMonth(1).plusMonths(1)
     private val startOfYear = now.withDayOfYear(1)
     private val ytdEndDateExclusive = now.plusDays(1)
+    private val financialSummaryToday = financialSummaryLocalDate(clock)
+    private val financialSummaryPeriod = MutableStateFlow(FinancialSummaryPeriod.MONTH)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<DashboardUiState> = authRepository.observeAuthState()
@@ -176,6 +309,88 @@ class DashboardViewModel @Inject constructor(
             ),
             initialValue = DashboardUiState(isLoading = true)
         )
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val financialSummaryState: StateFlow<FinancialSummaryUiState> = combine(
+        authRepository.observeAuthState(),
+        financialSummaryPeriod
+    ) { userId, period -> userId to period }
+        .flatMapLatest { (userId, period) ->
+            if (userId == null) {
+                flowOf(FinancialSummaryUiState(selectedPeriod = period))
+            } else {
+                val bounds = financialSummaryBounds(financialSummaryToday, period)
+                combine(
+                    incomeRepository.observeIncomes(bounds.startDate, bounds.endDateExclusive),
+                    expenseRepository.observeExpenses(bounds.startDate, bounds.endDateExclusive),
+                    expenseRepository.observeExpenses(bounds.previousStartDate, bounds.startDate),
+                    categoryRepository.observeCategories()
+                ) { incomes, expenses, previousExpenses, categories ->
+                    val categoryNames = categories.associate { it.id to it.name }
+                    val analytics = IncomeSpendingBreakdownCalculator.calculateBreakdown(
+                        currentMonthIncomes = incomes,
+                        currentMonthExpenses = expenses,
+                        previousMonthExpenses = previousExpenses,
+                        yearToDateCryptoIncomes = incomes.filter { it.source == IncomeSource.CRYPTO },
+                        categoryNamesById = categoryNames
+                    )
+                    val totalIncomeMinor = incomes.fold(0L) { total, income ->
+                        Math.addExact(total, income.signedBaseAmountMinor())
+                    }
+                    val totalExpenseMinor = expenses.fold(0L) { total, expense ->
+                        Math.addExact(total, expense.money.baseAmountMinor)
+                    }
+                    val netCashFlowMinor = Math.subtractExact(totalIncomeMinor, totalExpenseMinor)
+                    val netCashFlowMargin = calculateNetCashFlowMarginPercent(
+                        totalIncomeMinor = totalIncomeMinor,
+                        netCashFlowMinor = netCashFlowMinor
+                    )
+                    FinancialSummaryUiState(
+                        selectedPeriod = period,
+                        periodLabel = bounds.label,
+                        comparisonLabel = bounds.comparisonLabel,
+                        totalIncomeLkrMinor = totalIncomeMinor,
+                        totalExpenseLkrMinor = totalExpenseMinor,
+                        netCashFlowLkrMinor = netCashFlowMinor,
+                        netCashFlowMarginPercent = netCashFlowMargin,
+                        analytics = analytics,
+                        trendPoints = calculateFinancialTrend(period, bounds, incomes, expenses),
+                        hasPreviousPeriodExpenses = previousExpenses.isNotEmpty(),
+                        isLoading = false
+                    )
+                }.onStart {
+                    emit(
+                        FinancialSummaryUiState(
+                            selectedPeriod = period,
+                            periodLabel = bounds.label,
+                            comparisonLabel = bounds.comparisonLabel,
+                            isLoading = true
+                        )
+                    )
+                }.catch { exception ->
+                    emit(
+                        FinancialSummaryUiState(
+                            selectedPeriod = period,
+                            periodLabel = bounds.label,
+                            comparisonLabel = bounds.comparisonLabel,
+                            errorMessage = exception.localizedMessage
+                                ?: "Financial summary data is currently unavailable"
+                        )
+                    )
+                }
+            }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(
+                stopTimeoutMillis = 0,
+                replayExpirationMillis = 0
+            ),
+            initialValue = FinancialSummaryUiState(isLoading = true)
+        )
+
+    fun selectFinancialSummaryPeriod(period: FinancialSummaryPeriod) {
+        financialSummaryPeriod.value = period
+    }
 
     private fun calculateDashboardState(
         incomes: List<Income>,
