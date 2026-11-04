@@ -154,12 +154,13 @@ class IncomeFormViewModelTest {
     }
 
     @Test
-    fun `crypto gain uses realized PNL entry kind and asset`() = runTest {
+    fun `crypto gain is derived from proceeds basis and fees`() = runTest {
         openNewDraft()
         viewModel.updateIncomeSource(IncomeSource.CRYPTO)
-        viewModel.updatePnlDirection(PnlDirection.GAIN)
         viewModel.updateAssetSymbol("  BTC  ")
-        viewModel.updateIncomeAmount("250.25")
+        viewModel.updateCryptoSaleProceeds("1000")
+        viewModel.updateCryptoCostBasis("600")
+        viewModel.updateCryptoFees("50")
 
         saveAndRun()
 
@@ -167,20 +168,25 @@ class IncomeFormViewModelTest {
         assertEquals(IncomeEntryKind.REALIZED_PNL, saved.entryKind)
         assertEquals(PnlDirection.GAIN, saved.pnlDirection)
         assertEquals("BTC", saved.assetSymbol)
+        assertEquals("350", saved.money.originalAmountDecimal)
+        assertEquals("600", saved.cryptoRealizedDetails?.costBasisOriginalDecimal)
+        assertEquals("1000", saved.cryptoRealizedDetails?.saleProceedsOriginalDecimal)
+        assertEquals("50", saved.cryptoRealizedDetails?.feesOriginalDecimal)
     }
 
     @Test
-    fun `crypto loss stores a positive magnitude and loss direction`() = runTest {
+    fun `crypto loss stores derived positive magnitude and loss direction`() = runTest {
         openNewDraft()
         viewModel.updateIncomeSource(IncomeSource.CRYPTO)
-        viewModel.updatePnlDirection(PnlDirection.LOSS)
-        viewModel.updateIncomeAmount("25")
+        viewModel.updateCryptoSaleProceeds("500")
+        viewModel.updateCryptoCostBasis("600")
+        viewModel.updateCryptoFees("25")
 
         saveAndRun()
 
         val saved = repository.saved.single()
         assertEquals(PnlDirection.LOSS, saved.pnlDirection)
-        assertTrue(saved.money.baseAmountMinor > 0L)
+        assertEquals(12_500L, saved.money.baseAmountMinor)
     }
 
     @Test
@@ -198,14 +204,13 @@ class IncomeFormViewModelTest {
     }
 
     @Test
-    fun `crypto without gain or loss exposes required metadata error`() = runTest {
+    fun `crypto requires proceeds and cost basis inputs`() = runTest {
         openNewDraft()
         viewModel.updateIncomeSource(IncomeSource.CRYPTO)
-        viewModel.updateIncomeAmount("100")
 
         viewModel.saveIncome()
 
-        assertEquals("Select gain or loss", viewModel.formState.value?.errors?.pnlDirection)
+        assertEquals("Sale proceeds cannot be empty", viewModel.formState.value?.errors?.saleProceeds)
         assertTrue(repository.saved.isEmpty())
     }
 

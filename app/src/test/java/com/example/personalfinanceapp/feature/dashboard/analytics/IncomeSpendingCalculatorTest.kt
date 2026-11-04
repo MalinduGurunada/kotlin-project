@@ -52,7 +52,11 @@ class IncomeSpendingCalculatorTest {
         return Income(
             id = id,
             source = source,
-            entryKind = IncomeEntryKind.RECEIPT,
+            entryKind = if (source == IncomeSource.CRYPTO) {
+                IncomeEntryKind.REALIZED_PNL
+            } else {
+                IncomeEntryKind.RECEIPT
+            },
             money = Money(
                 originalAmountDecimal = (amountMinor / 100).toString(),
                 originalCurrency = CurrencyCode.LKR,

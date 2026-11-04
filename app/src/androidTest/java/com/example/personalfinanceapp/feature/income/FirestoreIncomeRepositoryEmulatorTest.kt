@@ -5,9 +5,11 @@ import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.personalfinanceapp.core.model.Income
+import com.example.personalfinanceapp.core.model.CryptoRealizedDetails
 import com.example.personalfinanceapp.core.model.IncomeEntryKind
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.RateSource
+import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.money.MoneyConverter
 import com.example.personalfinanceapp.feature.auth.FirebaseAuthRepository
 import com.google.android.gms.tasks.Task
@@ -184,6 +186,37 @@ class FirestoreIncomeRepositoryEmulatorTest {
             IncomeFirestoreMapper.toFirestoreMap(updated),
             reference.get(Source.SERVER).awaitTask().data
         )
+    }
+
+    @Test
+    fun structuredCryptoPersistsNetResultWithoutCreatingGrossWithdrawalIncome() = runBlocking {
+        val user = registerUser("crypto")
+        val date = LocalDate.of(2026, 11, 2)
+        val incomeId = "crypto-${uniqueSuffix()}"
+        val income = Income(
+            id = incomeId,
+            source = IncomeSource.CRYPTO,
+            entryKind = IncomeEntryKind.REALIZED_PNL,
+            money = MoneyConverter.fromLkrNonNegative("350", date).getOrThrow(),
+            occurredDate = date,
+            pnlDirection = PnlDirection.GAIN,
+            assetSymbol = "BTC",
+            cryptoRealizedDetails = CryptoRealizedDetails(
+                costBasisOriginalDecimal = "600",
+                saleProceedsOriginalDecimal = "1000",
+                feesOriginalDecimal = "50"
+            )
+        )
+
+        assertSuccess(saveAndTrack(income))
+        assertSuccess(saveAndTrack(income))
+
+        val documents = incomeCollection(user.uid).get(Source.SERVER).awaitTask()
+        assertEquals(1, documents.size())
+        val stored = documents.documents.single()
+        assertEquals(35_000L, stored.getLong("money.baseAmountMinor"))
+        assertEquals("1000", stored.getString("cryptoRealizedDetails.saleProceedsOriginalDecimal"))
+        assertFalse(stored.data.orEmpty().containsKey("withdrawalIncome"))
     }
 
     @Test

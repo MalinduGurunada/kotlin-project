@@ -295,10 +295,10 @@ class IncomeRateSelectionCoordinator(
         requestAutomaticRate()
     }
 
-    fun prepareMoneySnapshot(): Result<Money> {
+    fun prepareMoneySnapshot(allowZero: Boolean = false): Result<Money> {
         ensureOpen()
         val current = _state.value
-        val result = calculateMoney(current)
+        val result = calculateMoney(current, allowZero)
 
         result.fold(
             onSuccess = { money ->
@@ -455,16 +455,26 @@ class IncomeRateSelectionCoordinator(
         }
     }
 
-    private fun calculateMoney(selection: IncomeRateSelectionState): Result<Money> =
+    private fun calculateMoney(
+        selection: IncomeRateSelectionState,
+        allowZero: Boolean = false
+    ): Result<Money> =
         when (selection.selectedCurrency) {
-            CurrencyCode.LKR -> MoneyConverter.fromLkr(
-                amountInput = selection.amountInput,
-                transactionDate = selection.transactionDate
-            )
+            CurrencyCode.LKR -> if (allowZero) {
+                MoneyConverter.fromLkrNonNegative(
+                    amountInput = selection.amountInput,
+                    transactionDate = selection.transactionDate
+                )
+            } else {
+                MoneyConverter.fromLkr(
+                    amountInput = selection.amountInput,
+                    transactionDate = selection.transactionDate
+                )
+            }
 
             CurrencyCode.USD -> when (selection.selectedRateMode) {
-                IncomeRateSelectionMode.AUTOMATIC -> calculateAutomaticMoney(selection)
-                IncomeRateSelectionMode.MANUAL -> calculateManualMoney(selection)
+                IncomeRateSelectionMode.AUTOMATIC -> calculateAutomaticMoney(selection, allowZero)
+                IncomeRateSelectionMode.MANUAL -> calculateManualMoney(selection, allowZero)
                 null -> Result.failure(
                     IllegalStateException("Select an exchange-rate mode")
                 )
@@ -472,10 +482,11 @@ class IncomeRateSelectionCoordinator(
         }
 
     private fun calculateAutomaticMoney(
-        selection: IncomeRateSelectionState
+        selection: IncomeRateSelectionState,
+        allowZero: Boolean = false
     ): Result<Money> {
         selection.preservedUsdMoney?.let { preserved ->
-            return recalculatePreservedUsdMoney(selection, preserved)
+            return recalculatePreservedUsdMoney(selection, preserved, allowZero)
         }
 
         val quote = selection.automaticQuote ?: return Result.failure(
@@ -490,46 +501,75 @@ class IncomeRateSelectionCoordinator(
             return Result.failure(it)
         }
 
-        return MoneyConverter.fromUsd(
-            amountInput = selection.amountInput,
-            rateLkrPerUsdInput = quote.rate.toPlainString(),
-            rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
-            rateDate = quote.applicableDate
-        )
+        return if (allowZero) {
+            MoneyConverter.fromUsdNonNegative(
+                amountInput = selection.amountInput,
+                rateLkrPerUsdInput = quote.rate.toPlainString(),
+                rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
+                rateDate = quote.applicableDate
+            )
+        } else {
+            MoneyConverter.fromUsd(
+                amountInput = selection.amountInput,
+                rateLkrPerUsdInput = quote.rate.toPlainString(),
+                rateSource = RateSource.EXCHANGE_RATE_API_REFERENCE,
+                rateDate = quote.applicableDate
+            )
+        }
     }
 
     private fun calculateManualMoney(
-        selection: IncomeRateSelectionState
+        selection: IncomeRateSelectionState,
+        allowZero: Boolean = false
     ): Result<Money> {
         selection.preservedUsdMoney?.let { preserved ->
-            return recalculatePreservedUsdMoney(selection, preserved)
+            return recalculatePreservedUsdMoney(selection, preserved, allowZero)
         }
 
         val source = selection.manualRateSource ?: return Result.failure(
             IllegalArgumentException("Select whether the manual rate is an actual transfer or reference rate")
         )
 
-        return MoneyConverter.fromUsd(
-            amountInput = selection.amountInput,
-            rateLkrPerUsdInput = selection.manualRateInput,
-            rateSource = source.moneyRateSource,
-            rateDate = selection.manualRateDate
-        )
+        return if (allowZero) {
+            MoneyConverter.fromUsdNonNegative(
+                amountInput = selection.amountInput,
+                rateLkrPerUsdInput = selection.manualRateInput,
+                rateSource = source.moneyRateSource,
+                rateDate = selection.manualRateDate
+            )
+        } else {
+            MoneyConverter.fromUsd(
+                amountInput = selection.amountInput,
+                rateLkrPerUsdInput = selection.manualRateInput,
+                rateSource = source.moneyRateSource,
+                rateDate = selection.manualRateDate
+            )
+        }
     }
 
     private fun recalculatePreservedUsdMoney(
         selection: IncomeRateSelectionState,
-        preserved: Money
+        preserved: Money,
+        allowZero: Boolean = false
     ): Result<Money> {
         if (selection.amountInput.trim() == preserved.originalAmountDecimal) {
             return Result.success(preserved)
         }
-        return MoneyConverter.fromUsd(
-            amountInput = selection.amountInput,
-            rateLkrPerUsdInput = preserved.rateLkrPerUnitDecimal,
-            rateSource = preserved.rateSource,
-            rateDate = preserved.rateDate
-        )
+        return if (allowZero) {
+            MoneyConverter.fromUsdNonNegative(
+                amountInput = selection.amountInput,
+                rateLkrPerUsdInput = preserved.rateLkrPerUnitDecimal,
+                rateSource = preserved.rateSource,
+                rateDate = preserved.rateDate
+            )
+        } else {
+            MoneyConverter.fromUsd(
+                amountInput = selection.amountInput,
+                rateLkrPerUsdInput = preserved.rateLkrPerUnitDecimal,
+                rateSource = preserved.rateSource,
+                rateDate = preserved.rateDate
+            )
+        }
     }
 
     private fun IncomeRateSelectionState.selectionMatches(

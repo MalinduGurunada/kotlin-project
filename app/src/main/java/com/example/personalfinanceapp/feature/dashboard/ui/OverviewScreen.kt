@@ -136,6 +136,23 @@ fun OverviewScreen(
                     )
                 }
 
+                item {
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        val monthlyCryptoLkr = uiState.monthlyCryptoResult.netLkrMinor.toDouble() / 100.0
+                        val ytdCryptoLkr = uiState.yearToDateCryptoResult.netLkrMinor.toDouble() / 100.0
+                        Text(
+                            text = "Realised crypto · Month: LKR ${String.format(Locale.US, "%+,.2f", monthlyCryptoLkr)} · YTD: LKR ${String.format(Locale.US, "%+,.2f", ytdCryptoLkr)}",
+                            modifier = Modifier.padding(14.dp),
+                            fontSize = 12.sp,
+                            color = TextPrimaryDark
+                        )
+                    }
+                }
+
                 // Active Savings Goal Card
                 item {
                     uiState.activeGoal?.let { goal ->
@@ -215,6 +232,7 @@ fun OverviewScreen(
                     }
                 }
             }
+
         }
     }
 }

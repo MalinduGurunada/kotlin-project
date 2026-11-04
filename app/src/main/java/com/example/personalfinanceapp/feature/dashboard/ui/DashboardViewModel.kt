@@ -14,6 +14,9 @@ import com.example.personalfinanceapp.feature.auth.AuthRepository
 import com.example.personalfinanceapp.feature.expense.ExpenseRepository
 import com.example.personalfinanceapp.feature.goal.GoalRepository
 import com.example.personalfinanceapp.feature.income.IncomeRepository
+import com.example.personalfinanceapp.feature.income.CryptoResultCalculator
+import com.example.personalfinanceapp.feature.income.CryptoResultTotals
+import com.example.personalfinanceapp.feature.income.signedBaseAmountMinor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import java.math.BigInteger
 import java.time.LocalDate
+import java.time.Clock
 import java.util.Locale
 import javax.inject.Inject
 
@@ -52,6 +56,7 @@ data class ActiveSavingsGoalUiState(
 
 private data class DashboardInputs(
     val incomes: List<Income>,
+    val yearToDateIncomes: List<Income>,
     val expenses: List<Expense>,
     val goals: List<Goal>,
     val activeGoalContributions: List<Contribution>?
@@ -62,6 +67,8 @@ data class DashboardUiState(
     val totalAvailableBalanceLkrMinor: Long = 0L,
     val totalIncomeLkrMinor: Long = 0L,
     val incomeCount: Int = 0,
+    val monthlyCryptoResult: CryptoResultTotals = CryptoResultTotals(),
+    val yearToDateCryptoResult: CryptoResultTotals = CryptoResultTotals(),
     val totalExpenseLkrMinor: Long = 0L,
     val expenseCount: Int = 0,
     val committedExpenseLkrMinor: Long = 0L,
@@ -105,12 +112,15 @@ class DashboardViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val incomeRepository: IncomeRepository,
     private val expenseRepository: ExpenseRepository,
-    private val goalRepository: GoalRepository
+    private val goalRepository: GoalRepository,
+    private val clock: Clock = Clock.systemUTC()
 ) : ViewModel() {
 
-    private val now = LocalDate.now()
+    private val now = LocalDate.now(clock)
     private val startDate = now.withDayOfMonth(1)
     private val endDateExclusive = now.withDayOfMonth(1).plusMonths(1)
+    private val startOfYear = now.withDayOfYear(1)
+    private val ytdEndDateExclusive = now.plusDays(1)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<DashboardUiState> = authRepository.observeAuthState()
@@ -120,25 +130,28 @@ class DashboardViewModel @Inject constructor(
             } else {
                 combine(
                     incomeRepository.observeIncomes(startDate, endDateExclusive),
+                    incomeRepository.observeIncomes(startOfYear, ytdEndDateExclusive),
                     expenseRepository.observeExpenses(startDate, endDateExclusive),
                     goalRepository.observeGoals()
-                ) { incomes, expenses, goals ->
-                    Triple(incomes, expenses, goals)
-                }.flatMapLatest { (incomes, expenses, goals) ->
+                ) { incomes, yearToDateIncomes, expenses, goals ->
+                    DashboardInputs(incomes, yearToDateIncomes, expenses, goals, emptyList())
+                }.flatMapLatest { inputs ->
+                    val goals = inputs.goals
                     val activeGoal = goals.firstOrNull { !it.archived }
                     if (activeGoal == null) {
-                        flowOf(DashboardInputs(incomes, expenses, goals, emptyList()))
+                        flowOf(inputs)
                     } else {
                         goalRepository.observeContributions(activeGoal.id)
                             .map<List<Contribution>, List<Contribution>?> { it }
                             .catch { emit(null) }
                             .map { contributions ->
-                                DashboardInputs(incomes, expenses, goals, contributions)
+                                inputs.copy(activeGoalContributions = contributions)
                             }
                     }
                 }.map { inputs ->
                     calculateDashboardState(
                         incomes = inputs.incomes,
+                        yearToDateIncomes = inputs.yearToDateIncomes,
                         expenses = inputs.expenses,
                         goals = inputs.goals,
                         activeGoalContributions = inputs.activeGoalContributions
@@ -166,19 +179,24 @@ class DashboardViewModel @Inject constructor(
 
     private fun calculateDashboardState(
         incomes: List<Income>,
+        yearToDateIncomes: List<Income>,
         expenses: List<Expense>,
         goals: List<Goal>,
         activeGoalContributions: List<Contribution>?
     ): DashboardUiState {
-        var netIncomeMinor = 0L
-        incomes.forEach { income ->
-            val isLoss = income.entryKind == IncomeEntryKind.REALIZED_PNL && income.pnlDirection == PnlDirection.LOSS
-            if (isLoss) {
-                netIncomeMinor -= income.money.baseAmountMinor
-            } else {
-                netIncomeMinor += income.money.baseAmountMinor
-            }
+        val netIncomeMinor = incomes.fold(0L) { total, income ->
+            Math.addExact(total, income.signedBaseAmountMinor())
         }
+        val monthlyCryptoResult = CryptoResultCalculator.calculate(
+            incomes = incomes,
+            startDateInclusive = startDate,
+            endDateExclusive = endDateExclusive
+        )
+        val yearToDateCryptoResult = CryptoResultCalculator.calculate(
+            incomes = yearToDateIncomes,
+            startDateInclusive = startOfYear,
+            endDateExclusive = ytdEndDateExclusive
+        )
 
         val totalExpenseMinor = expenses.sumOf { it.money.baseAmountMinor }
         val balanceMinor = netIncomeMinor - totalExpenseMinor
@@ -230,9 +248,14 @@ class DashboardViewModel @Inject constructor(
 
         incomes.forEach { inc ->
             val isLoss = inc.entryKind == IncomeEntryKind.REALIZED_PNL && inc.pnlDirection == PnlDirection.LOSS
+            val isBreakEven = inc.entryKind == IncomeEntryKind.REALIZED_PNL && inc.pnlDirection == PnlDirection.BREAK_EVEN
             val lkrDecimal = (inc.money.baseAmountMinor.toDouble() / 100.0)
             val title = if (inc.source == IncomeSource.CRYPTO) {
-                if (isLoss) "Crypto Loss" else "Crypto Gain"
+                when {
+                    isLoss -> "Crypto Loss"
+                    isBreakEven -> "Crypto Break Even"
+                    else -> "Crypto Gain"
+                }
             } else {
                 "${inc.source.name.lowercase().replaceFirstChar { it.uppercase() }} Receipt"
             }
@@ -243,12 +266,14 @@ class DashboardViewModel @Inject constructor(
                     subtitle = "${inc.occurredDate} • ${if (isLoss) "Loss" else "Inbound"}",
                     amountText = if (isLoss) {
                         "-LKR ${String.format(Locale.US, "%,.2f", lkrDecimal)}"
+                    } else if (isBreakEven) {
+                        "LKR 0.00"
                     } else {
                         "+LKR ${String.format(Locale.US, "%,.2f", lkrDecimal)}"
                     },
                     isRedAmount = isLoss,
                     occurredDate = inc.occurredDate,
-                    isIncome = !isLoss
+                    isIncome = !isLoss && !isBreakEven
                 )
             )
         }
@@ -263,6 +288,8 @@ class DashboardViewModel @Inject constructor(
             totalAvailableBalanceLkrMinor = balanceMinor,
             totalIncomeLkrMinor = netIncomeMinor,
             incomeCount = incomes.size,
+            monthlyCryptoResult = monthlyCryptoResult,
+            yearToDateCryptoResult = yearToDateCryptoResult,
             totalExpenseLkrMinor = totalExpenseMinor,
             expenseCount = expenses.size,
             committedExpenseLkrMinor = committedMinor,
