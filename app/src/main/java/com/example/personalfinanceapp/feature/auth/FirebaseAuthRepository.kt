@@ -1,7 +1,9 @@
 package com.example.personalfinanceapp.feature.auth
 
 import com.example.personalfinanceapp.core.model.UserId
+import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.UserProfileChangeRequest
 import kotlinx.coroutines.channels.awaitClose
@@ -33,7 +35,7 @@ class FirebaseAuthRepository @Inject constructor(
 
     override fun currentUserSnapshot(): AuthUserSnapshot? {
         val user = firebaseAuth.currentUser ?: return null
-        return AuthUserSnapshot(user.uid, user.email)
+        return user.toAuthUserSnapshot()
     }
 
     override suspend fun login(
@@ -129,6 +131,76 @@ class FirebaseAuthRepository @Inject constructor(
                 }
         }
 
+    override suspend fun sendEmailVerification(userId: UserId): Result<Unit> =
+        suspendCancellableCoroutine { continuation ->
+            val user = firebaseAuth.currentUser
+            if (user == null || user.uid != userId) {
+                continuation.resume(
+                    Result.failure(IllegalStateException("Authenticated user changed before verification email"))
+                )
+                return@suspendCancellableCoroutine
+            }
+            if (!user.isEmailPasswordUser()) {
+                continuation.resume(Result.success(Unit))
+                return@suspendCancellableCoroutine
+            }
+            if (user.isEmailVerified) {
+                continuation.resume(Result.success(Unit))
+                return@suspendCancellableCoroutine
+            }
+
+            user.sendEmailVerification()
+                .addOnSuccessListener { continuation.resume(Result.success(Unit)) }
+                .addOnFailureListener { exception ->
+                    continuation.resume(Result.failure(exception))
+                }
+        }
+
+    override suspend fun reloadAndRefreshUser(userId: UserId): Result<AuthUserSnapshot> =
+        suspendCancellableCoroutine { continuation ->
+            val initialUser = firebaseAuth.currentUser
+            if (initialUser == null || initialUser.uid != userId) {
+                continuation.resume(
+                    Result.failure(IllegalStateException("Authenticated user changed before verification check"))
+                )
+                return@suspendCancellableCoroutine
+            }
+
+            initialUser.reload()
+                .addOnSuccessListener {
+                    val refreshedUser = firebaseAuth.currentUser
+                    if (refreshedUser == null || refreshedUser.uid != userId) {
+                        continuation.resume(
+                            Result.failure(IllegalStateException("Authenticated user changed during verification check"))
+                        )
+                    } else if (!refreshedUser.isEmailVerified) {
+                        continuation.resume(Result.success(refreshedUser.toAuthUserSnapshot()))
+                    } else {
+                        refreshedUser.getIdToken(true)
+                            .addOnSuccessListener {
+                                val currentUser = firebaseAuth.currentUser
+                                if (currentUser == null || currentUser.uid != userId) {
+                                    continuation.resume(
+                                        Result.failure(
+                                            IllegalStateException(
+                                                "Authenticated user changed during token refresh"
+                                            )
+                                        )
+                                    )
+                                } else {
+                                    continuation.resume(Result.success(currentUser.toAuthUserSnapshot()))
+                                }
+                            }
+                            .addOnFailureListener { exception ->
+                                continuation.resume(Result.failure(exception))
+                            }
+                    }
+                }
+                .addOnFailureListener { exception ->
+                    continuation.resume(Result.failure(exception))
+                }
+        }
+
     override suspend fun sendPasswordReset(
         email: String
     ): Result<Unit> = suspendCancellableCoroutine { continuation ->
@@ -142,13 +214,20 @@ class FirebaseAuthRepository @Inject constructor(
     }
 
     override suspend fun signOut(): Result<Unit> {
-        val cleanup = sessionCleanup.beforeSignOut()
-        if (cleanup.isFailure) return cleanup
-        return try {
-            firebaseAuth.signOut()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        return performFirebaseSignOut(
+            cleanup = sessionCleanup::beforeSignOut,
+            firebaseSignOut = firebaseAuth::signOut
+        )
     }
+
+    private fun FirebaseUser.isEmailPasswordUser(): Boolean =
+        providerData.any { it.providerId == EmailAuthProvider.PROVIDER_ID }
+
+    private fun FirebaseUser.toAuthUserSnapshot(): AuthUserSnapshot = AuthUserSnapshot(
+        userId = uid,
+        email = email,
+        isEmailVerified = isEmailVerified,
+        isEmailPasswordUser = isEmailPasswordUser(),
+        displayName = displayName
+    )
 }

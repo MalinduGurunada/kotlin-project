@@ -219,6 +219,7 @@ class AuthNavigationAndUiTest {
                 composable<Login> { Text("Login", Modifier.testTag("login_route")) }
                 composable<Register> { Text("Register") }
                 composable<PasswordReset> { Text("Password reset") }
+                composable<EmailVerification> { Text("Email verification") }
                 composable<Home> { Text("More") }
                 composable<Overview> { Text("Overview") }
                 composable<ActivityRoute> { Text("Activity") }

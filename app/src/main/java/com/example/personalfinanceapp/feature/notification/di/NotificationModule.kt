@@ -1,5 +1,7 @@
 package com.example.personalfinanceapp.feature.notification.di
 
+import com.example.personalfinanceapp.feature.auth.AuthPostVerificationSync
+import com.example.personalfinanceapp.feature.notification.FcmTokenSyncCoordinator
 import com.example.personalfinanceapp.feature.notification.FirestorePushTokenRepository
 import com.example.personalfinanceapp.feature.notification.NotificationPreferenceStore
 import com.example.personalfinanceapp.feature.notification.PushTokenRepository
@@ -16,6 +18,12 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class NotificationModule {
+    @Binds
+    @Singleton
+    abstract fun bindAuthPostVerificationSync(
+        implementation: FcmTokenSyncCoordinator
+    ): AuthPostVerificationSync
+
     @Binds
     @Singleton
     abstract fun bindPushTokenRepository(

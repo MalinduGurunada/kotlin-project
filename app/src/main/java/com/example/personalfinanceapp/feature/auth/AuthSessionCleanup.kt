@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.personalfinanceapp.feature.notification.PushTokenRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 
 interface AuthSessionCleanup {
     suspend fun beforeSignOut(): Result<Unit>
@@ -18,8 +19,15 @@ class FirebaseAuthSessionCleanup @Inject constructor(
     private val pushTokenRepository: PushTokenRepository
 ) : AuthSessionCleanup {
     override suspend fun beforeSignOut(): Result<Unit> {
-        val tokenCleanup = pushTokenRepository.deleteCurrentToken()
-        if (tokenCleanup.isFailure) return tokenCleanup
+        // Firestore can be offline or reject a stale token document. Authentication
+        // sign-out must still proceed; the owner-scoped cleanup is advisory.
+        try {
+            pushTokenRepository.deleteCurrentToken()
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (_: Exception) {
+            // Continue to credential cleanup; Firebase sign-out is handled by the caller.
+        }
         // Firebase sign-out must still complete if the platform credential provider
         // cannot clear its optional UI state. Auto-select is disabled on the next login.
         GoogleCredentialSignIn.clearCredentialState(context)

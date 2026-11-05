@@ -92,7 +92,11 @@ class DashboardViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        fakeAuthRepository = FakeAuthRepository(initialUserId = "user-1", initialEmail = "himasha@example.com")
+        fakeAuthRepository = FakeAuthRepository(
+            initialUserId = "user-1",
+            initialEmail = "malindusgallery@example.com",
+            initialDisplayName = "Malindu"
+        )
         fakeIncomeRepository = FakeIncomeRepository()
         fakeExpenseRepository = FakeExpenseRepository()
         fakeCategoryRepository = FakeCategoryRepository()
@@ -120,12 +124,48 @@ class DashboardViewModelTest {
         testDispatcher.scheduler.advanceUntilIdle()
 
         val state = viewModel.uiState.value
-        assertEquals("Himasha", state.userName)
+        assertEquals("Malindu", state.userName)
         assertEquals(0L, state.monthlyNetCashFlowLkrMinor)
         assertEquals(0L, state.totalIncomeLkrMinor)
         assertEquals(0L, state.totalExpenseLkrMinor)
         assertTrue(state.recentActivity.isEmpty())
         assertNull(state.activeGoal)
+    }
+
+    @Test
+    fun greetingRefreshesFromSavedDisplayNameAfterLoginAndAccountSwitch() = runTest {
+        backgroundScope.launch { viewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals("Malindu", viewModel.uiState.value.userName)
+
+        fakeAuthRepository.signOut().getOrThrow()
+        fakeAuthRepository.loginDisplayName = "Returning User"
+        fakeAuthRepository.login("returning@example.com", "password").getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals("Returning User", viewModel.uiState.value.userName)
+
+        fakeAuthRepository.simulateAccountSwitch(
+            userId = "user-2",
+            email = "secondgallery@example.com",
+            displayName = "Second User"
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals("Second User", viewModel.uiState.value.userName)
+    }
+
+    @Test
+    fun greetingUsesNeutralFallbackWhenSavedDisplayNameIsUnavailable() = runTest {
+        backgroundScope.launch { viewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        fakeAuthRepository.simulateAccountSwitch(
+            userId = "legacy-user",
+            email = "private.email.identifier@example.com",
+            displayName = "   "
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("User", viewModel.uiState.value.userName)
     }
 
     @Test

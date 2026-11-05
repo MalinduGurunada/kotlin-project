@@ -8,6 +8,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
 import com.example.personalfinanceapp.feature.auth.ui.LoginUiState
+import com.example.personalfinanceapp.feature.auth.ui.EmailVerificationScreen
+import com.example.personalfinanceapp.feature.auth.ui.EmailVerificationUiState
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 import org.junit.Rule
 import org.junit.Test
@@ -46,5 +48,33 @@ class AuthComposeUiTest {
         composeTestRule.onNodeWithContentDescription("Continue with Google").performClick()
         assert(loginClicked)
         assert(googleLoginClicked)
+    }
+
+    @Test
+    fun verificationScreenExposesRequiredActions() {
+        var resendClicked = false
+        var checkClicked = false
+        var signOutClicked = false
+
+        composeTestRule.setContent {
+            PersonalFinanceAppTheme {
+                EmailVerificationScreen(
+                    uiState = EmailVerificationUiState(email = "pending@example.com"),
+                    onResendClicked = { resendClicked = true },
+                    onCheckStatusClicked = { checkClicked = true },
+                    onSignOutClicked = { signOutClicked = true }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Verify your email").assertIsDisplayed()
+        composeTestRule.onNodeWithText("pending@example.com").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("Resend verification email").performClick()
+        composeTestRule.onNodeWithContentDescription("Check status").performClick()
+        composeTestRule.onNodeWithContentDescription("Sign out").performClick()
+
+        assert(resendClicked)
+        assert(checkClicked)
+        assert(signOutClicked)
     }
 }

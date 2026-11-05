@@ -68,7 +68,11 @@ async function expectDenied(operation) {
 }
 
 function userFirestore(uid) {
-  return testEnvironment.authenticatedContext(uid).firestore();
+  return testEnvironment.authenticatedContext(uid, { email_verified: true }).firestore();
+}
+
+function unverifiedUserFirestore(uid) {
+  return testEnvironment.authenticatedContext(uid, { email_verified: false }).firestore();
 }
 
 function anonymousFirestore() {
@@ -322,6 +326,15 @@ async function seedReceivable(uid, receivableId, data = receivableDocument(recei
   });
 }
 
+async function seedFcmRegistration(uid, tokenId = "registration-hash") {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(
+      fcmTokenReference(context.firestore(), uid, tokenId),
+      fcmTokenDocument(uid),
+    );
+  });
+}
+
 function observerQuery(firestore, uid) {
   return query(
     collection(firestore, "users", uid, "incomes"),
@@ -342,6 +355,49 @@ test("anonymous clients cannot read, query, create, update, or delete income", a
   await expectDenied(setDoc(incomeReference(firestore, "user-a", "income-2"), incomeDocument("income-2")));
   await expectDenied(updateDoc(reference, { note: "anonymous update" }));
   await expectDenied(deleteDoc(reference));
+});
+
+test("unverified owners can bootstrap their profile but cannot access financial data", async () => {
+  await seedIncome("user-a", "income-1");
+  await seedFcmRegistration("user-a");
+  const firestore = unverifiedUserFirestore("user-a");
+
+  await expectAllowed(setDoc(doc(firestore, "users", "user-a"), {
+    displayName: "Pending Verification",
+  }));
+  await expectAllowed(getDoc(doc(firestore, "users", "user-a")));
+  await expectDenied(setDoc(
+    fcmTokenReference(firestore, "user-a", "new-registration"),
+    fcmTokenDocument("user-a"),
+  ));
+  await expectDenied(updateDoc(
+    fcmTokenReference(firestore, "user-a"),
+    { platform: "android" },
+  ));
+  await expectDenied(getDoc(fcmTokenReference(firestore, "user-a")));
+  await expectAllowed(deleteDoc(fcmTokenReference(firestore, "user-a")));
+  await expectDenied(deleteDoc(fcmTokenReference(firestore, "user-b")));
+  await expectDenied(getDoc(incomeReference(firestore, "user-a", "income-1")));
+  await expectDenied(setDoc(
+    incomeReference(firestore, "user-a", "income-2"),
+    incomeDocument("income-2"),
+  ));
+  await expectDenied(setDoc(
+    expenseReference(firestore, "user-a", "expense-1"),
+    expenseDocument("user-a", "expense-1"),
+  ));
+  await expectDenied(setDoc(
+    categoryReference(firestore, "user-a", "category-1"),
+    categoryDocument("category-1"),
+  ));
+  await expectDenied(setDoc(
+    receivableReference(firestore, "user-a", "receivable-1"),
+    receivableDocument("receivable-1"),
+  ));
+  await expectDenied(setDoc(
+    goalReference(firestore, "user-a", "goal-1"),
+    goalDocument("goal-1"),
+  ));
 });
 
 test("owners can create, read, list, update, and transactionally delete income", async () => {

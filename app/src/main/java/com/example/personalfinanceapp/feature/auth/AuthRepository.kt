@@ -5,8 +5,14 @@ import kotlinx.coroutines.flow.Flow
 
 data class AuthUserSnapshot(
     val userId: UserId,
-    val email: String?
-)
+    val email: String?,
+    val isEmailVerified: Boolean = true,
+    val isEmailPasswordUser: Boolean = false,
+    val displayName: String? = null
+) {
+    val requiresEmailVerification: Boolean
+        get() = isEmailPasswordUser && !isEmailVerified
+}
 
 interface AuthRepository {
 
@@ -42,9 +48,27 @@ interface AuthRepository {
         UnsupportedOperationException("User profile updates are not supported")
     )
 
+    /** Sends Firebase Auth's built-in verification email to the current password user. */
+    suspend fun sendEmailVerification(userId: UserId): Result<Unit> = Result.failure(
+        UnsupportedOperationException("Email verification is not supported")
+    )
+
+    /** Reloads the current Firebase user and force-refreshes its token once verified. */
+    suspend fun reloadAndRefreshUser(userId: UserId): Result<AuthUserSnapshot> = Result.failure(
+        UnsupportedOperationException("Email verification refresh is not supported")
+    )
+
     suspend fun sendPasswordReset(
         email: String
     ): Result<Unit>
 
     suspend fun signOut(): Result<Unit>
+}
+
+fun interface AuthPostVerificationSync {
+    fun sync(userId: UserId)
+
+    companion object {
+        val NoOp = AuthPostVerificationSync { }
+    }
 }

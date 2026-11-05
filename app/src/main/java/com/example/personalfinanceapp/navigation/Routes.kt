@@ -12,6 +12,9 @@ data object Register
 data object PasswordReset
 
 @Serializable
+data object EmailVerification
+
+@Serializable
 data object Home
 
 @Serializable
