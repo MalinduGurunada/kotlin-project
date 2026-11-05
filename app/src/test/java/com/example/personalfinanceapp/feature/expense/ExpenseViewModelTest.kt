@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -98,6 +99,50 @@ class ExpenseViewModelTest {
         assertEquals(0L, state.totalLkrMinor)
         assertEquals(0L, state.committedLkrMinor)
         assertEquals(0L, state.discretionaryLkrMinor)
+    }
+
+    @Test
+    fun categoryReclassificationUpdatesExistingAnalysisWithoutRewritingExpense() = runTest {
+        backgroundScope.launch { viewModel.uiState.collect() }
+        val occurredDate = LocalDate.now().withDayOfMonth(10)
+        val storedExpense = Expense(
+            id = "existing-food",
+            categoryId = "food",
+            categoryNameSnapshot = "Food",
+            spendingClass = SpendingClass.DISCRETIONARY,
+            paymentChannel = PaymentChannel.CARD,
+            money = Money(
+                originalAmountDecimal = "100.00",
+                originalCurrency = CurrencyCode.LKR,
+                rateLkrPerUnitDecimal = "1.00",
+                baseAmountMinor = 10_000L,
+                rateSource = RateSource.LKR_FIXED,
+                rateDate = occurredDate
+            ),
+            occurredDate = occurredDate
+        )
+        fakeExpenseRepository.saveExpense(storedExpense).getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(10_000L, viewModel.uiState.value.discretionaryLkrMinor)
+
+        fakeCategoryRepository.updateCategory(
+            id = "food",
+            newName = "Food",
+            spendingClass = SpendingClass.COMMITTED
+        ).getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(10_000L, state.committedLkrMinor)
+        assertEquals(0L, state.discretionaryLkrMinor)
+        assertEquals(SpendingClass.COMMITTED, state.expenses.single().spendingClass)
+
+        val persistedExpense = fakeExpenseRepository.observeExpenses(
+            occurredDate.withDayOfMonth(1),
+            occurredDate.withDayOfMonth(1).plusMonths(1)
+        ).first().single()
+        assertEquals(SpendingClass.DISCRETIONARY, persistedExpense.spendingClass)
     }
 
     @Test

@@ -12,6 +12,8 @@ import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.feature.auth.AuthRepository
 import com.example.personalfinanceapp.feature.category.CategoryRepository
+import com.example.personalfinanceapp.feature.category.spendingClassesById
+import com.example.personalfinanceapp.feature.category.withEffectiveSpendingClass
 import com.example.personalfinanceapp.feature.dashboard.analytics.IncomeSpendingBreakdownCalculator
 import com.example.personalfinanceapp.feature.dashboard.analytics.MonthlyAnalyticsBreakdown
 import com.example.personalfinanceapp.feature.expense.ExpenseRepository
@@ -265,9 +267,20 @@ class DashboardViewModel @Inject constructor(
                     incomeRepository.observeIncomes(startDate, endDateExclusive),
                     incomeRepository.observeIncomes(startOfYear, ytdEndDateExclusive),
                     expenseRepository.observeExpenses(startDate, endDateExclusive),
-                    goalRepository.observeGoals()
-                ) { incomes, yearToDateIncomes, expenses, goals ->
-                    DashboardInputs(incomes, yearToDateIncomes, expenses, goals, emptyList())
+                    goalRepository.observeGoals(),
+                    categoryRepository.observeCategories()
+                ) { incomes, yearToDateIncomes, expenses, goals, categories ->
+                    val categorySpendingClasses = categories.spendingClassesById()
+                    val effectiveExpenses = expenses.map { expense ->
+                        expense.withEffectiveSpendingClass(categorySpendingClasses)
+                    }
+                    DashboardInputs(
+                        incomes,
+                        yearToDateIncomes,
+                        effectiveExpenses,
+                        goals,
+                        emptyList()
+                    )
                 }.flatMapLatest { inputs ->
                     val goals = inputs.goals
                     val activeGoal = goals.firstOrNull { !it.archived }
@@ -331,12 +344,14 @@ class DashboardViewModel @Inject constructor(
                     categoryRepository.observeCategories()
                 ) { incomes, expenses, previousExpenses, categories ->
                     val categoryNames = categories.associate { it.id to it.name }
+                    val categorySpendingClasses = categories.spendingClassesById()
                     val analytics = IncomeSpendingBreakdownCalculator.calculateBreakdown(
                         currentMonthIncomes = incomes,
                         currentMonthExpenses = expenses,
                         previousMonthExpenses = previousExpenses,
                         yearToDateCryptoIncomes = incomes.filter { it.source == IncomeSource.CRYPTO },
-                        categoryNamesById = categoryNames
+                        categoryNamesById = categoryNames,
+                        categorySpendingClassesById = categorySpendingClasses
                     )
                     val totalIncomeMinor = incomes.fold(0L) { total, income ->
                         Math.addExact(total, income.signedBaseAmountMinor())

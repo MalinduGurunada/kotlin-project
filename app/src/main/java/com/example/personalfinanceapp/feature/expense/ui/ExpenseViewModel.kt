@@ -13,6 +13,8 @@ import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.core.money.MoneyConverter
 import com.example.personalfinanceapp.feature.auth.AuthRepository
 import com.example.personalfinanceapp.feature.category.CategoryRepository
+import com.example.personalfinanceapp.feature.category.spendingClassesById
+import com.example.personalfinanceapp.feature.category.withEffectiveSpendingClass
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateRepository
 import com.example.personalfinanceapp.feature.expense.ExpenseRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -157,8 +159,11 @@ class ExpenseViewModel @Inject constructor(
             )
         }
 
-        val expenses = observation.expenses
-        val totalsResult = runCatching { calculateExpenseTotals(expenses) }
+        val categorySpendingClasses = categories.spendingClassesById()
+        val effectiveExpenses = observation.expenses.map { expense ->
+            expense.withEffectiveSpendingClass(categorySpendingClasses)
+        }
+        val totalsResult = runCatching { calculateExpenseTotals(effectiveExpenses) }
         val totals = totalsResult.getOrNull()
         val totalsError = totalsResult.exceptionOrNull()?.let { exception ->
             if (exception is ArithmeticException) {
@@ -169,7 +174,7 @@ class ExpenseViewModel @Inject constructor(
         }
 
         ExpenseUiState(
-            expenses = expenses,
+            expenses = effectiveExpenses,
             categories = categories,
             dateRange = dateRange,
             isLoading = isLoading,
