@@ -101,6 +101,26 @@ class IncomeSpendingCalculatorTest {
     }
 
     @Test
+    fun currentCategoryClassificationOverridesHistoricalExpenseSnapshot() {
+        val expense = createExpense(
+            "historical-food",
+            "food",
+            40_000_00L,
+            SpendingClass.DISCRETIONARY
+        )
+
+        val breakdown = IncomeSpendingBreakdownCalculator.calculateBreakdown(
+            currentMonthIncomes = emptyList(),
+            currentMonthExpenses = listOf(expense),
+            categorySpendingClassesById = mapOf("food" to SpendingClass.COMMITTED)
+        )
+
+        assertEquals(40_000_00L, breakdown.totalCommittedLkrMinor)
+        assertEquals(0L, breakdown.totalDiscretionaryLkrMinor)
+        assertEquals(100, breakdown.committedPercent)
+    }
+
+    @Test
     fun calculateCryptoYtdNetGain() {
         val cryptoIncomes = listOf(
             createIncome("c1", IncomeSource.CRYPTO, 150_000_00L, PnlDirection.GAIN),

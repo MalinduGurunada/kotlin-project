@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.personalfinanceapp.core.model.Expense
 import com.example.personalfinanceapp.core.model.Income
+import com.example.personalfinanceapp.feature.category.CategoryRepository
+import com.example.personalfinanceapp.feature.category.spendingClassesById
+import com.example.personalfinanceapp.feature.category.withEffectiveSpendingClass
 import com.example.personalfinanceapp.feature.expense.ExpenseRepository
 import com.example.personalfinanceapp.feature.income.IncomeRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -39,7 +42,8 @@ data class TransactionHistoryUiState(
 @HiltViewModel
 class TransactionHistoryViewModel @Inject constructor(
     private val incomeRepository: IncomeRepository,
-    private val expenseRepository: ExpenseRepository
+    private val expenseRepository: ExpenseRepository,
+    private val categoryRepository: CategoryRepository
 ) : ViewModel() {
 
     private val now = LocalDate.now()
@@ -53,9 +57,14 @@ class TransactionHistoryViewModel @Inject constructor(
         _filterType.flatMapLatest { filter ->
             combine(
                 incomeRepository.observeIncomes(startDate, endDateExclusive),
-                expenseRepository.observeExpenses(startDate, endDateExclusive)
-            ) { incomes, expenses ->
-                mapUnifiedTransactions(incomes, expenses, filter)
+                expenseRepository.observeExpenses(startDate, endDateExclusive),
+                categoryRepository.observeCategories()
+            ) { incomes, expenses, categories ->
+                val categorySpendingClasses = categories.spendingClassesById()
+                val effectiveExpenses = expenses.map { expense ->
+                    expense.withEffectiveSpendingClass(categorySpendingClasses)
+                }
+                mapUnifiedTransactions(incomes, effectiveExpenses, filter)
             }
         },
         _filterType

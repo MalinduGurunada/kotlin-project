@@ -6,6 +6,7 @@ import com.example.personalfinanceapp.core.model.Money
 import com.example.personalfinanceapp.core.model.PaymentChannel
 import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.core.model.SpendingClass
+import com.example.personalfinanceapp.feature.category.FakeCategoryRepository
 import com.example.personalfinanceapp.feature.expense.FakeExpenseRepository
 import com.example.personalfinanceapp.feature.history.ui.TransactionHistoryViewModel
 import com.example.personalfinanceapp.feature.income.FakeIncomeRepository
@@ -30,6 +31,7 @@ class TransactionHistoryViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var fakeIncomeRepository: FakeIncomeRepository
     private lateinit var fakeExpenseRepository: FakeExpenseRepository
+    private lateinit var fakeCategoryRepository: FakeCategoryRepository
     private lateinit var viewModel: TransactionHistoryViewModel
 
     @Before
@@ -37,8 +39,13 @@ class TransactionHistoryViewModelTest {
         Dispatchers.setMain(testDispatcher)
         fakeIncomeRepository = FakeIncomeRepository()
         fakeExpenseRepository = FakeExpenseRepository()
+        fakeCategoryRepository = FakeCategoryRepository()
 
-        viewModel = TransactionHistoryViewModel(fakeIncomeRepository, fakeExpenseRepository)
+        viewModel = TransactionHistoryViewModel(
+            fakeIncomeRepository,
+            fakeExpenseRepository,
+            fakeCategoryRepository
+        )
     }
 
     @After
@@ -71,5 +78,47 @@ class TransactionHistoryViewModelTest {
         assertNotEquals(original.id, repeated.id)
         assertEquals(original.categoryId, repeated.categoryId)
         assertEquals(original.money.originalAmountDecimal, repeated.money.originalAmountDecimal)
+    }
+
+    @Test
+    fun categoryReclassificationUpdatesExistingExpenseLabel() = runTest {
+        backgroundScope.launch { viewModel.uiState.collect() }
+        val occurredDate = LocalDate.now()
+        fakeExpenseRepository.saveExpense(
+            Expense(
+                id = "history-food",
+                categoryId = "food",
+                categoryNameSnapshot = "Food",
+                spendingClass = SpendingClass.DISCRETIONARY,
+                paymentChannel = PaymentChannel.CARD,
+                money = Money(
+                    "100.00",
+                    CurrencyCode.LKR,
+                    "1.00",
+                    10_000L,
+                    RateSource.LKR_FIXED,
+                    occurredDate
+                ),
+                occurredDate = occurredDate
+            )
+        ).getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            SpendingClass.DISCRETIONARY.name,
+            viewModel.uiState.value.transactions.single().categoryOrSource
+        )
+
+        fakeCategoryRepository.updateCategory(
+            id = "food",
+            newName = "Food",
+            spendingClass = SpendingClass.COMMITTED
+        ).getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            SpendingClass.COMMITTED.name,
+            viewModel.uiState.value.transactions.single().categoryOrSource
+        )
     }
 }

@@ -108,6 +108,45 @@ class DashboardViewModelTest {
     }
 
     @Test
+    fun categoryReclassificationImmediatelyUpdatesExistingDashboardExpenseTotals() = runTest {
+        backgroundScope.launch { viewModel.uiState.collect() }
+        val occurredDate = LocalDate.now().withDayOfMonth(10)
+        fakeExpenseRepository.saveExpense(
+            Expense(
+                id = "existing-food",
+                categoryId = "food",
+                categoryNameSnapshot = "Food",
+                spendingClass = SpendingClass.DISCRETIONARY,
+                paymentChannel = PaymentChannel.CARD,
+                money = Money(
+                    originalAmountDecimal = "100.00",
+                    originalCurrency = CurrencyCode.LKR,
+                    rateLkrPerUnitDecimal = "1.00",
+                    baseAmountMinor = 10_000L,
+                    rateSource = RateSource.LKR_FIXED,
+                    rateDate = occurredDate
+                ),
+                occurredDate = occurredDate
+            )
+        ).getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(10_000L, viewModel.uiState.value.discretionaryExpenseLkrMinor)
+
+        fakeCategoryRepository.updateCategory(
+            id = "food",
+            newName = "Food",
+            spendingClass = SpendingClass.COMMITTED
+        ).getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(10_000L, state.committedExpenseLkrMinor)
+        assertEquals(0L, state.discretionaryExpenseLkrMinor)
+        assertEquals(100, state.committedPercent)
+    }
+
+    @Test
     fun cryptoLossCorrectlySubtractedFromNetIncomeAndBalance() = runTest {
         backgroundScope.launch { viewModel.uiState.collect() }
         testDispatcher.scheduler.advanceUntilIdle()

@@ -8,6 +8,7 @@ import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.feature.income.CryptoResultCalculator
 import com.example.personalfinanceapp.feature.income.signedBaseAmountMinor
+import com.example.personalfinanceapp.feature.category.effectiveSpendingClass
 import java.math.BigInteger
 import java.time.LocalDate
 
@@ -59,7 +60,8 @@ object IncomeSpendingBreakdownCalculator {
         currentMonthExpenses: List<Expense>,
         previousMonthExpenses: List<Expense> = emptyList(),
         yearToDateCryptoIncomes: List<Income> = emptyList(),
-        categoryNamesById: Map<String, String> = emptyMap()
+        categoryNamesById: Map<String, String> = emptyMap(),
+        categorySpendingClassesById: Map<String, SpendingClass> = emptyMap()
     ): MonthlyAnalyticsBreakdown {
 
         // Income Source Breakdown
@@ -109,10 +111,15 @@ object IncomeSpendingBreakdownCalculator {
 
         // Committed vs Discretionary Spending Ratio
         val committedSum = currentMonthExpenses
-            .filter { it.spendingClass == SpendingClass.COMMITTED }
+            .filter {
+                it.effectiveSpendingClass(categorySpendingClassesById) == SpendingClass.COMMITTED
+            }
             .fold(0L) { total, expense -> Math.addExact(total, expense.money.baseAmountMinor) }
         val discretionarySum = currentMonthExpenses
-            .filter { it.spendingClass == SpendingClass.DISCRETIONARY }
+            .filter {
+                it.effectiveSpendingClass(categorySpendingClassesById) ==
+                    SpendingClass.DISCRETIONARY
+            }
             .fold(0L) { total, expense -> Math.addExact(total, expense.money.baseAmountMinor) }
 
         val committedPct = if (totalExpenseMinor > 0) {
