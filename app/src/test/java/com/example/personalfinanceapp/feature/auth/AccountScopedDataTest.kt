@@ -35,12 +35,20 @@ class AccountScopedDataTest {
         ownerStreams.getValue("user-b").emit(listOf("account-b-record"))
         runCurrent()
 
+        authState.value = "user-a"
+        runCurrent()
+        ownerStreams.getValue("user-b").emit(listOf("late-account-b-record"))
+        ownerStreams.getValue("user-a").emit(listOf("account-a-returned-record"))
+        runCurrent()
+
         assertEquals(
             listOf(
                 emptyList(),
                 listOf("account-a-record"),
                 emptyList(),
-                listOf("account-b-record")
+                listOf("account-b-record"),
+                emptyList(),
+                listOf("account-a-returned-record")
             ),
             emissions
         )

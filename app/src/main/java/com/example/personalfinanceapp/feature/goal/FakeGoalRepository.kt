@@ -5,6 +5,7 @@ import com.example.personalfinanceapp.core.model.Contribution
 import com.example.personalfinanceapp.core.model.ContributionKind
 import com.example.personalfinanceapp.core.model.DocumentId
 import com.example.personalfinanceapp.core.model.Goal
+import com.example.personalfinanceapp.core.model.UserId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -75,6 +76,15 @@ class FakeGoalRepository : GoalRepository {
         Result.success(Unit)
     }
 
+    override suspend fun saveGoalForOwner(
+        expectedOwnerId: UserId,
+        goal: Goal
+    ): Result<Unit> = if (expectedOwnerId.isBlank()) {
+        Result.failure(IllegalArgumentException("Expected goal owner cannot be blank"))
+    } else {
+        saveGoal(goal)
+    }
+
     override suspend fun setGoalArchived(
         id: DocumentId,
         archived: Boolean
@@ -97,6 +107,16 @@ class FakeGoalRepository : GoalRepository {
         }
 
         Result.success(Unit)
+    }
+
+    override suspend fun setGoalArchivedForOwner(
+        expectedOwnerId: UserId,
+        id: DocumentId,
+        archived: Boolean
+    ): Result<Unit> = if (expectedOwnerId.isBlank()) {
+        Result.failure(IllegalArgumentException("Expected goal owner cannot be blank"))
+    } else {
+        setGoalArchived(id, archived)
     }
 
     override suspend fun addContribution(
@@ -161,5 +181,14 @@ class FakeGoalRepository : GoalRepository {
         contributions.value = current + contribution
 
         Result.success(Unit)
+    }
+
+    override suspend fun addContributionForOwner(
+        expectedOwnerId: UserId,
+        contribution: Contribution
+    ): Result<Unit> = if (expectedOwnerId.isBlank()) {
+        Result.failure(IllegalArgumentException("Expected contribution owner cannot be blank"))
+    } else {
+        addContribution(contribution)
     }
 }

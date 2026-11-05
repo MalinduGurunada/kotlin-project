@@ -58,6 +58,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.util.TimeZone
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DashboardViewModelTest {
@@ -100,7 +101,7 @@ class DashboardViewModelTest {
 
         val state = viewModel.uiState.value
         assertEquals("Himasha", state.userName)
-        assertEquals(0L, state.totalAvailableBalanceLkrMinor)
+        assertEquals(0L, state.monthlyNetCashFlowLkrMinor)
         assertEquals(0L, state.totalIncomeLkrMinor)
         assertEquals(0L, state.totalExpenseLkrMinor)
         assertTrue(state.recentActivity.isEmpty())
@@ -222,8 +223,8 @@ class DashboardViewModelTest {
         assertEquals(1_500_000L, state.totalExpenseLkrMinor)
         assertEquals(1, state.expenseCount)
 
-        // Available balance = 7,500,000 - 1,500,000 = 6,000,000 minor (60,000 LKR)
-        assertEquals(6_000_000L, state.totalAvailableBalanceLkrMinor)
+        // Monthly net cash flow = 7,500,000 - 1,500,000 = 6,000,000 minor (60,000 LKR)
+        assertEquals(6_000_000L, state.monthlyNetCashFlowLkrMinor)
 
         // Activity timeline items
         assertEquals(3, state.recentActivity.size)
@@ -363,7 +364,7 @@ class DashboardViewModelTest {
         assertEquals(20_000L, state.discretionaryExpenseLkrMinor)
         assertEquals(60, state.committedPercent)
         assertEquals(40, state.discretionaryPercent)
-        assertEquals(102_000L, state.totalAvailableBalanceLkrMinor)
+        assertEquals(102_000L, state.monthlyNetCashFlowLkrMinor)
         assertEquals(7, state.recentActivity.size)
     }
 
@@ -555,6 +556,81 @@ class DashboardViewModelTest {
         assertEquals(LocalDate.of(2027, 1, 1), bounds.startDate)
         assertEquals(LocalDate.of(2027, 4, 1), bounds.endDateExclusive)
         assertEquals("Q1 2027", bounds.label)
+    }
+
+    @Test
+    fun dashboardMonthUsesDeviceLocalDateAtUtcBoundary() = runTest {
+        val originalTimeZone = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Asia/Colombo"))
+            val occurredDate = LocalDate.of(2027, 1, 1)
+            fakeIncomeRepository.saveIncome(
+                Income(
+                    id = "local-new-year",
+                    source = IncomeSource.SALARY,
+                    entryKind = IncomeEntryKind.RECEIPT,
+                    money = Money(
+                        originalAmountDecimal = "100.00",
+                        originalCurrency = CurrencyCode.LKR,
+                        rateLkrPerUnitDecimal = "1",
+                        baseAmountMinor = 10_000L,
+                        rateSource = RateSource.LKR_FIXED,
+                        rateDate = occurredDate
+                    ),
+                    occurredDate = occurredDate
+                )
+            ).getOrThrow()
+            val localViewModel = DashboardViewModel(
+                authRepository = fakeAuthRepository,
+                incomeRepository = fakeIncomeRepository,
+                expenseRepository = fakeExpenseRepository,
+                categoryRepository = fakeCategoryRepository,
+                goalRepository = fakeGoalRepository,
+                clock = Clock.fixed(
+                    Instant.parse("2026-12-31T20:00:00Z"),
+                    ZoneOffset.UTC
+                )
+            )
+
+            backgroundScope.launch { localViewModel.uiState.collect() }
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            assertEquals(1, localViewModel.uiState.value.incomeCount)
+            assertEquals(10_000L, localViewModel.uiState.value.monthlyNetCashFlowLkrMinor)
+        } finally {
+            TimeZone.setDefault(originalTimeZone)
+        }
+    }
+
+    @Test
+    fun dashboardOverflowShowsErrorInsteadOfWrappedTotals() = runTest {
+        val occurredDate = LocalDate.now().withDayOfMonth(1)
+        fun expense(id: String, amountMinor: Long) = Expense(
+            id = id,
+            categoryId = "food",
+            categoryNameSnapshot = "Food",
+            spendingClass = SpendingClass.DISCRETIONARY,
+            paymentChannel = PaymentChannel.CASH,
+            money = Money(
+                originalAmountDecimal = BigDecimal.valueOf(amountMinor, 2).toPlainString(),
+                originalCurrency = CurrencyCode.LKR,
+                rateLkrPerUnitDecimal = "1",
+                baseAmountMinor = amountMinor,
+                rateSource = RateSource.LKR_FIXED,
+                rateDate = occurredDate
+            ),
+            occurredDate = occurredDate
+        )
+        fakeExpenseRepository.saveExpense(expense("max", Long.MAX_VALUE)).getOrThrow()
+        fakeExpenseRepository.saveExpense(expense("one", 1L)).getOrThrow()
+
+        backgroundScope.launch { viewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("Dashboard totals are too large to calculate safely", state.errorMessage)
+        assertEquals(0L, state.monthlyNetCashFlowLkrMinor)
+        assertEquals(0L, state.totalExpenseLkrMinor)
     }
 
     @Test

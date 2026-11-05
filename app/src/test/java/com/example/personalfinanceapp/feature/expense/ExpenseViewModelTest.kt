@@ -7,14 +7,18 @@ import com.example.personalfinanceapp.core.model.PaymentChannel
 import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.feature.category.FakeCategoryRepository
+import com.example.personalfinanceapp.feature.auth.FakeAuthRepository
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateProvider
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateQuote
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateRepository
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseViewModel
+import com.example.personalfinanceapp.feature.expense.ui.calculateExpenseTotals
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -38,6 +42,7 @@ class ExpenseViewModelTest {
 
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var fakeExpenseRepository: FakeExpenseRepository
+    private lateinit var fakeAuthRepository: FakeAuthRepository
     private lateinit var fakeCategoryRepository: FakeCategoryRepository
     private lateinit var fakeExchangeRateRepository: TestExchangeRateRepository
     private lateinit var viewModel: ExpenseViewModel
@@ -66,10 +71,12 @@ class ExpenseViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
+        fakeAuthRepository = FakeAuthRepository(initialUserId = "user-1")
         fakeExpenseRepository = FakeExpenseRepository()
         fakeCategoryRepository = FakeCategoryRepository()
         fakeExchangeRateRepository = TestExchangeRateRepository()
         viewModel = ExpenseViewModel(
+            authRepository = fakeAuthRepository,
             expenseRepository = fakeExpenseRepository,
             categoryRepository = fakeCategoryRepository,
             exchangeRateRepository = fakeExchangeRateRepository
@@ -470,9 +477,15 @@ class ExpenseViewModelTest {
             override suspend fun saveExpense(expense: Expense): Result<Unit> =
                 Result.failure(IllegalStateException("Repository unavailable"))
 
+            override suspend fun saveExpenseForOwner(
+                expectedOwnerId: String,
+                expense: Expense
+            ): Result<Unit> = saveExpense(expense)
+
             override suspend fun deleteExpense(id: String): Result<Unit> = Result.success(Unit)
         }
         val failingViewModel = ExpenseViewModel(
+            authRepository = fakeAuthRepository,
             expenseRepository = failingRepository,
             categoryRepository = fakeCategoryRepository,
             exchangeRateRepository = fakeExchangeRateRepository
@@ -522,4 +535,199 @@ class ExpenseViewModelTest {
         assertTrue(state.expenses.isEmpty())
         assertEquals(0L, state.totalLkrMinor)
     }
+
+    @Test
+    fun firstExpenseObservationFailureMakesTotalsUnavailable() = runTest {
+        val failingRepository = object : ExpenseRepository by fakeExpenseRepository {
+            override fun observeExpenses(
+                startDate: LocalDate,
+                endDateExclusive: LocalDate
+            ): Flow<List<Expense>> = flow {
+                throw IllegalStateException("Expense observation failed")
+            }
+        }
+        val failingViewModel = ExpenseViewModel(
+            authRepository = fakeAuthRepository,
+            expenseRepository = failingRepository,
+            categoryRepository = fakeCategoryRepository,
+            exchangeRateRepository = fakeExchangeRateRepository
+        )
+
+        backgroundScope.launch { failingViewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = failingViewModel.uiState.value
+        assertTrue(state.expenses.isEmpty())
+        assertTrue(!state.totalsAvailable)
+        assertEquals(0L, state.totalLkrMinor)
+        assertEquals("Expense observation failed", state.errorMessage)
+    }
+
+    @Test
+    fun laterExpenseObservationFailureClearsPreviouslyObservedTotals() = runTest {
+        val failObservation = CompletableDeferred<Unit>()
+        val observedExpense = expense("observed", 12_500L)
+        val failingRepository = object : ExpenseRepository by fakeExpenseRepository {
+            override fun observeExpenses(
+                startDate: LocalDate,
+                endDateExclusive: LocalDate
+            ): Flow<List<Expense>> = flow {
+                emit(listOf(observedExpense))
+                failObservation.await()
+                throw IllegalStateException("Later observation failed")
+            }
+        }
+        val failingViewModel = ExpenseViewModel(
+            authRepository = fakeAuthRepository,
+            expenseRepository = failingRepository,
+            categoryRepository = fakeCategoryRepository,
+            exchangeRateRepository = fakeExchangeRateRepository
+        )
+        backgroundScope.launch { failingViewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals(12_500L, failingViewModel.uiState.value.totalLkrMinor)
+
+        failObservation.complete(Unit)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = failingViewModel.uiState.value
+        assertTrue(state.expenses.isEmpty())
+        assertTrue(!state.totalsAvailable)
+        assertEquals(0L, state.totalLkrMinor)
+        assertEquals("Later observation failed", state.errorMessage)
+    }
+
+    @Test
+    fun exactTotalsRejectOverflowAndNegativeAmounts() {
+        fun expense(id: String, amountMinor: Long) = Expense(
+            id = id,
+            categoryId = "food",
+            categoryNameSnapshot = "Food",
+            spendingClass = SpendingClass.DISCRETIONARY,
+            paymentChannel = PaymentChannel.CASH,
+            money = Money(
+                originalAmountDecimal = BigDecimal.valueOf(amountMinor, 2).toPlainString(),
+                originalCurrency = CurrencyCode.LKR,
+                rateLkrPerUnitDecimal = "1",
+                baseAmountMinor = amountMinor,
+                rateSource = RateSource.LKR_FIXED,
+                rateDate = LocalDate.now()
+            ),
+            occurredDate = LocalDate.now()
+        )
+
+        assertTrue(
+            runCatching {
+                calculateExpenseTotals(listOf(expense("max", Long.MAX_VALUE), expense("one", 1L)))
+            }.exceptionOrNull() is ArithmeticException
+        )
+        assertTrue(
+            runCatching { calculateExpenseTotals(listOf(expense("negative", -1L))) }
+                .exceptionOrNull() is IllegalArgumentException
+        )
+    }
+
+    @Test
+    fun pendingExpenseSaveRetainsInitiatingOwnerAcrossAccountSwitch() = runTest {
+        var capturedOwner: String? = null
+        var writeExecuted = false
+        val ownerCheckingRepository = object : ExpenseRepository by fakeExpenseRepository {
+            override suspend fun saveExpenseForOwner(
+                expectedOwnerId: String,
+                expense: Expense
+            ): Result<Unit> {
+                capturedOwner = expectedOwnerId
+                if (fakeAuthRepository.currentUserId() != expectedOwnerId) {
+                    return Result.failure(
+                        IllegalStateException("Authenticated user changed before expense could be written")
+                    )
+                }
+                writeExecuted = true
+                return fakeExpenseRepository.saveExpense(expense)
+            }
+        }
+        val accountBoundViewModel = ExpenseViewModel(
+            authRepository = fakeAuthRepository,
+            expenseRepository = ownerCheckingRepository,
+            categoryRepository = fakeCategoryRepository,
+            exchangeRateRepository = fakeExchangeRateRepository
+        )
+        backgroundScope.launch { accountBoundViewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        accountBoundViewModel.saveExpense(
+            id = "pending-a",
+            categoryId = "food",
+            amountDecimal = "10.00",
+            currency = CurrencyCode.LKR,
+            paymentChannel = PaymentChannel.CASH,
+            spendingClass = SpendingClass.DISCRETIONARY,
+            occurredDate = LocalDate.now(),
+            note = null
+        )
+        fakeAuthRepository.simulateAccountSwitch("user-2", "two@example.com")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("user-1", capturedOwner)
+        assertTrue(!writeExecuted)
+        assertEquals(
+            "Authenticated user changed before expense could be written",
+            accountBoundViewModel.saveUiState.value.errorMessage
+        )
+    }
+
+    @Test
+    fun pendingExpenseDeleteRetainsInitiatingOwnerAcrossAccountSwitch() = runTest {
+        var capturedOwner: String? = null
+        var deleteExecuted = false
+        val ownerCheckingRepository = object : ExpenseRepository by fakeExpenseRepository {
+            override suspend fun deleteExpenseForOwner(
+                expectedOwnerId: String,
+                id: String
+            ): Result<Unit> {
+                capturedOwner = expectedOwnerId
+                if (fakeAuthRepository.currentUserId() != expectedOwnerId) {
+                    return Result.failure(
+                        IllegalStateException("Authenticated user changed before expense could be deleted")
+                    )
+                }
+                deleteExecuted = true
+                return Result.success(Unit)
+            }
+        }
+        val accountBoundViewModel = ExpenseViewModel(
+            authRepository = fakeAuthRepository,
+            expenseRepository = ownerCheckingRepository,
+            categoryRepository = fakeCategoryRepository,
+            exchangeRateRepository = fakeExchangeRateRepository
+        )
+
+        accountBoundViewModel.deleteExpense("pending-delete")
+        fakeAuthRepository.simulateAccountSwitch("user-2", "two@example.com")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("user-1", capturedOwner)
+        assertTrue(!deleteExecuted)
+        assertEquals(
+            "Authenticated user changed before expense could be deleted",
+            accountBoundViewModel.uiState.value.errorMessage
+        )
+    }
+
+    private fun expense(id: String, amountMinor: Long) = Expense(
+        id = id,
+        categoryId = "food",
+        categoryNameSnapshot = "Food",
+        spendingClass = SpendingClass.DISCRETIONARY,
+        paymentChannel = PaymentChannel.CASH,
+        money = Money(
+            originalAmountDecimal = BigDecimal.valueOf(amountMinor, 2).toPlainString(),
+            originalCurrency = CurrencyCode.LKR,
+            rateLkrPerUnitDecimal = "1",
+            baseAmountMinor = amountMinor,
+            rateSource = RateSource.LKR_FIXED,
+            rateDate = LocalDate.now()
+        ),
+        occurredDate = LocalDate.now()
+    )
 }
