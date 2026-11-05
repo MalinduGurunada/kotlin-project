@@ -139,9 +139,13 @@ fun ExpenseListScreen(
                         color = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    val lkrAmountDecimal = (uiState.totalLkrMinor.toDouble() / 100.0)
                     Text(
-                        text = "LKR ${String.format("%.2f", lkrAmountDecimal)}",
+                        text = if (uiState.totalsAvailable) {
+                            val lkrAmountDecimal = uiState.totalLkrMinor.toDouble() / 100.0
+                            "LKR ${String.format("%.2f", lkrAmountDecimal)}"
+                        } else {
+                            "Unavailable"
+                        },
                         style = MaterialTheme.typography.headlineLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSecondaryContainer

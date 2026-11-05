@@ -3,6 +3,7 @@ package com.example.personalfinanceapp.feature.expense
 
 import com.example.personalfinanceapp.core.model.DocumentId
 import com.example.personalfinanceapp.core.model.Expense
+import com.example.personalfinanceapp.core.model.UserId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -69,6 +70,15 @@ class FakeExpenseRepository : ExpenseRepository {
         Result.success(Unit)
     }
 
+    override suspend fun saveExpenseForOwner(
+        expectedOwnerId: UserId,
+        expense: Expense
+    ): Result<Unit> = if (expectedOwnerId.isBlank()) {
+        Result.failure(IllegalArgumentException("Expected expense owner cannot be blank"))
+    } else {
+        saveExpense(expense)
+    }
+
     override suspend fun deleteExpense(
         id: DocumentId
     ): Result<Unit> = mutex.withLock {
@@ -86,5 +96,14 @@ class FakeExpenseRepository : ExpenseRepository {
         }
 
         Result.success(Unit)
+    }
+
+    override suspend fun deleteExpenseForOwner(
+        expectedOwnerId: UserId,
+        id: DocumentId
+    ): Result<Unit> = if (expectedOwnerId.isBlank()) {
+        Result.failure(IllegalArgumentException("Expected expense owner cannot be blank"))
+    } else {
+        deleteExpense(id)
     }
 }

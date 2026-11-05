@@ -289,7 +289,7 @@ private fun OverviewBalanceCard(
 
             // Balance
             Text(
-                text = "TOTAL AVAILABLE BALANCE",
+                text = "THIS MONTH'S NET CASH FLOW",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = SurfaceWhite.copy(alpha = 0.7f),
@@ -298,7 +298,7 @@ private fun OverviewBalanceCard(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            val balanceLkr = uiState.totalAvailableBalanceLkrMinor.toDouble() / 100.0
+            val balanceLkr = uiState.monthlyNetCashFlowLkrMinor.toDouble() / 100.0
             Text(
                 text = "LKR ${String.format(Locale.US, "%,.2f", balanceLkr)}",
                 fontSize = 32.sp,
