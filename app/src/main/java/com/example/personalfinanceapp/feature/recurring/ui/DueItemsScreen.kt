@@ -95,14 +95,18 @@ fun DueItemsContent(
     onRecordPayment: (RecurringDueItem) -> Unit,
     onSkip: (RecurringDueItem) -> Unit
 ) {
+    val periodEnd = state.today.plusDays(30)
     val overdue = state.dueItems.filter {
         it.occurrence.status == RecurringOccurrenceStatus.PENDING && it.dueDate.isBefore(state.today)
     }
     val upcoming = state.dueItems.filter {
-        it.occurrence.status == RecurringOccurrenceStatus.PENDING && !it.dueDate.isBefore(state.today)
+        it.occurrence.status == RecurringOccurrenceStatus.PENDING &&
+            !it.dueDate.isBefore(state.today) &&
+            !it.dueDate.isAfter(periodEnd)
     }
     val reconciled = state.dueItems.filter {
-        it.occurrence.status != RecurringOccurrenceStatus.PENDING
+        it.occurrence.status != RecurringOccurrenceStatus.PENDING &&
+            !it.dueDate.isAfter(periodEnd)
     }.sortedByDescending { it.dueDate }
 
     Scaffold(

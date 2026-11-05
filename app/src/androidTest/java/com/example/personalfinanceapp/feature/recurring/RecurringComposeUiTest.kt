@@ -90,6 +90,48 @@ class RecurringComposeUiTest {
     }
 
     @Test
+    fun nextMonthlyDateBeyondThirtyDaysRemainsOnCommitment() {
+        val state = farFutureState()
+        composeRule.setContent {
+            PersonalFinanceAppTheme(dynamicColor = false) {
+                RecurringCommitmentsContent(
+                    state = state,
+                    snackbarHostState = SnackbarHostState(),
+                    onBack = {},
+                    onAdd = {},
+                    onOpenDueItems = {},
+                    onFilterChanged = {},
+                    onEdit = {},
+                    onStatusChanged = { _, _ -> },
+                    onRecordPayment = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("2026-11-30").assertIsDisplayed()
+        composeRule.onNodeWithTag("record_payment_electricity_2026-11-30").assertIsDisplayed()
+    }
+
+    @Test
+    fun dueItemsScreenHidesNextDateBeyondThirtyDayPeriod() {
+        val state = farFutureState()
+        composeRule.setContent {
+            PersonalFinanceAppTheme(dynamicColor = false) {
+                DueItemsContent(
+                    state = state,
+                    snackbarHostState = SnackbarHostState(),
+                    onBack = {},
+                    onRecordPayment = {},
+                    onSkip = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("due_item_electricity_2026-11-30").assertDoesNotExist()
+        composeRule.onNodeWithText("No due items in this period.").assertIsDisplayed()
+    }
+
+    @Test
     fun editorOpensTwelveHourReminderClock() {
         composeRule.setContent {
             PersonalFinanceAppTheme(dynamicColor = false) {
@@ -132,6 +174,31 @@ class RecurringComposeUiTest {
         composeRule.onNodeWithTag("commitment_reminder_time_dialog").assertIsDisplayed()
         composeRule.onNodeWithText("AM").assertIsDisplayed()
         composeRule.onNodeWithText("PM").assertIsDisplayed()
+    }
+
+    private fun farFutureState(): RecurringUiState {
+        val category = Category("bills", "Bills", SpendingClass.COMMITTED)
+        val recurring = RecurringExpense(
+            id = "electricity",
+            title = "Electricity",
+            categoryId = category.id,
+            expectedAmountMinor = 10_000L,
+            frequency = RecurrenceFrequency.MONTHLY,
+            anchorDate = LocalDate.of(2026, 10, 31),
+            startDate = LocalDate.of(2026, 10, 31)
+        )
+        val nextOccurrence = RecurringOccurrence(
+            id = "electricity_2026-11-30",
+            recurringExpenseId = recurring.id,
+            dueDate = LocalDate.of(2026, 11, 30)
+        )
+        return RecurringUiState(
+            isLoading = false,
+            today = LocalDate.of(2026, 10, 30),
+            recurringExpenses = listOf(recurring),
+            categories = listOf(category),
+            dueItems = listOf(RecurringDueItem(recurring, category, nextOccurrence))
+        )
     }
 
     private fun state(): RecurringUiState {
