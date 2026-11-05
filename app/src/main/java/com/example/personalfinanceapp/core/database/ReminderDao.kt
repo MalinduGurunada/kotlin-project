@@ -1,42 +1,32 @@
 package com.example.personalfinanceapp.core.database
 
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.map
 
-class ReminderDao {
+@Dao
+interface ReminderDao {
 
-    private val remindersFlow = MutableStateFlow<List<ReminderEntity>>(emptyList())
+    @Query("SELECT * FROM reminders WHERE userId = :userId ORDER BY dueDateIso ASC")
+    fun getRemindersForUser(userId: String): Flow<List<ReminderEntity>>
 
-    fun getRemindersForUser(userId: String): Flow<List<ReminderEntity>> {
-        return remindersFlow.asStateFlow().map { reminders ->
-            reminders.filter { it.userId == userId }
-        }
-    }
+    @Query("SELECT * FROM reminders WHERE userId = :userId ORDER BY dueDateIso ASC")
+    suspend fun getRemindersListForUser(userId: String): List<ReminderEntity>
 
-    suspend fun insertReminder(reminder: ReminderEntity) {
-        val current = remindersFlow.value
-        remindersFlow.value = current.filterNot { it.id == reminder.id } + reminder
-    }
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertReminder(reminder: ReminderEntity)
 
-    suspend fun markDelivered(id: String) {
-        remindersFlow.value = remindersFlow.value.map {
-            if (it.id == id) it.copy(isDelivered = true) else it
-        }
-    }
+    @Query("UPDATE reminders SET isDelivered = 1 WHERE id = :id")
+    suspend fun markDelivered(id: String)
 
-    suspend fun deleteUserReminders(userId: String) {
-        remindersFlow.value = remindersFlow.value.filter { it.userId != userId }
-    }
+    @Query("DELETE FROM reminders WHERE userId = :userId")
+    suspend fun deleteUserReminders(userId: String)
 
-    suspend fun deleteReminder(id: String) {
-        remindersFlow.value = remindersFlow.value.filterNot { it.id == id }
-    }
+    @Query("DELETE FROM reminders WHERE id = :id")
+    suspend fun deleteReminder(id: String)
 
-    suspend fun deleteRecurringReminders(userId: String, recurringExpenseId: String) {
-        remindersFlow.value = remindersFlow.value.filterNot {
-            it.userId == userId && it.recurringExpenseId == recurringExpenseId
-        }
-    }
+    @Query("DELETE FROM reminders WHERE userId = :userId AND recurringExpenseId = :recurringExpenseId")
+    suspend fun deleteRecurringReminders(userId: String, recurringExpenseId: String)
 }

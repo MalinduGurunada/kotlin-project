@@ -1,6 +1,5 @@
 package com.example.personalfinanceapp.feature.reminder
 
-import com.example.personalfinanceapp.core.database.ReminderDao
 import com.example.personalfinanceapp.core.database.ReminderEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -11,12 +10,12 @@ import org.junit.Test
 
 class ReminderRepositoryTest {
 
-    private lateinit var reminderDao: ReminderDao
+    private lateinit var reminderDao: FakeReminderDao
     private lateinit var repository: RoomReminderRepository
 
     @Before
     fun setUp() {
-        reminderDao = ReminderDao()
+        reminderDao = FakeReminderDao()
         repository = RoomReminderRepository(reminderDao)
     }
 
