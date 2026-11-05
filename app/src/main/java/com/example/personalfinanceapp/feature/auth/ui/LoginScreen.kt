@@ -4,9 +4,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -26,6 +28,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,14 +55,17 @@ fun LoginScreen(
                 .imePadding(),
             contentPadding = PaddingValues(
                 horizontal = AuthDimens.ScreenPadding,
-                vertical = 12.dp
+                vertical = 24.dp
             ),
-            verticalArrangement = Arrangement.Top,
+            verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             item {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    AuthBrand(Modifier.align(Alignment.Start).padding(bottom = 8.dp))
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    AuthBrandLarge(Modifier.padding(bottom = 16.dp))
 
                     Text(
                         text = "Welcome back",
@@ -67,7 +73,8 @@ fun LoginScreen(
                         fontSize = 28.sp,
                         lineHeight = 33.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = (-0.7).sp,
+                        letterSpacing = (-0.5).sp,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text(
@@ -75,12 +82,13 @@ fun LoginScreen(
                         color = AuthColors.TextMuted,
                         fontSize = 14.sp,
                         lineHeight = 20.sp,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 4.dp, bottom = 12.dp)
+                            .padding(top = 4.dp, bottom = 20.dp)
                     )
 
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         AuthTextField(
                             value = uiState.emailInput,
                             onValueChange = onEmailChanged,
@@ -126,14 +134,14 @@ fun LoginScreen(
                             .align(Alignment.End)
                             .clickable(onClick = onNavigateToPasswordReset)
                             .defaultMinSize(minHeight = 40.dp)
-                            .padding(top = 6.dp, bottom = 2.dp, start = 12.dp)
+                            .padding(top = 6.dp, bottom = 4.dp, start = 12.dp)
                     )
 
                     uiState.errorMessage?.let {
                         AuthMessage(
                             message = it,
                             isError = true,
-                            modifier = Modifier.padding(top = 6.dp)
+                            modifier = Modifier.padding(top = 8.dp)
                         )
                     }
 
@@ -141,7 +149,7 @@ fun LoginScreen(
                         text = "Sign in",
                         onClick = onLoginClicked,
                         isLoading = uiState.isLoading,
-                        modifier = Modifier.padding(top = 12.dp),
+                        modifier = Modifier.padding(top = 16.dp),
                         enabled = !uiState.isGoogleLoading
                     )
 
@@ -149,7 +157,7 @@ fun LoginScreen(
                         text = "or",
                         color = AuthColors.TextMuted,
                         fontSize = 13.sp,
-                        modifier = Modifier.padding(vertical = 6.dp)
+                        modifier = Modifier.padding(vertical = 10.dp)
                     )
 
                     AuthGoogleButton(
@@ -158,13 +166,15 @@ fun LoginScreen(
                         enabled = !uiState.isLoading
                     )
 
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     AuthInlineLink(
                         prompt = "New to FinClarity?  ",
                         link = "Create account",
                         onClick = onNavigateToRegister,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 12.dp, bottom = 12.dp)
+                            .padding(top = 8.dp, bottom = 8.dp)
                     )
                 }
             }
