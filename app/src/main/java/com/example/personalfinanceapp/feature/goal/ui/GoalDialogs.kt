@@ -200,11 +200,15 @@ fun CreateGoalDialog(
 @Composable
 fun AddContributionDialog(
     goalName: String,
+    initialAmountLkr: Long? = null,
+    supportingText: String? = null,
     errorMessage: String? = null,
     onDismiss: () -> Unit,
     onConfirm: (amountLkr: Long, note: String?) -> Unit
 ) {
-    var amountText by remember { mutableStateOf("") }
+    var amountText by remember(initialAmountLkr) {
+        mutableStateOf(initialAmountLkr?.toString().orEmpty())
+    }
     var noteText by remember { mutableStateOf("") }
     var localError by remember { mutableStateOf<String?>(null) }
 
@@ -228,6 +232,15 @@ fun AddContributionDialog(
                     color = PrimaryDarkGreen,
                     fontWeight = FontWeight.SemiBold
                 )
+
+                if (supportingText != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = supportingText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
 

@@ -20,11 +20,13 @@ import com.example.personalfinanceapp.feature.category.FakeCategoryRepository
 import com.example.personalfinanceapp.feature.category.CategoryRepository
 import com.example.personalfinanceapp.feature.dashboard.ui.DashboardViewModel
 import com.example.personalfinanceapp.feature.dashboard.ui.FinancialSummaryPeriod
+import com.example.personalfinanceapp.feature.dashboard.ui.SavingsCoachActionState
 import com.example.personalfinanceapp.feature.dashboard.ui.calculateNetCashFlowMarginPercent
 import com.example.personalfinanceapp.feature.dashboard.ui.calculateGoalProgressAmounts
 import com.example.personalfinanceapp.feature.dashboard.ui.financialMagnitude
 import com.example.personalfinanceapp.feature.dashboard.ui.financialSummaryBounds
 import com.example.personalfinanceapp.feature.dashboard.ui.financialSummaryLocalDate
+import com.example.personalfinanceapp.feature.dashboard.ui.toLongIfInRange
 import com.example.personalfinanceapp.feature.expense.FakeExpenseRepository
 import com.example.personalfinanceapp.feature.expense.ExpenseRepository
 import com.example.personalfinanceapp.feature.goal.FakeGoalRepository
@@ -32,10 +34,12 @@ import com.example.personalfinanceapp.feature.goal.GoalRepository
 import com.example.personalfinanceapp.feature.income.FakeIncomeRepository
 import com.example.personalfinanceapp.feature.income.IncomeObservationSnapshot
 import com.example.personalfinanceapp.feature.income.IncomeRepository
+import com.example.personalfinanceapp.feature.recurring.FakeRecurringRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -46,6 +50,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -69,7 +74,20 @@ class DashboardViewModelTest {
     private lateinit var fakeExpenseRepository: FakeExpenseRepository
     private lateinit var fakeCategoryRepository: FakeCategoryRepository
     private lateinit var fakeGoalRepository: FakeGoalRepository
+    private lateinit var fakeRecurringRepository: FakeRecurringRepository
     private lateinit var viewModel: DashboardViewModel
+
+    @Test
+    fun checkedBigIntegerConversionAcceptsLongBoundaries() {
+        assertEquals(Long.MIN_VALUE, BigInteger.valueOf(Long.MIN_VALUE).toLongIfInRange())
+        assertEquals(Long.MAX_VALUE, BigInteger.valueOf(Long.MAX_VALUE).toLongIfInRange())
+    }
+
+    @Test
+    fun checkedBigIntegerConversionRejectsValuesOutsideLongRange() {
+        assertNull(BigInteger.valueOf(Long.MIN_VALUE).subtract(BigInteger.ONE).toLongIfInRange())
+        assertNull(BigInteger.valueOf(Long.MAX_VALUE).add(BigInteger.ONE).toLongIfInRange())
+    }
 
     @Before
     fun setUp() {
@@ -79,13 +97,15 @@ class DashboardViewModelTest {
         fakeExpenseRepository = FakeExpenseRepository()
         fakeCategoryRepository = FakeCategoryRepository()
         fakeGoalRepository = FakeGoalRepository()
+        fakeRecurringRepository = FakeRecurringRepository()
 
         viewModel = DashboardViewModel(
             authRepository = fakeAuthRepository,
             incomeRepository = fakeIncomeRepository,
             expenseRepository = fakeExpenseRepository,
             categoryRepository = fakeCategoryRepository,
-            goalRepository = fakeGoalRepository
+            goalRepository = fakeGoalRepository,
+            recurringRepository = fakeRecurringRepository
         )
     }
 
@@ -246,6 +266,7 @@ class DashboardViewModelTest {
             expenseRepository = fakeExpenseRepository,
             categoryRepository = fakeCategoryRepository,
             goalRepository = fakeGoalRepository,
+            recurringRepository = fakeRecurringRepository,
             clock = fixedClock
         )
         backgroundScope.launch { integratedViewModel.uiState.collect() }
@@ -464,7 +485,8 @@ class DashboardViewModelTest {
             incomeRepository = fakeIncomeRepository,
             expenseRepository = fakeExpenseRepository,
             categoryRepository = fakeCategoryRepository,
-            goalRepository = failingRepository
+            goalRepository = failingRepository,
+            recurringRepository = fakeRecurringRepository
         )
         backgroundScope.launch { unavailableViewModel.uiState.collect() }
         testDispatcher.scheduler.advanceUntilIdle()
@@ -474,6 +496,132 @@ class DashboardViewModelTest {
         assertNull(goal?.currentSavedLkrMinor)
         assertNull(goal?.remainingLkrMinor)
         assertNull(goal?.progressPercent)
+        assertEquals(
+            com.example.personalfinanceapp.feature.savings.SavingsCoachUnavailableReason.REQUIRED_DATA_UNAVAILABLE,
+            unavailableViewModel.uiState.value.smartSavings?.unavailableReason
+        )
+    }
+
+    @Test
+    fun smartSavingsConfirmationWritesOnceThroughOwnerBoundRepository() = runTest {
+        val goal = Goal(
+            id = "coach-goal",
+            name = "Emergency fund",
+            targetAmountMinor = 10_000_000L,
+            startDate = LocalDate.now(),
+            targetDate = LocalDate.now().plusMonths(1)
+        )
+        fakeGoalRepository.saveGoal(goal).getOrThrow()
+        fakeIncomeRepository.saveIncome(qualifyingIncome("salary", 10_000_000L)).getOrThrow()
+        var ownerBoundWrites = 0
+        val countingRepository = object : GoalRepository by fakeGoalRepository {
+            override suspend fun addContributionForOwner(
+                expectedOwnerId: String,
+                contribution: Contribution
+            ): Result<Unit> {
+                ownerBoundWrites++
+                return fakeGoalRepository.addContributionForOwner(expectedOwnerId, contribution)
+            }
+        }
+        val coachViewModel = DashboardViewModel(
+            authRepository = fakeAuthRepository,
+            incomeRepository = fakeIncomeRepository,
+            expenseRepository = fakeExpenseRepository,
+            categoryRepository = fakeCategoryRepository,
+            goalRepository = countingRepository,
+            recurringRepository = fakeRecurringRepository
+        )
+        backgroundScope.launch { coachViewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+        val amountLkr = coachViewModel.uiState.value.smartSavings
+            ?.suggestedContributionMinor
+            ?.divide(BigInteger.valueOf(100L))
+            ?.longValueExact()
+        assertNotNull(amountLkr)
+
+        coachViewModel.confirmSuggestedContribution(goal.id, amountLkr!!)
+        coachViewModel.confirmSuggestedContribution(goal.id, amountLkr)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, ownerBoundWrites)
+        assertEquals(1, fakeGoalRepository.observeContributions(goal.id).first().size)
+        assertEquals("Savings allocation recorded", coachViewModel.savingsCoachActionState.value.successMessage)
+    }
+
+    @Test
+    fun pendingSmartSavingsConfirmationRetainsOwnerAndRejectsAccountSwitch() = runTest {
+        val goal = Goal(
+            id = "owner-goal",
+            name = "Owner goal",
+            targetAmountMinor = 10_000_000L,
+            startDate = LocalDate.now(),
+            targetDate = LocalDate.now().plusMonths(1)
+        )
+        fakeGoalRepository.saveGoal(goal).getOrThrow()
+        fakeIncomeRepository.saveIncome(qualifyingIncome("salary", 10_000_000L)).getOrThrow()
+        var capturedOwner: String? = null
+        var writeExecuted = false
+        val ownerCheckingRepository = object : GoalRepository by fakeGoalRepository {
+            override suspend fun addContributionForOwner(
+                expectedOwnerId: String,
+                contribution: Contribution
+            ): Result<Unit> {
+                capturedOwner = expectedOwnerId
+                if (fakeAuthRepository.currentUserId() != expectedOwnerId) {
+                    return Result.failure(
+                        IllegalStateException("Authenticated user changed before goal data could be written")
+                    )
+                }
+                writeExecuted = true
+                return fakeGoalRepository.addContribution(contribution)
+            }
+        }
+        val coachViewModel = DashboardViewModel(
+            authRepository = fakeAuthRepository,
+            incomeRepository = fakeIncomeRepository,
+            expenseRepository = fakeExpenseRepository,
+            categoryRepository = fakeCategoryRepository,
+            goalRepository = ownerCheckingRepository,
+            recurringRepository = fakeRecurringRepository
+        )
+        backgroundScope.launch { coachViewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+        val amountLkr = coachViewModel.uiState.value.smartSavings
+            ?.suggestedContributionMinor
+            ?.divide(BigInteger.valueOf(100L))
+            ?.longValueExact()
+        assertNotNull(amountLkr)
+
+        coachViewModel.confirmSuggestedContribution(goal.id, amountLkr!!)
+        fakeAuthRepository.simulateAccountSwitch("user-2", "two@example.com")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("user-1", capturedOwner)
+        assertFalse(writeExecuted)
+        assertEquals(SavingsCoachActionState(), coachViewModel.savingsCoachActionState.value)
+    }
+
+    @Test
+    fun logoutClearsSmartSavingsSuggestion() = runTest {
+        fakeGoalRepository.saveGoal(
+            Goal(
+                id = "logout-goal",
+                name = "Logout goal",
+                targetAmountMinor = 10_000_000L,
+                startDate = LocalDate.now(),
+                targetDate = LocalDate.now().plusMonths(1)
+            )
+        ).getOrThrow()
+        fakeIncomeRepository.saveIncome(qualifyingIncome("salary", 10_000_000L)).getOrThrow()
+        backgroundScope.launch { viewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertNotNull(viewModel.uiState.value.smartSavings?.suggestedContributionMinor)
+
+        fakeAuthRepository.signOut().getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(viewModel.uiState.value.smartSavings)
+        assertEquals(SavingsCoachActionState(), viewModel.savingsCoachActionState.value)
     }
 
     @Test
@@ -586,6 +734,7 @@ class DashboardViewModelTest {
                 expenseRepository = fakeExpenseRepository,
                 categoryRepository = fakeCategoryRepository,
                 goalRepository = fakeGoalRepository,
+                recurringRepository = fakeRecurringRepository,
                 clock = Clock.fixed(
                     Instant.parse("2026-12-31T20:00:00Z"),
                     ZoneOffset.UTC
@@ -661,6 +810,7 @@ class DashboardViewModelTest {
             expenseRepository = fakeExpenseRepository,
             categoryRepository = fakeCategoryRepository,
             goalRepository = fakeGoalRepository,
+            recurringRepository = fakeRecurringRepository,
             clock = fixedClock
         )
         backgroundScope.launch { summaryViewModel.financialSummaryState.collect() }
@@ -823,6 +973,7 @@ class DashboardViewModelTest {
             expenseRepository = accountExpenseRepository,
             categoryRepository = accountCategoryRepository,
             goalRepository = fakeGoalRepository,
+            recurringRepository = fakeRecurringRepository,
             clock = Clock.fixed(Instant.parse("2026-11-04T00:00:00Z"), ZoneOffset.UTC)
         )
         backgroundScope.launch { summaryViewModel.financialSummaryState.collect() }
@@ -841,6 +992,24 @@ class DashboardViewModelTest {
         assertEquals(2_500_000L, accountB.totalExpenseLkrMinor)
         assertEquals(17_500_000L, accountB.netCashFlowLkrMinor)
         assertEquals("Account B category", accountB.analytics.expenseCategoryBreakdown.single().categoryName)
+    }
+
+    private fun qualifyingIncome(id: String, amountMinor: Long): Income {
+        val date = LocalDate.now()
+        return Income(
+            id = id,
+            source = IncomeSource.SALARY,
+            entryKind = IncomeEntryKind.RECEIPT,
+            money = Money(
+                originalAmountDecimal = BigDecimal.valueOf(amountMinor, 2).toPlainString(),
+                originalCurrency = CurrencyCode.LKR,
+                rateLkrPerUnitDecimal = "1",
+                baseAmountMinor = amountMinor,
+                rateSource = RateSource.LKR_FIXED,
+                rateDate = date
+            ),
+            occurredDate = date
+        )
     }
 
     private fun unsupportedWrite(): Result<Unit> = Result.failure(UnsupportedOperationException())
