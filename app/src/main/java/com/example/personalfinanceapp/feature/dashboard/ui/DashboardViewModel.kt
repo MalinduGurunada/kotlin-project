@@ -70,7 +70,7 @@ private data class DashboardInputs(
 
 data class DashboardUiState(
     val userName: String = "User",
-    val totalAvailableBalanceLkrMinor: Long = 0L,
+    val monthlyNetCashFlowLkrMinor: Long = 0L,
     val totalIncomeLkrMinor: Long = 0L,
     val incomeCount: Int = 0,
     val monthlyCryptoResult: CryptoResultTotals = CryptoResultTotals(),
@@ -247,7 +247,7 @@ class DashboardViewModel @Inject constructor(
     private val clock: Clock = Clock.systemUTC()
 ) : ViewModel() {
 
-    private val now = LocalDate.now(clock)
+    private val now = financialSummaryLocalDate(clock)
     private val startDate = now.withDayOfMonth(1)
     private val endDateExclusive = now.withDayOfMonth(1).plusMonths(1)
     private val startOfYear = now.withDayOfYear(1)
@@ -295,8 +295,12 @@ class DashboardViewModel @Inject constructor(
                     emit(
                         DashboardUiState(
                             isLoading = false,
-                            errorMessage = exception.localizedMessage
-                                ?: "Goal data is currently unavailable"
+                            errorMessage = if (exception is ArithmeticException) {
+                                "Dashboard totals are too large to calculate safely"
+                            } else {
+                                exception.localizedMessage
+                                    ?: "Dashboard data is currently unavailable"
+                            }
                         )
                     )
                 }
@@ -413,19 +417,30 @@ class DashboardViewModel @Inject constructor(
             endDateExclusive = ytdEndDateExclusive
         )
 
-        val totalExpenseMinor = expenses.sumOf { it.money.baseAmountMinor }
-        val balanceMinor = netIncomeMinor - totalExpenseMinor
+        val totalExpenseMinor = expenses.fold(0L) { total, expense ->
+            Math.addExact(total, expense.money.baseAmountMinor)
+        }
+        val netCashFlowMinor = Math.subtractExact(netIncomeMinor, totalExpenseMinor)
 
         val committedMinor = expenses
             .filter { it.spendingClass == SpendingClass.COMMITTED }
-            .sumOf { it.money.baseAmountMinor }
+            .fold(0L) { total, expense ->
+                Math.addExact(total, expense.money.baseAmountMinor)
+            }
 
         val discretionaryMinor = expenses
             .filter { it.spendingClass == SpendingClass.DISCRETIONARY }
-            .sumOf { it.money.baseAmountMinor }
+            .fold(0L) { total, expense ->
+                Math.addExact(total, expense.money.baseAmountMinor)
+            }
 
-        val totalOutflow = committedMinor + discretionaryMinor
-        val committedPct = if (totalOutflow > 0) ((committedMinor.toDouble() / totalOutflow) * 100).toInt() else 0
+        val totalOutflow = Math.addExact(committedMinor, discretionaryMinor)
+        val committedPct = if (totalOutflow > 0L) {
+            BigInteger.valueOf(committedMinor)
+                .multiply(BigInteger.valueOf(100L))
+                .divide(BigInteger.valueOf(totalOutflow))
+                .toInt()
+        } else 0
         val discretionaryPct = if (totalOutflow > 0) 100 - committedPct else 0
 
         val primaryGoal = goals.firstOrNull { !it.archived }?.let { goal ->
@@ -500,7 +515,7 @@ class DashboardViewModel @Inject constructor(
 
         return DashboardUiState(
             userName = displayName,
-            totalAvailableBalanceLkrMinor = balanceMinor,
+            monthlyNetCashFlowLkrMinor = netCashFlowMinor,
             totalIncomeLkrMinor = netIncomeMinor,
             incomeCount = incomes.size,
             monthlyCryptoResult = monthlyCryptoResult,

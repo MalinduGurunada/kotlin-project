@@ -179,12 +179,23 @@ class GoalViewModel @Inject constructor(
             _errorMessage.value = "Target date cannot be before start date"
             return
         }
+        val targetAmountMinor = try {
+            Math.multiplyExact(targetAmountLkr, 100L)
+        } catch (_: ArithmeticException) {
+            _errorMessage.value = "Goal target is too large"
+            return
+        }
+        val ownerId = authRepository.currentUserId()
+        if (ownerId.isNullOrBlank()) {
+            _errorMessage.value = "User is not authenticated"
+            return
+        }
 
         val goalId = id?.ifBlank { null } ?: UUID.randomUUID().toString()
         val goal = Goal(
             id = goalId,
             name = name.trim(),
-            targetAmountMinor = targetAmountLkr * 100,
+            targetAmountMinor = targetAmountMinor,
             startDate = startDate,
             targetDate = targetDate
         )
@@ -193,7 +204,7 @@ class GoalViewModel @Inject constructor(
         _errorMessage.value = null
 
         viewModelScope.launch {
-            val result = goalRepository.saveGoal(goal)
+            val result = goalRepository.saveGoalForOwner(ownerId, goal)
             _isLoading.value = false
             if (result.isFailure) {
                 _errorMessage.value = result.exceptionOrNull()?.localizedMessage ?: "Failed to save goal"
@@ -212,11 +223,22 @@ class GoalViewModel @Inject constructor(
             _errorMessage.value = "Contribution amount must be positive"
             return
         }
+        val amountMinor = try {
+            Math.multiplyExact(amountLkr, 100L)
+        } catch (_: ArithmeticException) {
+            _errorMessage.value = "Contribution amount is too large"
+            return
+        }
+        val ownerId = authRepository.currentUserId()
+        if (ownerId.isNullOrBlank()) {
+            _errorMessage.value = "User is not authenticated"
+            return
+        }
 
         val contribution = Contribution(
             id = UUID.randomUUID().toString(),
             goalId = goalId,
-            amountMinor = amountLkr * 100,
+            amountMinor = amountMinor,
             kind = ContributionKind.ALLOCATION,
             occurredDate = LocalDate.now(),
             note = note?.trim()?.ifBlank { null }
@@ -226,7 +248,7 @@ class GoalViewModel @Inject constructor(
         _errorMessage.value = null
 
         viewModelScope.launch {
-            val result = goalRepository.addContribution(contribution)
+            val result = goalRepository.addContributionForOwner(ownerId, contribution)
             _isLoading.value = false
             if (result.isFailure) {
                 _errorMessage.value = result.exceptionOrNull()?.localizedMessage ?: "Failed to add contribution"
@@ -235,10 +257,21 @@ class GoalViewModel @Inject constructor(
     }
 
     fun reverseContribution(originalContribution: Contribution) {
+        val reversalAmount = try {
+            Math.negateExact(originalContribution.amountMinor)
+        } catch (_: ArithmeticException) {
+            _errorMessage.value = "Contribution amount cannot be reversed safely"
+            return
+        }
+        val ownerId = authRepository.currentUserId()
+        if (ownerId.isNullOrBlank()) {
+            _errorMessage.value = "User is not authenticated"
+            return
+        }
         val reversal = Contribution(
             id = UUID.randomUUID().toString(),
             goalId = originalContribution.goalId,
-            amountMinor = -originalContribution.amountMinor,
+            amountMinor = reversalAmount,
             kind = ContributionKind.REVERSAL,
             occurredDate = LocalDate.now(),
             reversesId = originalContribution.id,
@@ -249,7 +282,7 @@ class GoalViewModel @Inject constructor(
         _errorMessage.value = null
 
         viewModelScope.launch {
-            val result = goalRepository.addContribution(reversal)
+            val result = goalRepository.addContributionForOwner(ownerId, reversal)
             _isLoading.value = false
             if (result.isFailure) {
                 _errorMessage.value = result.exceptionOrNull()?.localizedMessage ?: "Failed to reverse contribution"

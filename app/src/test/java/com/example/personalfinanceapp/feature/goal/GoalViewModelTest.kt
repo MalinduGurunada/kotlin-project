@@ -514,4 +514,110 @@ class GoalViewModelTest {
         assertEquals(0, goalUi.progressPercent)
         assertFalse(goalUi.isCompleted)
     }
+
+    @Test
+    fun rupeeInputsRejectMinorUnitOverflowBeforeWriting() = runTest {
+        backgroundScope.launch { viewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.saveGoal(
+            id = "too-large",
+            name = "Too large",
+            targetAmountLkr = Long.MAX_VALUE,
+            startDate = LocalDate.now(),
+            targetDate = LocalDate.now().plusMonths(1)
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals("Goal target is too large", viewModel.uiState.value.errorMessage)
+        assertTrue(viewModel.uiState.value.goals.isEmpty())
+
+        viewModel.clearError()
+        viewModel.addContribution("missing-goal", Long.MAX_VALUE, null)
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals("Contribution amount is too large", viewModel.uiState.value.errorMessage)
+    }
+
+    @Test
+    fun pendingGoalSaveRetainsInitiatingOwnerAcrossAccountSwitch() = runTest {
+        var capturedOwner: String? = null
+        var writeExecuted = false
+        val ownerCheckingRepository = object : GoalRepository by fakeGoalRepository {
+            override suspend fun saveGoalForOwner(
+                expectedOwnerId: String,
+                goal: Goal
+            ): Result<Unit> {
+                capturedOwner = expectedOwnerId
+                if (fakeAuthRepository.currentUserId() != expectedOwnerId) {
+                    return Result.failure(
+                        IllegalStateException("Authenticated user changed before goal data could be written")
+                    )
+                }
+                writeExecuted = true
+                return fakeGoalRepository.saveGoal(goal)
+            }
+        }
+        val accountBoundViewModel = GoalViewModel(fakeAuthRepository, ownerCheckingRepository)
+        backgroundScope.launch { accountBoundViewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        accountBoundViewModel.saveGoal(
+            id = "pending-a",
+            name = "Account A goal",
+            targetAmountLkr = 1_000L,
+            startDate = LocalDate.now(),
+            targetDate = LocalDate.now().plusMonths(1)
+        )
+        fakeAuthRepository.simulateAccountSwitch("user-2", "two@example.com")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("user-1", capturedOwner)
+        assertFalse(writeExecuted)
+        assertEquals(
+            "Authenticated user changed before goal data could be written",
+            accountBoundViewModel.uiState.value.errorMessage
+        )
+    }
+
+    @Test
+    fun pendingContributionRetainsInitiatingOwnerAcrossAccountSwitch() = runTest {
+        val goal = Goal(
+            id = "goal-a",
+            name = "Account A goal",
+            targetAmountMinor = 100_000L,
+            startDate = LocalDate.now(),
+            targetDate = LocalDate.now().plusMonths(1)
+        )
+        fakeGoalRepository.saveGoal(goal).getOrThrow()
+        var capturedOwner: String? = null
+        var writeExecuted = false
+        val ownerCheckingRepository = object : GoalRepository by fakeGoalRepository {
+            override suspend fun addContributionForOwner(
+                expectedOwnerId: String,
+                contribution: Contribution
+            ): Result<Unit> {
+                capturedOwner = expectedOwnerId
+                if (fakeAuthRepository.currentUserId() != expectedOwnerId) {
+                    return Result.failure(
+                        IllegalStateException("Authenticated user changed before goal data could be written")
+                    )
+                }
+                writeExecuted = true
+                return fakeGoalRepository.addContribution(contribution)
+            }
+        }
+        val accountBoundViewModel = GoalViewModel(fakeAuthRepository, ownerCheckingRepository)
+        backgroundScope.launch { accountBoundViewModel.uiState.collect() }
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        accountBoundViewModel.addContribution(goal.id, 100L, null)
+        fakeAuthRepository.simulateAccountSwitch("user-2", "two@example.com")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("user-1", capturedOwner)
+        assertFalse(writeExecuted)
+        assertEquals(
+            "Authenticated user changed before goal data could be written",
+            accountBoundViewModel.uiState.value.errorMessage
+        )
+    }
 }

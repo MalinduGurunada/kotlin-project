@@ -11,6 +11,7 @@ import com.example.personalfinanceapp.core.model.PaymentChannel
 import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.core.money.MoneyConverter
+import com.example.personalfinanceapp.feature.auth.AuthRepository
 import com.example.personalfinanceapp.feature.category.CategoryRepository
 import com.example.personalfinanceapp.feature.exchangerate.ExchangeRateRepository
 import com.example.personalfinanceapp.feature.expense.ExpenseRepository
@@ -20,10 +21,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.math.BigInteger
 import java.time.LocalDate
 import java.util.UUID
 import javax.inject.Inject
@@ -42,12 +47,56 @@ data class ExpenseUiState(
     ),
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
+    val totalsAvailable: Boolean = true,
     val totalLkrMinor: Long = 0L,
     val committedLkrMinor: Long = 0L,
     val discretionaryLkrMinor: Long = 0L,
     val committedPercentage: Int = 0,
     val discretionaryPercentage: Int = 0
 )
+
+internal data class ExpenseTotals(
+    val totalMinor: Long,
+    val committedMinor: Long,
+    val discretionaryMinor: Long,
+    val committedPercentage: Int,
+    val discretionaryPercentage: Int
+)
+
+private sealed interface ExpenseObservation {
+    data object Pending : ExpenseObservation
+    data class Available(val expenses: List<Expense>) : ExpenseObservation
+    data class Failed(val message: String) : ExpenseObservation
+}
+
+internal fun calculateExpenseTotals(expenses: List<Expense>): ExpenseTotals {
+    expenses.forEach { expense ->
+        require(expense.money.baseAmountMinor > 0L) { "Expense amount must be positive" }
+    }
+    val totalMinor = expenses.fold(0L) { total, expense ->
+        Math.addExact(total, expense.money.baseAmountMinor)
+    }
+    val committedMinor = expenses
+        .filter { it.spendingClass == SpendingClass.COMMITTED }
+        .fold(0L) { total, expense -> Math.addExact(total, expense.money.baseAmountMinor) }
+    val discretionaryMinor = expenses
+        .filter { it.spendingClass == SpendingClass.DISCRETIONARY }
+        .fold(0L) { total, expense -> Math.addExact(total, expense.money.baseAmountMinor) }
+    Math.addExact(committedMinor, discretionaryMinor)
+    val committedPercentage = if (totalMinor > 0L) {
+        BigInteger.valueOf(committedMinor)
+            .multiply(BigInteger.valueOf(100L))
+            .divide(BigInteger.valueOf(totalMinor))
+            .toInt()
+    } else 0
+    return ExpenseTotals(
+        totalMinor = totalMinor,
+        committedMinor = committedMinor,
+        discretionaryMinor = discretionaryMinor,
+        committedPercentage = committedPercentage,
+        discretionaryPercentage = if (totalMinor > 0L) 100 - committedPercentage else 0
+    )
+}
 
 data class ExpenseSaveUiState(
     val isSaving: Boolean = false,
@@ -57,6 +106,7 @@ data class ExpenseSaveUiState(
 
 @HiltViewModel
 class ExpenseViewModel @Inject constructor(
+    private val authRepository: AuthRepository,
     private val expenseRepository: ExpenseRepository,
     private val categoryRepository: CategoryRepository,
     private val exchangeRateRepository: ExchangeRateRepository
@@ -79,42 +129,62 @@ class ExpenseViewModel @Inject constructor(
     val uiState: StateFlow<ExpenseUiState> = combine(
         _dateRange.flatMapLatest { range ->
             expenseRepository.observeExpenses(range.startDate, range.endDateExclusive)
+                .map<List<Expense>, ExpenseObservation>(ExpenseObservation::Available)
+                .onStart { emit(ExpenseObservation.Pending) }
+                .catch { exception ->
+                    emit(
+                        ExpenseObservation.Failed(
+                            exception.localizedMessage
+                                ?: "Expense data is currently unavailable"
+                        )
+                    )
+                }
         },
         categoryRepository.observeCategories(),
         _dateRange,
         _isLoading,
         _errorMessage
-    ) { expenses, categories, dateRange, isLoading, errorMessage ->
-        val totalLkr = expenses.sumOf { it.money.baseAmountMinor }
-        val committedLkr = expenses
-            .filter { it.spendingClass == SpendingClass.COMMITTED }
-            .sumOf { it.money.baseAmountMinor }
-        val discretionaryLkr = expenses
-            .filter { it.spendingClass == SpendingClass.DISCRETIONARY }
-            .sumOf { it.money.baseAmountMinor }
-        val committedPct = if (totalLkr > 0L) {
-            ((committedLkr.toDouble() / totalLkr) * 100).toInt()
-        } else 0
-        val discretionaryPct = if (totalLkr > 0L) {
-            100 - committedPct
-        } else 0
+    ) { observation, categories, dateRange, isLoading, errorMessage ->
+        if (observation !is ExpenseObservation.Available) {
+            return@combine ExpenseUiState(
+                expenses = emptyList(),
+                categories = categories,
+                dateRange = dateRange,
+                isLoading = isLoading,
+                errorMessage = (observation as? ExpenseObservation.Failed)?.message
+                    ?: errorMessage,
+                totalsAvailable = false
+            )
+        }
+
+        val expenses = observation.expenses
+        val totalsResult = runCatching { calculateExpenseTotals(expenses) }
+        val totals = totalsResult.getOrNull()
+        val totalsError = totalsResult.exceptionOrNull()?.let { exception ->
+            if (exception is ArithmeticException) {
+                "Expense totals are too large to calculate safely"
+            } else {
+                "Expense data contains an invalid amount"
+            }
+        }
 
         ExpenseUiState(
             expenses = expenses,
             categories = categories,
             dateRange = dateRange,
             isLoading = isLoading,
-            errorMessage = errorMessage,
-            totalLkrMinor = totalLkr,
-            committedLkrMinor = committedLkr,
-            discretionaryLkrMinor = discretionaryLkr,
-            committedPercentage = committedPct,
-            discretionaryPercentage = discretionaryPct
+            errorMessage = totalsError ?: errorMessage,
+            totalsAvailable = totals != null,
+            totalLkrMinor = totals?.totalMinor ?: 0L,
+            committedLkrMinor = totals?.committedMinor ?: 0L,
+            discretionaryLkrMinor = totals?.discretionaryMinor ?: 0L,
+            committedPercentage = totals?.committedPercentage ?: 0,
+            discretionaryPercentage = totals?.discretionaryPercentage ?: 0
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.Eagerly,
-        initialValue = ExpenseUiState()
+        initialValue = ExpenseUiState(totalsAvailable = false)
     )
 
     fun setDateRange(startDate: LocalDate, endDateExclusive: LocalDate) {
@@ -165,6 +235,11 @@ class ExpenseViewModel @Inject constructor(
                 publishSaveError("The selected category is unavailable")
                 return
             }
+        val ownerId = authRepository.currentUserId()
+        if (ownerId.isNullOrBlank()) {
+            publishSaveError("User is not authenticated")
+            return
+        }
 
         _isLoading.value = true
         _errorMessage.value = null
@@ -228,7 +303,7 @@ class ExpenseViewModel @Inject constructor(
                 channelLabel = storedExpense?.channelLabel
             )
 
-            val result = expenseRepository.saveExpense(expense)
+            val result = expenseRepository.saveExpenseForOwner(ownerId, expense)
             _isLoading.value = false
             if (result.isFailure) {
                 publishSaveError(
@@ -292,11 +367,16 @@ class ExpenseViewModel @Inject constructor(
     }
 
     fun deleteExpense(id: DocumentId) {
+        val ownerId = authRepository.currentUserId()
+        if (ownerId.isNullOrBlank()) {
+            _errorMessage.value = "User is not authenticated"
+            return
+        }
         _isLoading.value = true
         _errorMessage.value = null
 
         viewModelScope.launch {
-            val result = expenseRepository.deleteExpense(id)
+            val result = expenseRepository.deleteExpenseForOwner(ownerId, id)
             _isLoading.value = false
             if (result.isFailure) {
                 _errorMessage.value = result.exceptionOrNull()?.localizedMessage ?: "Failed to delete expense"

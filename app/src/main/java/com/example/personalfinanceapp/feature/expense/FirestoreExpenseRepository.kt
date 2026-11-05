@@ -1,12 +1,8 @@
 package com.example.personalfinanceapp.feature.expense
 
-import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.DocumentId
 import com.example.personalfinanceapp.core.model.Expense
-import com.example.personalfinanceapp.core.model.Money
-import com.example.personalfinanceapp.core.model.PaymentChannel
-import com.example.personalfinanceapp.core.model.RateSource
-import com.example.personalfinanceapp.core.model.SpendingClass
+import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.feature.auth.accountScopedData
 import com.example.personalfinanceapp.feature.auth.observeUserIds
 import com.google.firebase.auth.FirebaseAuth
@@ -57,63 +53,21 @@ class FirestoreExpenseRepository @Inject constructor(
                 return@addSnapshotListener
             }
 
-            val items = snapshot.documents.mapNotNull { doc ->
-                runCatching {
-                    val categoryId = doc.getString("categoryId") ?: ""
-                    val categoryNameSnapshot = doc.getString("categoryNameSnapshot") ?: ""
-                    val spendingClass = doc.getString("spendingClass")?.let {
-                        SpendingClass.valueOf(it)
-                    } ?: SpendingClass.DISCRETIONARY
-                    val paymentChannel = doc.getString("paymentChannel")?.let {
-                        PaymentChannel.valueOf(it)
-                    } ?: PaymentChannel.CASH
-                    val occurredDateStr = doc.getString("occurredDate") ?: ""
-                    val occurredDate = LocalDate.parse(occurredDateStr)
-
-                    val originalAmountDecimal = doc.getString("originalAmountDecimal") ?: "0"
-                    val originalCurrency = doc.getString("originalCurrency")?.let {
-                        CurrencyCode.valueOf(it)
-                    } ?: CurrencyCode.LKR
-                    val rateLkrPerUnitDecimal = doc.getString("rateLkrPerUnitDecimal") ?: "1"
-                    val baseAmountMinor = doc.getLong("baseAmountMinor") ?: 0L
-                    val rateSource = doc.getString("rateSource")?.let {
-                        RateSource.valueOf(it)
-                    } ?: RateSource.LKR_FIXED
-                    val rateDateStr = doc.getString("rateDate") ?: occurredDateStr
-                    val rateDate = LocalDate.parse(rateDateStr)
-
-                    val note = doc.getString("note")
-                    val channelLabel = doc.getString("channelLabel")
-                    val recurringExpenseId = doc.getString("recurringExpenseId")
-                    val recurringOccurrenceId = doc.getString("recurringOccurrenceId")
-
-                    Expense(
-                        id = doc.id,
-                        categoryId = categoryId,
-                        categoryNameSnapshot = categoryNameSnapshot,
-                        spendingClass = spendingClass,
-                        paymentChannel = paymentChannel,
-                        money = Money(
-                            originalAmountDecimal = originalAmountDecimal,
-                            originalCurrency = originalCurrency,
-                            rateLkrPerUnitDecimal = rateLkrPerUnitDecimal,
-                            baseAmountMinor = baseAmountMinor,
-                            rateSource = rateSource,
-                            rateDate = rateDate
-                        ),
-                        occurredDate = occurredDate,
-                        note = note,
-                        channelLabel = channelLabel,
-                        recurringExpenseId = recurringExpenseId,
-                        recurringOccurrenceId = recurringOccurrenceId
+            val items = try {
+                snapshot.documents.mapNotNull { doc ->
+                    ExpenseFirestoreMapper.fromFirestoreMapInRange(
+                        documentId = doc.id,
+                        fields = doc.data.orEmpty(),
+                        startDate = startDate,
+                        endDateExclusive = endDateExclusive
                     )
-                }.getOrNull()
-            }.filter { expense ->
-                !expense.occurredDate.isBefore(startDate) &&
-                        expense.occurredDate.isBefore(endDateExclusive)
-            }.sortedWith(
-                compareBy<Expense> { it.occurredDate }.thenBy { it.id }
-            )
+                }.sortedWith(
+                    compareBy<Expense> { it.occurredDate }.thenBy { it.id }
+                )
+            } catch (exception: ExpenseFirestoreMappingException) {
+                close(exception)
+                return@addSnapshotListener
+            }
 
             trySend(items)
         }
@@ -125,15 +79,37 @@ class FirestoreExpenseRepository @Inject constructor(
 
     override suspend fun saveExpense(
         expense: Expense
+    ): Result<Unit> = saveExpenseInternal(expectedOwnerId = null, expense = expense)
+
+    override suspend fun saveExpenseForOwner(
+        expectedOwnerId: UserId,
+        expense: Expense
+    ): Result<Unit> = saveExpenseInternal(expectedOwnerId, expense)
+
+    private suspend fun saveExpenseInternal(
+        expectedOwnerId: UserId?,
+        expense: Expense
     ): Result<Unit> = suspendCancellableCoroutine { continuation ->
         val uid = currentUserId
         if (uid == null) {
             continuation.resume(Result.failure(IllegalStateException("User is not authenticated")))
             return@suspendCancellableCoroutine
         }
+        if (expectedOwnerId != null && uid != expectedOwnerId) {
+            continuation.resume(
+                Result.failure(
+                    IllegalStateException("Authenticated user changed before expense could be written")
+                )
+            )
+            return@suspendCancellableCoroutine
+        }
 
         if (expense.id.isBlank()) {
             continuation.resume(Result.failure(IllegalArgumentException("Expense ID cannot be blank")))
+            return@suspendCancellableCoroutine
+        }
+        if (expense.money.baseAmountMinor <= 0L) {
+            continuation.resume(Result.failure(IllegalArgumentException("Expense amount must be positive")))
             return@suspendCancellableCoroutine
         }
 
@@ -174,10 +150,28 @@ class FirestoreExpenseRepository @Inject constructor(
 
     override suspend fun deleteExpense(
         id: DocumentId
+    ): Result<Unit> = deleteExpenseInternal(expectedOwnerId = null, id = id)
+
+    override suspend fun deleteExpenseForOwner(
+        expectedOwnerId: UserId,
+        id: DocumentId
+    ): Result<Unit> = deleteExpenseInternal(expectedOwnerId, id)
+
+    private suspend fun deleteExpenseInternal(
+        expectedOwnerId: UserId?,
+        id: DocumentId
     ): Result<Unit> = suspendCancellableCoroutine { continuation ->
         val uid = currentUserId
         if (uid == null) {
             continuation.resume(Result.failure(IllegalStateException("User is not authenticated")))
+            return@suspendCancellableCoroutine
+        }
+        if (expectedOwnerId != null && uid != expectedOwnerId) {
+            continuation.resume(
+                Result.failure(
+                    IllegalStateException("Authenticated user changed before expense could be deleted")
+                )
+            )
             return@suspendCancellableCoroutine
         }
 
