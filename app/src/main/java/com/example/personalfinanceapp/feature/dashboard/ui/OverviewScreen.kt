@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
@@ -28,6 +29,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -35,6 +40,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.personalfinanceapp.feature.goal.ui.AddContributionDialog
+import com.example.personalfinanceapp.feature.savings.SavingsCoachResult
+import com.example.personalfinanceapp.feature.savings.SavingsCoachUnavailableReason
 import com.example.personalfinanceapp.ui.theme.AccentLime
 import com.example.personalfinanceapp.ui.theme.MutedCoral
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
@@ -51,11 +59,15 @@ import java.util.Locale
 @Composable
 fun OverviewScreen(
     uiState: DashboardUiState,
+    savingsCoachActionState: SavingsCoachActionState = SavingsCoachActionState(),
     currentNavDestination: NavDestination,
     onNavDestinationSelected: (NavDestination) -> Unit,
     onNavigateToActivity: () -> Unit,
-    onNavigateToIncome: () -> Unit = {}
+    onNavigateToIncome: () -> Unit = {},
+    onConfirmSavingsContribution: (goalId: String, amountLkr: Long) -> Unit = { _, _ -> },
+    onClearSavingsCoachActionMessage: () -> Unit = {}
 ) {
+    var showSavingsContributionDialog by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -160,6 +172,17 @@ fun OverviewScreen(
                     } ?: GoalEmptyCard()
                 }
 
+                item {
+                    SmartSavingsCard(
+                        result = uiState.smartSavings,
+                        actionState = savingsCoachActionState,
+                        onReviewContribution = {
+                            onClearSavingsCoachActionMessage()
+                            showSavingsContributionDialog = true
+                        }
+                    )
+                }
+
                 // Recent Activity Header & Items
                 item {
                     Row(
@@ -234,6 +257,27 @@ fun OverviewScreen(
             }
 
         }
+    }
+
+    val coach = uiState.smartSavings
+    val suggestedLkr = coach?.suggestedContributionMinor
+        ?.divide(java.math.BigInteger.valueOf(100L))
+        ?.toLongIfInRange()
+    if (showSavingsContributionDialog && coach?.goal != null && suggestedLkr != null) {
+        AddContributionDialog(
+            goalName = coach.goal.goalName,
+            initialAmountLkr = suggestedLkr,
+            supportingText = "This records a goal allocation only. It does not transfer money. Check your bank balance before confirming.",
+            errorMessage = savingsCoachActionState.errorMessage,
+            onDismiss = {
+                showSavingsContributionDialog = false
+                onClearSavingsCoachActionMessage()
+            },
+            onConfirm = { amountLkr, _ ->
+                onConfirmSavingsContribution(coach.goal.goalId, amountLkr)
+                showSavingsContributionDialog = false
+            }
+        )
     }
 }
 
@@ -540,8 +584,130 @@ private fun GoalEmptyCard() {
     }
 }
 
+@Composable
+private fun SmartSavingsCard(
+    result: SavingsCoachResult?,
+    actionState: SavingsCoachActionState,
+    onReviewContribution: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "SMART SAVINGS",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextSecondaryMuted,
+                letterSpacing = 1.sp
+            )
+
+            val goal = result?.goal
+            if (goal != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(goal.goalName, fontWeight = FontWeight.Bold, color = TextPrimaryDark)
+                    Text("${goal.progressPercent}%", fontWeight = FontWeight.Bold, color = PrimaryDarkGreen)
+                }
+                LinearProgressIndicator(
+                    progress = { goal.progressPercent / 100f },
+                    modifier = Modifier.fillMaxWidth().height(8.dp),
+                    color = AccentLime,
+                    trackColor = Color(0xFFE0E0E0)
+                )
+                Text(
+                    text = "${formatLkrMinor(goal.remainingAmountMinor)} remaining by ${goal.targetDate}",
+                    fontSize = 12.sp,
+                    color = TextSecondaryMuted
+                )
+            }
+
+            result?.estimatedCapacityAfterReserveMinor?.let { capacity ->
+                Text(
+                    text = "Estimated capacity after 20% reserve: ${formatLkrMinor(capacity)}",
+                    fontSize = 13.sp,
+                    color = TextPrimaryDark
+                )
+            }
+
+            val suggestion = result?.suggestedContributionMinor
+            if (suggestion != null) {
+                Text(
+                    text = "Suggested contribution: ${formatLkrMinor(suggestion)}",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryDarkGreen
+                )
+                Text(
+                    text = "Based on recorded receipts, expenses, unpaid bills, goal allocations and crypto losses. This is an estimate, not bank cash or guaranteed savings.",
+                    fontSize = 12.sp,
+                    color = TextSecondaryMuted
+                )
+            } else {
+                Text(
+                    text = savingsCoachUnavailableText(result?.unavailableReason),
+                    fontSize = 12.sp,
+                    color = TextSecondaryMuted
+                )
+            }
+
+            result?.discretionaryReductionTipMinor?.let { reduction ->
+                Text(
+                    text = "Tip: Cutting 10% of recorded discretionary spending could retain about ${formatLkrMinor(reduction)}.",
+                    fontSize = 12.sp,
+                    color = PrimaryDarkGreen
+                )
+            }
+
+            actionState.errorMessage?.let {
+                Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+            }
+            actionState.successMessage?.let {
+                Text(it, fontSize = 12.sp, color = PrimaryDarkGreen)
+            }
+
+            if (suggestion != null) {
+                Button(
+                    onClick = onReviewContribution,
+                    enabled = !actionState.isSaving,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (actionState.isSaving) "Recording allocation" else "Review contribution")
+                }
+            }
+        }
+    }
+}
+
+private fun savingsCoachUnavailableText(reason: SavingsCoachUnavailableReason?): String = when (reason) {
+    SavingsCoachUnavailableReason.REQUIRED_DATA_UNAVAILABLE ->
+        "No suggestion because required financial data is unavailable or unreliable."
+    SavingsCoachUnavailableReason.NO_ACTIVE_GOAL ->
+        "Create an active savings goal to receive a suggestion."
+    SavingsCoachUnavailableReason.EXPIRED_DEADLINE ->
+        "Update the expired goal deadline before using a savings suggestion."
+    SavingsCoachUnavailableReason.NO_QUALIFYING_RECEIPTS ->
+        "No suggestion because no qualifying non-crypto receipts are recorded this month."
+    SavingsCoachUnavailableReason.NO_POSITIVE_CAPACITY ->
+        "No positive estimated capacity remains after recorded commitments and the safety reserve."
+    SavingsCoachUnavailableReason.BELOW_ONE_RUPEE ->
+        "The calculated suggestion is below one rupee."
+    null -> "A savings suggestion is not available yet."
+}
+
 private fun formatLkrMinor(amountMinor: Long): String =
     "LKR ${String.format(Locale.US, "%,.2f", BigDecimal.valueOf(amountMinor, 2))}"
+
+private fun formatLkrMinor(amountMinor: java.math.BigInteger): String =
+    "LKR ${String.format(Locale.US, "%,.2f", BigDecimal(amountMinor, 2))}"
 
 @Composable
 private fun RecentActivityCard(item: TimelineActivityItem) {

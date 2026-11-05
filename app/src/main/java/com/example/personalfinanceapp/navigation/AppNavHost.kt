@@ -374,9 +374,11 @@ fun AppNavHost(
         composable<Overview> {
             val dashboardViewModel: DashboardViewModel = hiltViewModel()
             val uiState by dashboardViewModel.uiState.collectAsState()
+            val savingsCoachActionState by dashboardViewModel.savingsCoachActionState.collectAsState()
 
             OverviewScreen(
                 uiState = uiState,
+                savingsCoachActionState = savingsCoachActionState,
                 currentNavDestination = NavDestination.OVERVIEW,
                 onNavDestinationSelected = { destination ->
                     if (destination != NavDestination.OVERVIEW) {
@@ -388,7 +390,9 @@ fun AppNavHost(
                 },
                 onNavigateToIncome = {
                     navController.navigateTo(AppNavigationTarget.INCOME)
-                }
+                },
+                onConfirmSavingsContribution = dashboardViewModel::confirmSuggestedContribution,
+                onClearSavingsCoachActionMessage = dashboardViewModel::clearSavingsCoachActionMessage
             )
         }
 
