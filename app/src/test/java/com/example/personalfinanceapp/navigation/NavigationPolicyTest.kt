@@ -43,6 +43,14 @@ class NavigationPolicyTest {
     }
 
     @Test
+    fun unverifiedEmailTargetsVerificationInsteadOfFinancialFeatures() {
+        assertEquals(
+            AppNavigationTarget.EMAIL_VERIFICATION,
+            startupTarget(AuthNavigationState.EmailVerificationRequired("user-1"))
+        )
+    }
+
+    @Test
     fun bottomNavigationTargetsEveryDashboardDestination() {
         assertEquals(AppNavigationTarget.OVERVIEW, dashboardTarget(NavDestination.OVERVIEW))
         assertEquals(AppNavigationTarget.ACTIVITY, dashboardTarget(NavDestination.ACTIVITY))

@@ -1,5 +1,6 @@
 package com.example.personalfinanceapp.feature.notification
 
+import com.example.personalfinanceapp.feature.auth.AuthPostVerificationSync
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.messaging.FirebaseMessaging
 import javax.inject.Inject
@@ -15,7 +16,7 @@ class FcmTokenSyncCoordinator @Inject constructor(
     private val messaging: FirebaseMessaging,
     private val tokenRepository: PushTokenRepository,
     private val preferenceStore: NotificationPreferenceStore
-) {
+) : AuthPostVerificationSync {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val fcmOperations = FcmOperationExecutor(scope)
     private var started = false
@@ -45,6 +46,11 @@ class FcmTokenSyncCoordinator @Inject constructor(
     fun onPreferenceChanged(userId: String, enabled: Boolean) {
         if (auth.currentUser?.uid != userId) return
         if (enabled) register(userId) else unregister(userId)
+    }
+
+    override fun sync(userId: String) {
+        if (auth.currentUser?.uid != userId) return
+        if (preferenceStore.isEnabled(userId)) register(userId) else unregister(userId)
     }
 
     private fun register(expectedUserId: String) {

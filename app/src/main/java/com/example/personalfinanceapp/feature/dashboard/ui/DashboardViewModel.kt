@@ -690,8 +690,11 @@ class DashboardViewModel @Inject constructor(
 
         val sortedTimeline = timelineItems.sortedByDescending { it.occurredDate }
 
-        val userSnapshot = authRepository.currentUserSnapshot()
-        val displayName = userSnapshot?.email?.substringBefore("@")?.replaceFirstChar { it.uppercase() } ?: "User"
+        val displayName = authRepository.currentUserSnapshot()
+            ?.displayName
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: "User"
 
         return DashboardUiState(
             userName = displayName,

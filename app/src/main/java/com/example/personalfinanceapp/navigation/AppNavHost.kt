@@ -12,6 +12,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavOptionsBuilder
@@ -24,6 +27,7 @@ import com.example.personalfinanceapp.feature.auth.GoogleCredentialSignIn
 import com.example.personalfinanceapp.core.model.Expense
 import com.example.personalfinanceapp.feature.auth.ui.AuthNavigationState
 import com.example.personalfinanceapp.feature.auth.ui.AuthViewModel
+import com.example.personalfinanceapp.feature.auth.ui.EmailVerificationScreen
 import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
 import com.example.personalfinanceapp.feature.auth.ui.PasswordResetScreen
 import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
@@ -69,6 +73,7 @@ internal fun NavHostController.returnToSignIn() {
 internal enum class AppNavigationTarget {
     LOGIN,
     REGISTRATION_SETUP,
+    EMAIL_VERIFICATION,
     OVERVIEW,
     ACTIVITY,
     GOALS,
@@ -94,6 +99,7 @@ internal fun startupTarget(state: AuthNavigationState): AppNavigationTarget? = w
     AuthNavigationState.Resolving -> null
     AuthNavigationState.Unauthenticated -> AppNavigationTarget.LOGIN
     AuthNavigationState.RegistrationSetup -> AppNavigationTarget.REGISTRATION_SETUP
+    is AuthNavigationState.EmailVerificationRequired -> AppNavigationTarget.EMAIL_VERIFICATION
     is AuthNavigationState.Authenticated -> AppNavigationTarget.OVERVIEW
 }
 
@@ -135,6 +141,9 @@ private fun NavHostController.navigateTo(
             replaceBackStackIfNeeded(replaceBackStack)
         }
         AppNavigationTarget.REGISTRATION_SETUP -> navigate(Register) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.EMAIL_VERIFICATION -> navigate(EmailVerification) {
             replaceBackStackIfNeeded(replaceBackStack)
         }
         AppNavigationTarget.OVERVIEW -> navigate(Overview) {
@@ -183,6 +192,8 @@ fun AppNavHost(
     val loginUiState by authViewModel.loginUiState.collectAsState()
     val registerUiState by authViewModel.registerUiState.collectAsState()
     val resetUiState by authViewModel.passwordResetUiState.collectAsState()
+    val verificationUiState by authViewModel.emailVerificationUiState.collectAsState()
+    val signOutErrorMessage by authViewModel.signOutErrorMessage.collectAsState()
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
@@ -205,6 +216,15 @@ fun AppNavHost(
                 showRecordExpenseDialog = false
                 navController.navigateTo(
                     AppNavigationTarget.REGISTRATION_SETUP,
+                    replaceBackStack = true
+                )
+            }
+            is AuthNavigationState.EmailVerificationRequired -> {
+                authenticatedStartupComplete = false
+                activeAuthenticatedUserId = null
+                showRecordExpenseDialog = false
+                navController.navigateTo(
+                    AppNavigationTarget.EMAIL_VERIFICATION,
                     replaceBackStack = true
                 )
             }
@@ -250,6 +270,19 @@ fun AppNavHost(
                 }
             }
         }
+    }
+
+    signOutErrorMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = authViewModel::clearSignOutError,
+            title = { Text("Sign out failed") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = authViewModel::clearSignOutError) {
+                    Text("OK")
+                }
+            }
+        )
     }
 
     NavHost(
@@ -312,6 +345,15 @@ fun AppNavHost(
                 onEmailChanged = authViewModel::onResetEmailChanged,
                 onResetClicked = authViewModel::sendPasswordReset,
                 onNavigateToLogin = { navController.returnToSignIn() }
+            )
+        }
+
+        composable<EmailVerification> {
+            EmailVerificationScreen(
+                uiState = verificationUiState,
+                onResendClicked = authViewModel::resendVerificationEmail,
+                onCheckStatusClicked = authViewModel::checkVerificationStatus,
+                onSignOutClicked = authViewModel::signOut
             )
         }
 

@@ -7,6 +7,13 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
+    // Financial collections require a freshly issued token carrying Firebase Auth's
+    // verified-email claim. The parent user document intentionally remains owner-only
+    // so registration/profile bootstrap is not blocked.
+    function isVerifiedOwner(userId) {
+      return isOwner(userId) && request.auth.token.email_verified == true;
+    }
+
     function isValidFcmRegistrationData(data, userId) {
       return data.keys().hasAll([
                'schemaVersion', 'userId', 'installationId', 'platform', 'updatedAt'
@@ -435,22 +442,24 @@ service cloud.firestore {
       // FCM installation registrations are write-only to their authenticated owner. A trusted
       // backend uses Admin SDK access when sending and is not governed by these rules.
       match /fcmRegistrations/{registrationId} {
-        allow create, update: if isOwner(userId) &&
+        allow create, update: if isVerifiedOwner(userId) &&
                               isValidFcmRegistrationData(request.resource.data, userId);
+        // Sign-out cleanup must remain available before email verification. The path is
+        // still UID scoped, and clients cannot read or list registration documents.
         allow delete: if isOwner(userId);
         allow get, list: if false;
       }
 
       // Scoped expenses collection for signed-in user
       match /expenses/{expenseId} {
-        allow read, delete: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidExpenseData(request.resource.data, userId);
+        allow read, delete: if isVerifiedOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) && isValidExpenseData(request.resource.data, userId);
       }
 
       // Recurring templates are retained when paused or cancelled.
       match /recurringExpenses/{recurringId} {
-        allow get, list: if isOwner(userId);
-        allow create, update: if isOwner(userId) &&
+        allow get, list: if isVerifiedOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) &&
                               isValidRecurringExpenseData(
                                 request.resource.data,
                                 userId,
@@ -461,8 +470,8 @@ service cloud.firestore {
 
       // Only confirmed and skipped actions are persisted; pending dates are derived.
       match /recurringOccurrences/{occurrenceId} {
-        allow get, list: if isOwner(userId);
-        allow create: if isOwner(userId) &&
+        allow get, list: if isVerifiedOwner(userId);
+        allow create: if isVerifiedOwner(userId) &&
                       isValidRecurringOccurrenceData(
                         request.resource.data,
                         userId,
@@ -473,25 +482,25 @@ service cloud.firestore {
 
       // UID-scoped expense categories. Categories are archived, never deleted.
       match /categories/{categoryId} {
-        allow get, list: if isOwner(userId);
-        allow create, update: if isOwner(userId) &&
+        allow get, list: if isVerifiedOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) &&
                               isValidCategoryData(request.resource.data, categoryId);
         allow delete: if false;
       }
 
       // UID-scoped income reads and complete-schema writes.
       match /incomes/{incomeId} {
-        allow get, list: if isOwner(userId);
-        allow create, update: if isOwner(userId) &&
+        allow get, list: if isVerifiedOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) &&
                               isValidIncomeData(request.resource.data, userId, incomeId);
-        allow delete: if isOwner(userId);
+        allow delete: if isVerifiedOwner(userId);
       }
 
       match /receivables/{receivableId} {
-        allow get, list: if isOwner(userId);
-        allow create: if isOwner(userId) &&
+        allow get, list: if isVerifiedOwner(userId);
+        allow create: if isVerifiedOwner(userId) &&
                          isValidReceivableData(request.resource.data, receivableId);
-        allow update: if isOwner(userId) &&
+        allow update: if isVerifiedOwner(userId) &&
                          isValidReceivableData(request.resource.data, receivableId) &&
                          request.resource.data.currency == resource.data.currency;
         allow delete: if false;
@@ -499,14 +508,14 @@ service cloud.firestore {
 
       // UID-scoped goals and immutable contribution ledger entries.
       match /goals/{goalId} {
-        allow get, list: if isOwner(userId);
-        allow create, update: if isOwner(userId) &&
+        allow get, list: if isVerifiedOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) &&
                               isValidGoalData(request.resource.data, goalId);
         allow delete: if false;
 
         match /contributions/{contributionId} {
-          allow get, list: if isOwner(userId);
-          allow create: if isOwner(userId) &&
+          allow get, list: if isVerifiedOwner(userId);
+          allow create: if isVerifiedOwner(userId) &&
                         isValidContributionData(
                           request.resource.data,
                           userId,
@@ -517,8 +526,8 @@ service cloud.firestore {
         }
 
         match /reversalClaims/{originalId} {
-          allow get: if isOwner(userId);
-          allow create: if isOwner(userId) &&
+          allow get: if isVerifiedOwner(userId);
+          allow create: if isVerifiedOwner(userId) &&
                         isValidReversalClaim(
                           request.resource.data,
                           userId,

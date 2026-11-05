@@ -11,6 +11,7 @@ class RoutesSerializationTest {
             serializer<Login>(),
             serializer<Register>(),
             serializer<PasswordReset>(),
+            serializer<EmailVerification>(),
             serializer<Home>(),
             serializer<Category>(),
             serializer<ExpenseList>(),
@@ -26,7 +27,7 @@ class RoutesSerializationTest {
             serializer<TransactionDetail>()
         )
 
-        assertEquals(16, routeSerializers.size)
+        assertEquals(17, routeSerializers.size)
     }
 
     @Test
