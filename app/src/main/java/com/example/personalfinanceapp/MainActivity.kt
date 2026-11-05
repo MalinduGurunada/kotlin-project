@@ -16,6 +16,7 @@ import androidx.core.content.ContextCompat
 import com.example.personalfinanceapp.feature.notification.FinanceReviewPayload
 import com.example.personalfinanceapp.feature.notification.NotificationPreferenceStore
 import com.example.personalfinanceapp.feature.notification.NotificationPermissionPolicy
+import com.example.personalfinanceapp.feature.reminder.daily.DailyCaptureNotificationTarget
 import com.example.personalfinanceapp.navigation.AppNavHost
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 import com.google.firebase.auth.FirebaseAuth
@@ -29,6 +30,7 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var notificationPreferenceStore: NotificationPreferenceStore
 
     private var notificationTarget by mutableStateOf<FinanceReviewPayload?>(null)
+    private var dailyCaptureTarget by mutableStateOf<DailyCaptureNotificationTarget?>(null)
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { }
@@ -36,6 +38,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         notificationTarget = FinanceReviewPayload.fromIntent(intent)
+        dailyCaptureTarget = DailyCaptureNotificationTarget.fromIntent(intent)
 
         enableEdgeToEdge()
 
@@ -44,6 +47,8 @@ class MainActivity : ComponentActivity() {
                 AppNavHost(
                     notificationTarget = notificationTarget,
                     onNotificationTargetConsumed = { notificationTarget = null },
+                    dailyCaptureTarget = dailyCaptureTarget,
+                    onDailyCaptureTargetConsumed = { dailyCaptureTarget = null },
                     onAuthenticated = { requestNotificationPermissionIfNeeded() },
                     onNotificationPermissionRequested = {
                         requestNotificationPermissionIfNeeded(isUserInitiated = true)
@@ -57,6 +62,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         notificationTarget = FinanceReviewPayload.fromIntent(intent)
+        dailyCaptureTarget = DailyCaptureNotificationTarget.fromIntent(intent)
     }
 
     private fun requestNotificationPermissionIfNeeded(isUserInitiated: Boolean = false) {
