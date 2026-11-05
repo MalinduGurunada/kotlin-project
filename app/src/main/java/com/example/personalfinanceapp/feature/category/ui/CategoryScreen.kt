@@ -116,8 +116,8 @@ fun CategoryScreen(
         onConfirmAdd = { name, spendingClass ->
             viewModel.addCategory(name, spendingClass)
         },
-        onConfirmRename = { categoryId, newName ->
-            viewModel.renameCategory(categoryId, newName)
+        onConfirmRename = { categoryId, newName, spendingClass ->
+            viewModel.updateCategory(categoryId, newName, spendingClass)
         },
         onArchiveClick = { category ->
             viewModel.setCategoryArchived(category.id, archived = true)
@@ -151,7 +151,7 @@ fun CategoryScreenContent(
     onDismissDialog: () -> Unit = {},
     onClearDialogError: () -> Unit = {},
     onConfirmAdd: (String, SpendingClass) -> Unit = { _, _ -> },
-    onConfirmRename: (String, String) -> Unit = { _, _ -> },
+    onConfirmRename: (String, String, SpendingClass) -> Unit = { _, _, _ -> },
     onArchiveClick: (Category) -> Unit = {},
     onRestoreClick: (Category) -> Unit = {}
 ) {
@@ -336,14 +336,13 @@ fun CategoryScreenContent(
 
             is CategoryDialogState.Rename -> {
                 AddEditCategoryDialog(
-                    title = "Rename Category",
+                    title = "Edit Category",
                     initialName = dialog.categoryName,
                     initialSpendingClass = dialog.spendingClass,
-                    isSpendingClassEditable = false,
                     errorMessage = dialogErrorMessage,
                     onNameChange = onClearDialogError,
-                    onConfirm = { newName, _ ->
-                        onConfirmRename(dialog.categoryId, newName)
+                    onConfirm = { newName, spendingClass ->
+                        onConfirmRename(dialog.categoryId, newName, spendingClass)
                     },
                     onDismiss = onDismissDialog
                 )
