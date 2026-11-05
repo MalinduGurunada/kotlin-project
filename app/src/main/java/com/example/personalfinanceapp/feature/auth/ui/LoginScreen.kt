@@ -52,15 +52,14 @@ fun LoginScreen(
                 .imePadding(),
             contentPadding = PaddingValues(
                 horizontal = AuthDimens.ScreenPadding,
-                vertical = 16.dp
+                vertical = 12.dp
             ),
             verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             item {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    AuthBrand(Modifier.align(Alignment.Start))
-                    PaymentCardArtwork(Modifier.padding(top = 4.dp, bottom = 2.dp))
+                    AuthBrand(Modifier.align(Alignment.Start).padding(bottom = 8.dp))
 
                     Text(
                         text = "Welcome back",
@@ -78,10 +77,10 @@ fun LoginScreen(
                         lineHeight = 20.sp,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 4.dp, bottom = 16.dp)
+                            .padding(top = 4.dp, bottom = 12.dp)
                     )
 
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         AuthTextField(
                             value = uiState.emailInput,
                             onValueChange = onEmailChanged,
@@ -126,15 +125,15 @@ fun LoginScreen(
                         modifier = Modifier
                             .align(Alignment.End)
                             .clickable(onClick = onNavigateToPasswordReset)
-                            .defaultMinSize(minHeight = 44.dp)
-                            .padding(top = 8.dp, bottom = 4.dp, start = 12.dp)
+                            .defaultMinSize(minHeight = 40.dp)
+                            .padding(top = 6.dp, bottom = 2.dp, start = 12.dp)
                     )
 
                     uiState.errorMessage?.let {
                         AuthMessage(
                             message = it,
                             isError = true,
-                            modifier = Modifier.padding(top = 8.dp)
+                            modifier = Modifier.padding(top = 6.dp)
                         )
                     }
 
@@ -142,7 +141,7 @@ fun LoginScreen(
                         text = "Sign in",
                         onClick = onLoginClicked,
                         isLoading = uiState.isLoading,
-                        modifier = Modifier.padding(top = 16.dp),
+                        modifier = Modifier.padding(top = 12.dp),
                         enabled = !uiState.isGoogleLoading
                     )
 
@@ -150,7 +149,7 @@ fun LoginScreen(
                         text = "or",
                         color = AuthColors.TextMuted,
                         fontSize = 13.sp,
-                        modifier = Modifier.padding(vertical = 8.dp)
+                        modifier = Modifier.padding(vertical = 6.dp)
                     )
 
                     AuthGoogleButton(
@@ -165,7 +164,7 @@ fun LoginScreen(
                         onClick = onNavigateToRegister,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 16.dp, bottom = 16.dp)
+                            .padding(top = 12.dp, bottom = 12.dp)
                     )
                 }
             }
