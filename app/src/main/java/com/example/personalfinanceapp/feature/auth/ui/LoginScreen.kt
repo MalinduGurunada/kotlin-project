@@ -52,21 +52,21 @@ fun LoginScreen(
                 .imePadding(),
             contentPadding = PaddingValues(
                 horizontal = AuthDimens.ScreenPadding,
-                vertical = 20.dp
+                vertical = 16.dp
             ),
-            verticalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             item {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     AuthBrand(Modifier.align(Alignment.Start))
-                    PaymentCardArtwork(Modifier.padding(top = 7.dp, bottom = 2.dp))
+                    PaymentCardArtwork(Modifier.padding(top = 4.dp, bottom = 2.dp))
 
                     Text(
                         text = "Welcome back",
                         color = AuthColors.White,
-                        fontSize = 32.sp,
-                        lineHeight = 37.sp,
+                        fontSize = 28.sp,
+                        lineHeight = 33.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = (-0.7).sp,
                         modifier = Modifier.fillMaxWidth()
@@ -74,14 +74,14 @@ fun LoginScreen(
                     Text(
                         text = "Sign in to take control of your money.",
                         color = AuthColors.TextMuted,
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 7.dp, bottom = 22.dp)
+                            .padding(top = 4.dp, bottom = 16.dp)
                     )
 
-                    Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         AuthTextField(
                             value = uiState.emailInput,
                             onValueChange = onEmailChanged,
@@ -126,15 +126,15 @@ fun LoginScreen(
                         modifier = Modifier
                             .align(Alignment.End)
                             .clickable(onClick = onNavigateToPasswordReset)
-                            .defaultMinSize(minHeight = 48.dp)
-                            .padding(top = 11.dp, bottom = 4.dp, start = 12.dp)
+                            .defaultMinSize(minHeight = 44.dp)
+                            .padding(top = 8.dp, bottom = 4.dp, start = 12.dp)
                     )
 
                     uiState.errorMessage?.let {
                         AuthMessage(
                             message = it,
                             isError = true,
-                            modifier = Modifier.padding(top = 11.dp)
+                            modifier = Modifier.padding(top = 8.dp)
                         )
                     }
 
@@ -142,7 +142,7 @@ fun LoginScreen(
                         text = "Sign in",
                         onClick = onLoginClicked,
                         isLoading = uiState.isLoading,
-                        modifier = Modifier.padding(top = 20.dp),
+                        modifier = Modifier.padding(top = 16.dp),
                         enabled = !uiState.isGoogleLoading
                     )
 
@@ -150,7 +150,7 @@ fun LoginScreen(
                         text = "or",
                         color = AuthColors.TextMuted,
                         fontSize = 13.sp,
-                        modifier = Modifier.padding(vertical = 12.dp)
+                        modifier = Modifier.padding(vertical = 8.dp)
                     )
 
                     AuthGoogleButton(
@@ -158,17 +158,16 @@ fun LoginScreen(
                         isLoading = uiState.isGoogleLoading,
                         enabled = !uiState.isLoading
                     )
+
+                    AuthInlineLink(
+                        prompt = "New to FinClarity?  ",
+                        link = "Create account",
+                        onClick = onNavigateToRegister,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp, bottom = 16.dp)
+                    )
                 }
-            }
-            item {
-                AuthInlineLink(
-                    prompt = "New to FinClarity?  ",
-                    link = "Create account",
-                    onClick = onNavigateToRegister,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 20.dp)
-                )
             }
         }
     }

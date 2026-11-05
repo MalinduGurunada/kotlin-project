@@ -1,4 +1,3 @@
-
 package com.example.personalfinanceapp.core.model
 
 import java.time.LocalDate
@@ -7,6 +6,7 @@ enum class PaymentChannel {
     CASH,
     CARD,
     BANK,
+    TRANSFER,
     OTHER
 }
 
