@@ -78,6 +78,7 @@ dependencies {
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services.auth)
     implementation(libs.googleid)
+    implementation(libs.androidx.biometric)
 
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
