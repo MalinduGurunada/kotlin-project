@@ -17,6 +17,8 @@ import {
   runTransaction,
   setDoc,
   setLogLevel,
+  serverTimestamp,
+  Timestamp,
   updateDoc,
   where,
   writeBatch,
@@ -66,7 +68,11 @@ async function expectDenied(operation) {
 }
 
 function userFirestore(uid) {
-  return testEnvironment.authenticatedContext(uid).firestore();
+  return testEnvironment.authenticatedContext(uid, { email_verified: true }).firestore();
+}
+
+function unverifiedUserFirestore(uid) {
+  return testEnvironment.authenticatedContext(uid, { email_verified: false }).firestore();
 }
 
 function anonymousFirestore() {
@@ -79,6 +85,51 @@ function incomeReference(firestore, uid, incomeId) {
 
 function expenseReference(firestore, uid, expenseId) {
   return doc(firestore, "users", uid, "expenses", expenseId);
+}
+
+function fcmTokenReference(firestore, uid, tokenId = "registration-hash") {
+  return doc(firestore, "users", uid, "fcmRegistrations", tokenId);
+}
+
+function fcmTokenDocument(uid, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    userId: uid,
+    installationId: "firebase-installation-id",
+    platform: "android",
+    updatedAt: serverTimestamp(),
+    ...overrides,
+  };
+}
+
+function categoryReference(firestore, uid, categoryId) {
+  return doc(firestore, "users", uid, "categories", categoryId);
+}
+
+function recurringReference(firestore, uid, recurringId) {
+  return doc(firestore, "users", uid, "recurringExpenses", recurringId);
+}
+
+function occurrenceReference(firestore, uid, occurrenceId) {
+  return doc(firestore, "users", uid, "recurringOccurrences", occurrenceId);
+}
+
+function receivableReference(firestore, uid, receivableId) {
+  return doc(firestore, "users", uid, "receivables", receivableId);
+}
+
+function receivableDocument(receivableId, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    id: receivableId,
+    title: "Website delivery",
+    projectReference: "WEB-2026",
+    expectedOriginalDecimal: "500.00",
+    currency: "LKR",
+    expectedDate: "2026-10-30",
+    archived: false,
+    ...overrides,
+  };
 }
 
 function goalReference(firestore, uid, goalId) {
@@ -143,7 +194,7 @@ function incomeDocument(incomeId, overrides = {}) {
   return data;
 }
 
-function usdIncome(incomeId, rateSource) {
+function usdIncome(incomeId, rateSource, overrides = {}) {
   return incomeDocument(incomeId, {
     source: "FREELANCE",
     money: {
@@ -154,6 +205,7 @@ function usdIncome(incomeId, rateSource) {
       rateSource,
       rateDate: "2026-10-18",
     },
+    ...overrides,
   });
 }
 
@@ -163,6 +215,31 @@ function cryptoIncome(incomeId, pnlDirection) {
     entryKind: "REALIZED_PNL",
     pnlDirection,
     assetSymbol: "BTC",
+  });
+}
+
+function structuredCryptoIncome(incomeId, {
+  proceeds = "1000.00",
+  costBasis = "600.00",
+  fees = "50.00",
+  result = "350.00",
+  resultMinor = 35000,
+  direction = "GAIN",
+} = {}) {
+  return incomeDocument(incomeId, {
+    source: "CRYPTO",
+    entryKind: "REALIZED_PNL",
+    pnlDirection: direction,
+    assetSymbol: "BTC",
+    money: {
+      originalAmountDecimal: result,
+      baseAmountMinor: resultMinor,
+    },
+    cryptoRealizedDetails: {
+      costBasisOriginalDecimal: costBasis,
+      saleProceedsOriginalDecimal: proceeds,
+      feesOriginalDecimal: fees,
+    },
   });
 }
 
@@ -186,6 +263,51 @@ function expenseDocument(userId, expenseId) {
   };
 }
 
+function categoryDocument(categoryId) {
+  return {
+    id: categoryId,
+    name: "Utilities & Bills",
+    defaultSpendingClass: "COMMITTED",
+    archived: false,
+  };
+}
+
+function recurringDocument(userId, recurringId, overrides = {}) {
+  return {
+    id: recurringId,
+    userId,
+    title: "CEB Electricity Bill",
+    categoryId: "utilities",
+    expectedAmountMinor: 1250000,
+    frequency: "MONTHLY",
+    intervalCount: 1,
+    anchorDate: "2026-10-31",
+    startDate: "2026-10-31",
+    endDate: null,
+    status: "ACTIVE",
+    paymentChannel: "BANK",
+    channelLabel: "ComBank CASA",
+    reminderEnabled: true,
+    reminderLeadDays: 2,
+    reminderTimeMinutes: 540,
+    ...overrides,
+  };
+}
+
+function occurrenceDocument(userId, recurringId, dueDate, status, overrides = {}) {
+  const id = `${recurringId}_${dueDate}`;
+  return {
+    id,
+    userId,
+    recurringExpenseId: recurringId,
+    dueDate,
+    status,
+    expenseId: status === "CONFIRMED" ? `recurring_${id}` : null,
+    actionAt: Timestamp.fromDate(new Date("2026-10-30T08:00:00Z")),
+    ...overrides,
+  };
+}
+
 function withoutField(value, field) {
   const result = structuredClone(value);
   delete result[field];
@@ -195,6 +317,21 @@ function withoutField(value, field) {
 async function seedIncome(uid, incomeId, data = incomeDocument(incomeId)) {
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
     await setDoc(incomeReference(context.firestore(), uid, incomeId), data);
+  });
+}
+
+async function seedReceivable(uid, receivableId, data = receivableDocument(receivableId)) {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(receivableReference(context.firestore(), uid, receivableId), data);
+  });
+}
+
+async function seedFcmRegistration(uid, tokenId = "registration-hash") {
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(
+      fcmTokenReference(context.firestore(), uid, tokenId),
+      fcmTokenDocument(uid),
+    );
   });
 }
 
@@ -218,6 +355,49 @@ test("anonymous clients cannot read, query, create, update, or delete income", a
   await expectDenied(setDoc(incomeReference(firestore, "user-a", "income-2"), incomeDocument("income-2")));
   await expectDenied(updateDoc(reference, { note: "anonymous update" }));
   await expectDenied(deleteDoc(reference));
+});
+
+test("unverified owners can bootstrap their profile but cannot access financial data", async () => {
+  await seedIncome("user-a", "income-1");
+  await seedFcmRegistration("user-a");
+  const firestore = unverifiedUserFirestore("user-a");
+
+  await expectAllowed(setDoc(doc(firestore, "users", "user-a"), {
+    displayName: "Pending Verification",
+  }));
+  await expectAllowed(getDoc(doc(firestore, "users", "user-a")));
+  await expectDenied(setDoc(
+    fcmTokenReference(firestore, "user-a", "new-registration"),
+    fcmTokenDocument("user-a"),
+  ));
+  await expectDenied(updateDoc(
+    fcmTokenReference(firestore, "user-a"),
+    { platform: "android" },
+  ));
+  await expectDenied(getDoc(fcmTokenReference(firestore, "user-a")));
+  await expectAllowed(deleteDoc(fcmTokenReference(firestore, "user-a")));
+  await expectDenied(deleteDoc(fcmTokenReference(firestore, "user-b")));
+  await expectDenied(getDoc(incomeReference(firestore, "user-a", "income-1")));
+  await expectDenied(setDoc(
+    incomeReference(firestore, "user-a", "income-2"),
+    incomeDocument("income-2"),
+  ));
+  await expectDenied(setDoc(
+    expenseReference(firestore, "user-a", "expense-1"),
+    expenseDocument("user-a", "expense-1"),
+  ));
+  await expectDenied(setDoc(
+    categoryReference(firestore, "user-a", "category-1"),
+    categoryDocument("category-1"),
+  ));
+  await expectDenied(setDoc(
+    receivableReference(firestore, "user-a", "receivable-1"),
+    receivableDocument("receivable-1"),
+  ));
+  await expectDenied(setDoc(
+    goalReference(firestore, "user-a", "goal-1"),
+    goalDocument("goal-1"),
+  ));
 });
 
 test("owners can create, read, list, update, and transactionally delete income", async () => {
@@ -423,18 +603,29 @@ test("obviously malformed date strings are rejected", async () => {
 
 test("all supported income business cases are accepted", async () => {
   const firestore = userFirestore("user-a");
+  await seedReceivable("user-a", "receivable-1");
   const validDocuments = [
     incomeDocument("salary"),
     incomeDocument("freelance", { source: "FREELANCE" }),
     incomeDocument("adsense", { source: "ADSENSE" }),
     cryptoIncome("crypto-gain", "GAIN"),
     cryptoIncome("crypto-loss", "LOSS"),
+    structuredCryptoIncome("crypto-structured-gain"),
+    structuredCryptoIncome("crypto-structured-loss", {
+      proceeds: "500.00", costBasis: "600.00", fees: "25.00",
+      result: "125.00", resultMinor: 12500, direction: "LOSS",
+    }),
+    structuredCryptoIncome("crypto-break-even", {
+      proceeds: "600.00", costBasis: "600.00", fees: "0",
+      result: "0", resultMinor: 0, direction: "BREAK_EVEN",
+    }),
     incomeDocument("lkr-rate-scale", { money: { rateLkrPerUnitDecimal: "1.0" } }),
     incomeDocument("lkr-rate-scientific", { money: { rateLkrPerUnitDecimal: "10e-1" } }),
     usdIncome("usd-auto", "EXCHANGE_RATE_API_REFERENCE"),
     usdIncome("usd-transfer", "MANUAL_TRANSFER"),
     usdIncome("usd-reference", "MANUAL_REFERENCE"),
     incomeDocument("metadata", {
+      source: "FREELANCE",
       projectReference: "project-1",
       receivableId: "receivable-1",
       assetSymbol: "LKR",
@@ -449,10 +640,56 @@ test("all supported income business cases are accepted", async () => {
   }
 });
 
+test("structured crypto schema permits zero break-even but rejects malformed or non-crypto details", async () => {
+  const firestore = userFirestore("user-a");
+  await expectAllowed(setDoc(
+    incomeReference(firestore, "user-a", "break-even"),
+    structuredCryptoIncome("break-even", {
+      proceeds: "600", costBasis: "600", fees: "0",
+      result: "0", resultMinor: 0, direction: "BREAK_EVEN",
+    }),
+  ));
+
+  await expectDenied(setDoc(
+    incomeReference(firestore, "user-a", "legacy-zero"),
+    incomeDocument("legacy-zero", {
+      source: "CRYPTO",
+      entryKind: "REALIZED_PNL",
+      pnlDirection: "GAIN",
+      money: { originalAmountDecimal: "0", baseAmountMinor: 0 },
+    }),
+  ));
+
+  const nonCrypto = incomeDocument("non-crypto-details", {
+    cryptoRealizedDetails: structuredCryptoIncome("unused").cryptoRealizedDetails,
+  });
+  await expectDenied(setDoc(incomeReference(firestore, "user-a", "non-crypto-details"), nonCrypto));
+
+  const malformed = structuredCryptoIncome("malformed");
+  malformed.cryptoRealizedDetails.unexpected = "field";
+  await expectDenied(setDoc(incomeReference(firestore, "user-a", "malformed"), malformed));
+});
+
+test("retrying a structured crypto save to the same owner and ID is idempotent", async () => {
+  const firestore = userFirestore("user-a");
+  const reference = incomeReference(firestore, "user-a", "stable-id");
+  const data = structuredCryptoIncome("stable-id");
+
+  await expectAllowed(setDoc(reference, data));
+  await expectAllowed(setDoc(reference, data));
+  const snapshot = await assertSucceeds(getDoc(reference));
+  allowedAssertions += 1;
+  if (snapshot.data().money.baseAmountMinor !== 35000) {
+    throw new Error("Retry changed the structured crypto result");
+  }
+});
+
 test("full-document upserts can remove optional metadata", async () => {
   const firestore = userFirestore("user-a");
+  await seedReceivable("user-a", "receivable-1");
   const reference = incomeReference(firestore, "user-a", "income-1");
   const withMetadata = incomeDocument("income-1", {
+    source: "FREELANCE",
     projectReference: "project-1",
     receivableId: "receivable-1",
     note: "Will be removed",
@@ -465,6 +702,58 @@ test("full-document upserts can remove optional metadata", async () => {
   if ("projectReference" in snapshot.data() || "receivableId" in snapshot.data() || "note" in snapshot.data()) {
     throw new Error("Full-document set did not remove omitted optional metadata");
   }
+});
+
+test("receivables require authentication, exact schema, and owner-scoped paths", async () => {
+  const owner = userFirestore("user-a");
+  const other = userFirestore("user-b");
+  const anonymous = anonymousFirestore();
+  const ownerRef = receivableReference(owner, "user-a", "same-id");
+
+  await expectDenied(setDoc(receivableReference(anonymous, "user-a", "same-id"), receivableDocument("same-id")));
+  await expectAllowed(setDoc(ownerRef, receivableDocument("same-id")));
+  await expectDenied(getDoc(receivableReference(other, "user-a", "same-id")));
+  await expectDenied(setDoc(receivableReference(other, "user-a", "same-id"), receivableDocument("same-id")));
+  await expectDenied(setDoc(receivableReference(owner, "user-a", "bad-id"), receivableDocument("different-id")));
+  await expectDenied(setDoc(receivableReference(owner, "user-a", "extra"), {
+    ...receivableDocument("extra"), unexpected: true,
+  }));
+  await expectDenied(setDoc(
+    receivableReference(owner, "user-a", "float-version"),
+    receivableDocument("float-version", { schemaVersion: 1.0 + Number.EPSILON }),
+  ));
+
+  await expectAllowed(setDoc(receivableReference(other, "user-b", "same-id"), receivableDocument("same-id", {
+    title: "Other account's record",
+  })));
+  const ownerSnapshot = await assertSucceeds(getDoc(ownerRef));
+  allowedAssertions += 1;
+  if (ownerSnapshot.data().title !== "Website delivery") throw new Error("Identical IDs crossed account boundaries");
+});
+
+test("receivable links require an active same-account receivable with matching currency", async () => {
+  const userA = userFirestore("user-a");
+  await seedReceivable("user-a", "active-lkr");
+  await seedReceivable("user-a", "archived-lkr", receivableDocument("archived-lkr", { archived: true }));
+  await seedReceivable("user-b", "other-only");
+
+  const linked = (incomeId, receivableId, overrides = {}) => incomeDocument(incomeId, {
+    source: "FREELANCE", receivableId, ...overrides,
+  });
+  await expectAllowed(setDoc(incomeReference(userA, "user-a", "valid"), linked("valid", "active-lkr")));
+  await expectDenied(setDoc(incomeReference(userA, "user-a", "missing"), linked("missing", "missing")));
+  await expectDenied(setDoc(incomeReference(userA, "user-a", "cross-account"), linked("cross-account", "other-only")));
+  await expectDenied(setDoc(incomeReference(userA, "user-a", "archived"), linked("archived", "archived-lkr")));
+  await expectDenied(setDoc(incomeReference(userA, "user-a", "wrong-source"), incomeDocument("wrong-source", {
+    source: "SALARY", receivableId: "active-lkr",
+  })));
+  await expectDenied(setDoc(incomeReference(userA, "user-a", "wrong-currency"), usdIncome("wrong-currency", "MANUAL_TRANSFER", {
+    receivableId: "active-lkr",
+  })));
+
+  const receivable = receivableReference(userA, "user-a", "active-lkr");
+  await expectAllowed(updateDoc(receivable, { expectedOriginalDecimal: "750.00" }));
+  await expectDenied(updateDoc(receivable, { currency: "USD" }));
 });
 
 test("owner updates cannot bypass complete resulting-document validation", async () => {
@@ -508,6 +797,32 @@ test("existing expense authorization remains owner-scoped", async () => {
   );
   await expectDenied(updateDoc(expenseReference(otherFirestore, "user-a", "expense-1"), { note: "denied" }));
   await expectDenied(deleteDoc(expenseReference(otherFirestore, "user-a", "expense-1")));
+  await expectAllowed(deleteDoc(ownerReference));
+});
+
+test("FCM tokens are owner-written, write-only, schema-checked, and cross-account isolated", async () => {
+  const owner = userFirestore("user-a");
+  const other = userFirestore("user-b");
+  const anonymous = anonymousFirestore();
+  const ownerReference = fcmTokenReference(owner, "user-a");
+
+  await expectAllowed(setDoc(ownerReference, fcmTokenDocument("user-a")));
+  await expectDenied(getDoc(ownerReference));
+  await expectDenied(getDocs(collection(owner, "users", "user-a", "fcmRegistrations")));
+  await expectDenied(setDoc(fcmTokenReference(other, "user-a"), fcmTokenDocument("user-a")));
+  await expectDenied(setDoc(fcmTokenReference(anonymous, "user-a"), fcmTokenDocument("user-a")));
+  await expectDenied(setDoc(
+    fcmTokenReference(owner, "user-a", "forged-owner"),
+    fcmTokenDocument("user-b"),
+  ));
+  await expectDenied(setDoc(
+    fcmTokenReference(owner, "user-a", "extra-field"),
+    fcmTokenDocument("user-a", { unexpected: true }),
+  ));
+  await expectAllowed(setDoc(ownerReference, fcmTokenDocument("user-a", {
+    installationId: "refreshed-firebase-installation-id",
+  })));
+  await expectDenied(deleteDoc(fcmTokenReference(other, "user-a")));
   await expectAllowed(deleteDoc(ownerReference));
 });
 
@@ -626,6 +941,114 @@ test("contribution ledger is immutable and exact reversals require one atomic cl
     }),
   );
   await expectDenied(duplicateBatch.commit());
+});
+
+test("recurring commitments are owner scoped, validated, and never deleted", async () => {
+  const owner = userFirestore("user-a");
+  const other = userFirestore("user-b");
+  await expectAllowed(
+    setDoc(categoryReference(owner, "user-a", "utilities"), categoryDocument("utilities")),
+  );
+  await expectAllowed(
+    setDoc(
+      recurringReference(owner, "user-a", "ceb"),
+      recurringDocument("user-a", "ceb"),
+    ),
+  );
+  await expectDenied(getDoc(recurringReference(other, "user-a", "ceb")));
+  await expectDenied(deleteDoc(recurringReference(owner, "user-a", "ceb")));
+  await expectDenied(
+    setDoc(
+      recurringReference(owner, "user-a", "invalid"),
+      recurringDocument("user-a", "invalid", { intervalCount: 0 }),
+    ),
+  );
+  await expectDenied(
+    setDoc(
+      recurringReference(owner, "user-a", "invalid-time"),
+      recurringDocument("user-a", "invalid-time", { reminderTimeMinutes: 1440 }),
+    ),
+  );
+  await expectAllowed(
+    setDoc(
+      recurringReference(owner, "user-a", "legacy-time"),
+      withoutField(recurringDocument("user-a", "legacy-time"), "reminderTimeMinutes"),
+    ),
+  );
+});
+
+test("skipped recurring occurrence is immutable and uses a deterministic id", async () => {
+  const firestore = userFirestore("user-a");
+  await expectAllowed(
+    setDoc(categoryReference(firestore, "user-a", "utilities"), categoryDocument("utilities")),
+  );
+  await expectAllowed(
+    setDoc(
+      recurringReference(firestore, "user-a", "ceb"),
+      recurringDocument("user-a", "ceb"),
+    ),
+  );
+  const occurrenceId = "ceb_2026-10-31";
+  await expectAllowed(
+    setDoc(
+      occurrenceReference(firestore, "user-a", occurrenceId),
+      occurrenceDocument("user-a", "ceb", "2026-10-31", "SKIPPED"),
+    ),
+  );
+  await expectDenied(
+    updateDoc(occurrenceReference(firestore, "user-a", occurrenceId), {
+      status: "CONFIRMED",
+      expenseId: `recurring_${occurrenceId}`,
+    }),
+  );
+  await expectDenied(
+    setDoc(
+      occurrenceReference(firestore, "user-a", "made-up-id"),
+      occurrenceDocument("user-a", "ceb", "2026-11-30", "SKIPPED", {
+        id: "made-up-id",
+      }),
+    ),
+  );
+});
+
+test("confirmed occurrence and linked expense must be created atomically", async () => {
+  const firestore = userFirestore("user-a");
+  await expectAllowed(
+    setDoc(categoryReference(firestore, "user-a", "utilities"), categoryDocument("utilities")),
+  );
+  await expectAllowed(
+    setDoc(
+      recurringReference(firestore, "user-a", "ceb"),
+      recurringDocument("user-a", "ceb"),
+    ),
+  );
+  const occurrenceId = "ceb_2026-10-31";
+  const expenseId = `recurring_${occurrenceId}`;
+  const confirmed = occurrenceDocument("user-a", "ceb", "2026-10-31", "CONFIRMED");
+  await expectDenied(
+    setDoc(occurrenceReference(firestore, "user-a", occurrenceId), confirmed),
+  );
+
+  const batch = writeBatch(firestore);
+  batch.set(
+    expenseReference(firestore, "user-a", expenseId),
+    {
+      ...expenseDocument("user-a", expenseId),
+      recurringExpenseId: "ceb",
+      recurringOccurrenceId: occurrenceId,
+    },
+  );
+  batch.set(occurrenceReference(firestore, "user-a", occurrenceId), confirmed);
+  await expectAllowed(batch.commit());
+
+  await expectDenied(
+    setDoc(
+      occurrenceReference(firestore, "user-a", "ceb_2026-11-30"),
+      occurrenceDocument("user-a", "ceb", "2026-11-30", "CONFIRMED", {
+        expenseId,
+      }),
+    ),
+  );
 });
 
 test("unrelated paths and broader cross-user access remain denied", async () => {

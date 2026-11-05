@@ -99,7 +99,6 @@ class FakeIncomeRepositoryTest {
         val repository = FakeIncomeRepository()
         val income = createLkrIncome(
             projectReference = "annual-contract",
-            receivableId = "receivable-001",
             assetSymbol = "LKR",
             note = "October salary"
         )

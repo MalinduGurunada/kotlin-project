@@ -9,25 +9,46 @@ import com.example.personalfinanceapp.core.model.Income
 import com.example.personalfinanceapp.core.model.IncomeEntryKind
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.PnlDirection
+import com.example.personalfinanceapp.core.model.RecurringExpense
+import com.example.personalfinanceapp.core.model.RecurringOccurrence
 import com.example.personalfinanceapp.core.model.SpendingClass
 import com.example.personalfinanceapp.feature.auth.AuthRepository
+import com.example.personalfinanceapp.feature.category.CategoryRepository
+import com.example.personalfinanceapp.feature.category.spendingClassesById
+import com.example.personalfinanceapp.feature.category.withEffectiveSpendingClass
+import com.example.personalfinanceapp.feature.dashboard.analytics.IncomeSpendingBreakdownCalculator
+import com.example.personalfinanceapp.feature.dashboard.analytics.MonthlyAnalyticsBreakdown
 import com.example.personalfinanceapp.feature.expense.ExpenseRepository
 import com.example.personalfinanceapp.feature.goal.GoalRepository
 import com.example.personalfinanceapp.feature.income.IncomeRepository
+import com.example.personalfinanceapp.feature.income.CryptoResultCalculator
+import com.example.personalfinanceapp.feature.income.CryptoResultTotals
+import com.example.personalfinanceapp.feature.income.signedBaseAmountMinor
+import com.example.personalfinanceapp.feature.recurring.RecurringRepository
+import com.example.personalfinanceapp.feature.savings.SavingsCoachCalculator
+import com.example.personalfinanceapp.feature.savings.SavingsCoachInput
+import com.example.personalfinanceapp.feature.savings.SavingsCoachResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import java.math.BigInteger
 import java.time.LocalDate
+import java.time.Clock
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.UUID
 import javax.inject.Inject
 
 data class TimelineActivityItem(
@@ -52,16 +73,33 @@ data class ActiveSavingsGoalUiState(
 
 private data class DashboardInputs(
     val incomes: List<Income>,
+    val yearToDateIncomes: List<Income>,
     val expenses: List<Expense>,
     val goals: List<Goal>,
-    val activeGoalContributions: List<Contribution>?
+    val contributions: List<Contribution>?,
+    val recurringExpenses: List<RecurringExpense>,
+    val recurringOccurrences: List<RecurringOccurrence>
+)
+
+private data class DashboardBaseInputs(
+    val incomes: List<Income>,
+    val yearToDateIncomes: List<Income>,
+    val expenses: List<Expense>,
+    val goals: List<Goal>
+)
+
+private data class RecurringInputs(
+    val expenses: List<RecurringExpense>,
+    val occurrences: List<RecurringOccurrence>
 )
 
 data class DashboardUiState(
     val userName: String = "User",
-    val totalAvailableBalanceLkrMinor: Long = 0L,
+    val monthlyNetCashFlowLkrMinor: Long = 0L,
     val totalIncomeLkrMinor: Long = 0L,
     val incomeCount: Int = 0,
+    val monthlyCryptoResult: CryptoResultTotals = CryptoResultTotals(),
+    val yearToDateCryptoResult: CryptoResultTotals = CryptoResultTotals(),
     val totalExpenseLkrMinor: Long = 0L,
     val expenseCount: Int = 0,
     val committedExpenseLkrMinor: Long = 0L,
@@ -69,10 +107,148 @@ data class DashboardUiState(
     val discretionaryExpenseLkrMinor: Long = 0L,
     val discretionaryPercent: Int = 0,
     val activeGoal: ActiveSavingsGoalUiState? = null,
+    val smartSavings: SavingsCoachResult? = null,
+    val smartSavingsOwnerId: String? = null,
     val recentActivity: List<TimelineActivityItem> = emptyList(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null
 )
+
+data class SavingsCoachActionState(
+    val isSaving: Boolean = false,
+    val errorMessage: String? = null,
+    val successMessage: String? = null
+)
+
+enum class FinancialSummaryPeriod {
+    MONTH,
+    QUARTER
+}
+
+data class FinancialTrendPoint(
+    val label: String,
+    val incomeLkrMinor: Long,
+    val expenseLkrMinor: Long,
+    val netCashFlowLkrMinor: Long
+)
+
+data class FinancialSummaryUiState(
+    val selectedPeriod: FinancialSummaryPeriod = FinancialSummaryPeriod.MONTH,
+    val periodLabel: String = "",
+    val comparisonLabel: String = "previous month",
+    val totalIncomeLkrMinor: Long = 0L,
+    val totalExpenseLkrMinor: Long = 0L,
+    val netCashFlowLkrMinor: Long = 0L,
+    val netCashFlowMarginPercent: BigInteger? = null,
+    val analytics: MonthlyAnalyticsBreakdown = MonthlyAnalyticsBreakdown(),
+    val trendPoints: List<FinancialTrendPoint> = emptyList(),
+    val hasPreviousPeriodExpenses: Boolean = false,
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null
+)
+
+internal data class FinancialSummaryBounds(
+    val startDate: LocalDate,
+    val endDateExclusive: LocalDate,
+    val previousStartDate: LocalDate,
+    val label: String,
+    val comparisonLabel: String
+)
+
+internal fun financialSummaryLocalDate(
+    clock: Clock,
+    zoneId: ZoneId = ZoneId.systemDefault()
+): LocalDate = LocalDate.now(clock.withZone(zoneId))
+
+internal fun calculateNetCashFlowMarginPercent(
+    totalIncomeMinor: Long,
+    netCashFlowMinor: Long
+): BigInteger? = if (totalIncomeMinor > 0L) {
+    BigInteger.valueOf(netCashFlowMinor)
+        .multiply(BigInteger.valueOf(100L))
+        .divide(BigInteger.valueOf(totalIncomeMinor))
+} else {
+    null
+}
+
+internal fun BigInteger.toLongIfInRange(): Long? {
+    val minimum = BigInteger.valueOf(Long.MIN_VALUE)
+    val maximum = BigInteger.valueOf(Long.MAX_VALUE)
+    return if (this < minimum || this > maximum) null else toLong()
+}
+
+internal fun financialSummaryBounds(
+    today: LocalDate,
+    period: FinancialSummaryPeriod
+): FinancialSummaryBounds {
+    val startDate = when (period) {
+        FinancialSummaryPeriod.MONTH -> today.withDayOfMonth(1)
+        FinancialSummaryPeriod.QUARTER -> {
+            val firstMonth = ((today.monthValue - 1) / 3) * 3 + 1
+            LocalDate.of(today.year, firstMonth, 1)
+        }
+    }
+    val months = if (period == FinancialSummaryPeriod.MONTH) 1L else 3L
+    val endDateExclusive = startDate.plusMonths(months)
+    val label = when (period) {
+        FinancialSummaryPeriod.MONTH -> startDate.format(
+            DateTimeFormatter.ofPattern("MMMM yyyy", Locale.US)
+        )
+        FinancialSummaryPeriod.QUARTER ->
+            "Q${((startDate.monthValue - 1) / 3) + 1} ${startDate.year}"
+    }
+    return FinancialSummaryBounds(
+        startDate = startDate,
+        endDateExclusive = endDateExclusive,
+        previousStartDate = startDate.minusMonths(months),
+        label = label,
+        comparisonLabel = if (period == FinancialSummaryPeriod.MONTH) {
+            "previous month"
+        } else {
+            "previous quarter"
+        }
+    )
+}
+
+internal fun calculateFinancialTrend(
+    period: FinancialSummaryPeriod,
+    bounds: FinancialSummaryBounds,
+    incomes: List<Income>,
+    expenses: List<Expense>
+): List<FinancialTrendPoint> {
+    val windows = buildList {
+        if (period == FinancialSummaryPeriod.MONTH) {
+            var start = bounds.startDate
+            while (start.isBefore(bounds.endDateExclusive)) {
+                val end = minOf(start.plusDays(7), bounds.endDateExclusive)
+                add(Triple(start, end, "${start.dayOfMonth}-${end.minusDays(1).dayOfMonth}"))
+                start = end
+            }
+        } else {
+            var start = bounds.startDate
+            while (start.isBefore(bounds.endDateExclusive)) {
+                val end = start.plusMonths(1)
+                add(Triple(start, end, start.month.name.take(3).lowercase().replaceFirstChar { it.uppercase() }))
+                start = end
+            }
+        }
+    }
+
+    return windows.map { (start, end, label) ->
+        val incomeMinor = incomes.asSequence()
+            .filter { !it.occurredDate.isBefore(start) && it.occurredDate.isBefore(end) }
+            .fold(0L) { total, income -> Math.addExact(total, income.signedBaseAmountMinor()) }
+        val expenseMinor = expenses.asSequence()
+            .filter { !it.occurredDate.isBefore(start) && it.occurredDate.isBefore(end) }
+            .fold(0L) { total, expense -> Math.addExact(total, expense.money.baseAmountMinor) }
+        FinancialTrendPoint(
+            label = label,
+            incomeLkrMinor = incomeMinor,
+            expenseLkrMinor = expenseMinor,
+            netCashFlowLkrMinor = Math.subtractExact(incomeMinor, expenseMinor)
+        )
+    }
+}
 
 internal data class GoalProgressAmounts(
     val savedMinor: Long,
@@ -105,12 +281,29 @@ class DashboardViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val incomeRepository: IncomeRepository,
     private val expenseRepository: ExpenseRepository,
-    private val goalRepository: GoalRepository
+    private val categoryRepository: CategoryRepository,
+    private val goalRepository: GoalRepository,
+    private val recurringRepository: RecurringRepository,
+    private val clock: Clock = Clock.systemUTC()
 ) : ViewModel() {
 
-    private val now = LocalDate.now()
+    private val now = financialSummaryLocalDate(clock)
     private val startDate = now.withDayOfMonth(1)
     private val endDateExclusive = now.withDayOfMonth(1).plusMonths(1)
+    private val startOfYear = now.withDayOfYear(1)
+    private val ytdEndDateExclusive = now.plusDays(1)
+    private val financialSummaryToday = financialSummaryLocalDate(clock)
+    private val financialSummaryPeriod = MutableStateFlow(FinancialSummaryPeriod.MONTH)
+    private val _savingsCoachActionState = MutableStateFlow(SavingsCoachActionState())
+    val savingsCoachActionState: StateFlow<SavingsCoachActionState> = _savingsCoachActionState
+
+    init {
+        viewModelScope.launch {
+            authRepository.observeAuthState().distinctUntilChanged().collect {
+                _savingsCoachActionState.value = SavingsCoachActionState()
+            }
+        }
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<DashboardUiState> = authRepository.observeAuthState()
@@ -118,30 +311,66 @@ class DashboardViewModel @Inject constructor(
             if (userId == null) {
                 flowOf(DashboardUiState(isLoading = false))
             } else {
-                combine(
+                val baseInputs = combine(
                     incomeRepository.observeIncomes(startDate, endDateExclusive),
+                    incomeRepository.observeIncomes(startOfYear, ytdEndDateExclusive),
                     expenseRepository.observeExpenses(startDate, endDateExclusive),
-                    goalRepository.observeGoals()
-                ) { incomes, expenses, goals ->
-                    Triple(incomes, expenses, goals)
-                }.flatMapLatest { (incomes, expenses, goals) ->
-                    val activeGoal = goals.firstOrNull { !it.archived }
-                    if (activeGoal == null) {
-                        flowOf(DashboardInputs(incomes, expenses, goals, emptyList()))
+                    goalRepository.observeGoals(),
+                    categoryRepository.observeCategories()
+                ) { incomes, yearToDateIncomes, expenses, goals, categories ->
+                    val categorySpendingClasses = categories.spendingClassesById()
+                    val effectiveExpenses = expenses.map { expense ->
+                        expense.withEffectiveSpendingClass(categorySpendingClasses)
+                    }
+                    DashboardBaseInputs(
+                        incomes,
+                        yearToDateIncomes,
+                        effectiveExpenses,
+                        goals
+                    )
+                }
+                val recurringInputs = combine(
+                    recurringRepository.observeRecurringExpenses(),
+                    recurringRepository.observeOccurrences()
+                ) { recurringExpenses, occurrences ->
+                    RecurringInputs(recurringExpenses, occurrences)
+                }
+                combine(baseInputs, recurringInputs) { base, recurring ->
+                    DashboardInputs(
+                        incomes = base.incomes,
+                        yearToDateIncomes = base.yearToDateIncomes,
+                        expenses = base.expenses,
+                        goals = base.goals,
+                        contributions = emptyList(),
+                        recurringExpenses = recurring.expenses,
+                        recurringOccurrences = recurring.occurrences
+                    )
+                }.flatMapLatest { inputs ->
+                    if (inputs.goals.isEmpty()) {
+                        flowOf(inputs)
                     } else {
-                        goalRepository.observeContributions(activeGoal.id)
+                        val contributionFlows = inputs.goals.map { goal ->
+                            goalRepository.observeContributions(goal.id)
+                        }
+                        combine(contributionFlows) { contributionLists ->
+                            contributionLists.flatMap { it }
+                        }
                             .map<List<Contribution>, List<Contribution>?> { it }
                             .catch { emit(null) }
                             .map { contributions ->
-                                DashboardInputs(incomes, expenses, goals, contributions)
+                                inputs.copy(contributions = contributions)
                             }
                     }
                 }.map { inputs ->
                     calculateDashboardState(
+                        ownerId = userId,
                         incomes = inputs.incomes,
+                        yearToDateIncomes = inputs.yearToDateIncomes,
                         expenses = inputs.expenses,
                         goals = inputs.goals,
-                        activeGoalContributions = inputs.activeGoalContributions
+                        contributions = inputs.contributions,
+                        recurringExpenses = inputs.recurringExpenses,
+                        recurringOccurrences = inputs.recurringOccurrences
                     )
                 }.onStart {
                     emit(DashboardUiState(isLoading = true))
@@ -149,8 +378,12 @@ class DashboardViewModel @Inject constructor(
                     emit(
                         DashboardUiState(
                             isLoading = false,
-                            errorMessage = exception.localizedMessage
-                                ?: "Goal data is currently unavailable"
+                            errorMessage = if (exception is ArithmeticException) {
+                                "Dashboard totals are too large to calculate safely"
+                            } else {
+                                exception.localizedMessage
+                                    ?: "Dashboard data is currently unavailable"
+                            }
                         )
                     )
                 }
@@ -164,40 +397,235 @@ class DashboardViewModel @Inject constructor(
             initialValue = DashboardUiState(isLoading = true)
         )
 
-    private fun calculateDashboardState(
-        incomes: List<Income>,
-        expenses: List<Expense>,
-        goals: List<Goal>,
-        activeGoalContributions: List<Contribution>?
-    ): DashboardUiState {
-        var netIncomeMinor = 0L
-        incomes.forEach { income ->
-            val isLoss = income.entryKind == IncomeEntryKind.REALIZED_PNL && income.pnlDirection == PnlDirection.LOSS
-            if (isLoss) {
-                netIncomeMinor -= income.money.baseAmountMinor
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val financialSummaryState: StateFlow<FinancialSummaryUiState> = combine(
+        authRepository.observeAuthState(),
+        financialSummaryPeriod
+    ) { userId, period -> userId to period }
+        .flatMapLatest { (userId, period) ->
+            if (userId == null) {
+                flowOf(FinancialSummaryUiState(selectedPeriod = period))
             } else {
-                netIncomeMinor += income.money.baseAmountMinor
+                val bounds = financialSummaryBounds(financialSummaryToday, period)
+                combine(
+                    incomeRepository.observeIncomes(bounds.startDate, bounds.endDateExclusive),
+                    expenseRepository.observeExpenses(bounds.startDate, bounds.endDateExclusive),
+                    expenseRepository.observeExpenses(bounds.previousStartDate, bounds.startDate),
+                    categoryRepository.observeCategories()
+                ) { incomes, expenses, previousExpenses, categories ->
+                    val categoryNames = categories.associate { it.id to it.name }
+                    val categorySpendingClasses = categories.spendingClassesById()
+                    val analytics = IncomeSpendingBreakdownCalculator.calculateBreakdown(
+                        currentMonthIncomes = incomes,
+                        currentMonthExpenses = expenses,
+                        previousMonthExpenses = previousExpenses,
+                        yearToDateCryptoIncomes = incomes.filter { it.source == IncomeSource.CRYPTO },
+                        categoryNamesById = categoryNames,
+                        categorySpendingClassesById = categorySpendingClasses
+                    )
+                    val totalIncomeMinor = incomes.fold(0L) { total, income ->
+                        Math.addExact(total, income.signedBaseAmountMinor())
+                    }
+                    val totalExpenseMinor = expenses.fold(0L) { total, expense ->
+                        Math.addExact(total, expense.money.baseAmountMinor)
+                    }
+                    val netCashFlowMinor = Math.subtractExact(totalIncomeMinor, totalExpenseMinor)
+                    val netCashFlowMargin = calculateNetCashFlowMarginPercent(
+                        totalIncomeMinor = totalIncomeMinor,
+                        netCashFlowMinor = netCashFlowMinor
+                    )
+                    FinancialSummaryUiState(
+                        selectedPeriod = period,
+                        periodLabel = bounds.label,
+                        comparisonLabel = bounds.comparisonLabel,
+                        totalIncomeLkrMinor = totalIncomeMinor,
+                        totalExpenseLkrMinor = totalExpenseMinor,
+                        netCashFlowLkrMinor = netCashFlowMinor,
+                        netCashFlowMarginPercent = netCashFlowMargin,
+                        analytics = analytics,
+                        trendPoints = calculateFinancialTrend(period, bounds, incomes, expenses),
+                        hasPreviousPeriodExpenses = previousExpenses.isNotEmpty(),
+                        isLoading = false
+                    )
+                }.onStart {
+                    emit(
+                        FinancialSummaryUiState(
+                            selectedPeriod = period,
+                            periodLabel = bounds.label,
+                            comparisonLabel = bounds.comparisonLabel,
+                            isLoading = true
+                        )
+                    )
+                }.catch { exception ->
+                    emit(
+                        FinancialSummaryUiState(
+                            selectedPeriod = period,
+                            periodLabel = bounds.label,
+                            comparisonLabel = bounds.comparisonLabel,
+                            errorMessage = exception.localizedMessage
+                                ?: "Financial summary data is currently unavailable"
+                        )
+                    )
+                }
+            }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(
+                stopTimeoutMillis = 0,
+                replayExpirationMillis = 0
+            ),
+            initialValue = FinancialSummaryUiState(isLoading = true)
+        )
+
+    fun selectFinancialSummaryPeriod(period: FinancialSummaryPeriod) {
+        financialSummaryPeriod.value = period
+    }
+
+    fun confirmSuggestedContribution(
+        goalId: String,
+        amountLkr: Long
+    ) {
+        if (_savingsCoachActionState.value.isSaving) return
+        val coach = uiState.value.smartSavings
+        val suggestedMinor = coach?.suggestedContributionMinor
+        val amountMinorBig = BigInteger.valueOf(amountLkr).multiply(BigInteger.valueOf(100L))
+        when {
+            goalId.isBlank() || coach?.goal?.goalId != goalId -> {
+                _savingsCoachActionState.value = SavingsCoachActionState(
+                    errorMessage = "The savings suggestion is no longer current"
+                )
+                return
+            }
+            amountLkr <= 0L || suggestedMinor == null || amountMinorBig > suggestedMinor -> {
+                _savingsCoachActionState.value = SavingsCoachActionState(
+                    errorMessage = "Contribution must not exceed the current suggestion"
+                )
+                return
             }
         }
+        val amountMinor = amountMinorBig.toLongIfInRange() ?: run {
+            _savingsCoachActionState.value = SavingsCoachActionState(
+                errorMessage = "Contribution amount is too large"
+            )
+            return
+        }
+        val ownerId = authRepository.currentUserId()
+        if (ownerId.isNullOrBlank()) {
+            _savingsCoachActionState.value = SavingsCoachActionState(
+                errorMessage = "User is not authenticated"
+            )
+            return
+        }
+        if (uiState.value.smartSavingsOwnerId != ownerId) {
+            _savingsCoachActionState.value = SavingsCoachActionState(
+                errorMessage = "The savings suggestion is no longer current"
+            )
+            return
+        }
+        val contribution = Contribution(
+            id = UUID.randomUUID().toString(),
+            goalId = goalId,
+            amountMinor = amountMinor,
+            kind = com.example.personalfinanceapp.core.model.ContributionKind.ALLOCATION,
+            occurredDate = financialSummaryLocalDate(clock),
+            note = "Smart Savings Coach allocation"
+        )
+        _savingsCoachActionState.value = SavingsCoachActionState(isSaving = true)
+        viewModelScope.launch {
+            goalRepository.addContributionForOwner(ownerId, contribution).fold(
+                onSuccess = {
+                    _savingsCoachActionState.value = if (authRepository.currentUserId() == ownerId) {
+                        SavingsCoachActionState(successMessage = "Savings allocation recorded")
+                    } else {
+                        SavingsCoachActionState()
+                    }
+                },
+                onFailure = { error ->
+                    _savingsCoachActionState.value = if (authRepository.currentUserId() == ownerId) {
+                        SavingsCoachActionState(
+                            errorMessage = error.message ?: "Unable to record savings allocation"
+                        )
+                    } else {
+                        SavingsCoachActionState()
+                    }
+                }
+            )
+        }
+    }
 
-        val totalExpenseMinor = expenses.sumOf { it.money.baseAmountMinor }
-        val balanceMinor = netIncomeMinor - totalExpenseMinor
+    fun clearSavingsCoachActionMessage() {
+        if (!_savingsCoachActionState.value.isSaving) {
+            _savingsCoachActionState.value = SavingsCoachActionState()
+        }
+    }
+
+    private fun calculateDashboardState(
+        ownerId: String,
+        incomes: List<Income>,
+        yearToDateIncomes: List<Income>,
+        expenses: List<Expense>,
+        goals: List<Goal>,
+        contributions: List<Contribution>?,
+        recurringExpenses: List<RecurringExpense>,
+        recurringOccurrences: List<RecurringOccurrence>
+    ): DashboardUiState {
+        val netIncomeMinor = incomes.fold(0L) { total, income ->
+            Math.addExact(total, income.signedBaseAmountMinor())
+        }
+        val monthlyCryptoResult = CryptoResultCalculator.calculate(
+            incomes = incomes,
+            startDateInclusive = startDate,
+            endDateExclusive = endDateExclusive
+        )
+        val yearToDateCryptoResult = CryptoResultCalculator.calculate(
+            incomes = yearToDateIncomes,
+            startDateInclusive = startOfYear,
+            endDateExclusive = ytdEndDateExclusive
+        )
+
+        val totalExpenseMinor = expenses.fold(0L) { total, expense ->
+            Math.addExact(total, expense.money.baseAmountMinor)
+        }
+        val netCashFlowMinor = Math.subtractExact(netIncomeMinor, totalExpenseMinor)
 
         val committedMinor = expenses
             .filter { it.spendingClass == SpendingClass.COMMITTED }
-            .sumOf { it.money.baseAmountMinor }
+            .fold(0L) { total, expense ->
+                Math.addExact(total, expense.money.baseAmountMinor)
+            }
 
         val discretionaryMinor = expenses
             .filter { it.spendingClass == SpendingClass.DISCRETIONARY }
-            .sumOf { it.money.baseAmountMinor }
+            .fold(0L) { total, expense ->
+                Math.addExact(total, expense.money.baseAmountMinor)
+            }
 
-        val totalOutflow = committedMinor + discretionaryMinor
-        val committedPct = if (totalOutflow > 0) ((committedMinor.toDouble() / totalOutflow) * 100).toInt() else 0
+        val totalOutflow = Math.addExact(committedMinor, discretionaryMinor)
+        val committedPct = if (totalOutflow > 0L) {
+            BigInteger.valueOf(committedMinor)
+                .multiply(BigInteger.valueOf(100L))
+                .divide(BigInteger.valueOf(totalOutflow))
+                .toInt()
+        } else 0
         val discretionaryPct = if (totalOutflow > 0) 100 - committedPct else 0
 
-        val primaryGoal = goals.firstOrNull { !it.archived }?.let { goal ->
-            val progress = activeGoalContributions?.let {
-                calculateGoalProgressAmounts(goal, it)
+        val smartSavings = SavingsCoachCalculator.calculate(
+            SavingsCoachInput(
+                today = financialSummaryLocalDate(clock),
+                incomes = incomes,
+                expenses = expenses,
+                recurringExpenses = recurringExpenses,
+                recurringOccurrences = recurringOccurrences,
+                goals = goals,
+                contributions = contributions.orEmpty(),
+                requiredDataAvailable = contributions != null
+            )
+        )
+        val primaryGoal = smartSavings.goal?.let { coachGoal ->
+            goals.firstOrNull { it.id == coachGoal.goalId }
+        }?.let { goal ->
+            val progress = contributions?.let { allContributions ->
+                calculateGoalProgressAmounts(goal, allContributions.filter { it.goalId == goal.id })
             }
 
             ActiveSavingsGoalUiState(
@@ -230,9 +658,14 @@ class DashboardViewModel @Inject constructor(
 
         incomes.forEach { inc ->
             val isLoss = inc.entryKind == IncomeEntryKind.REALIZED_PNL && inc.pnlDirection == PnlDirection.LOSS
+            val isBreakEven = inc.entryKind == IncomeEntryKind.REALIZED_PNL && inc.pnlDirection == PnlDirection.BREAK_EVEN
             val lkrDecimal = (inc.money.baseAmountMinor.toDouble() / 100.0)
             val title = if (inc.source == IncomeSource.CRYPTO) {
-                if (isLoss) "Crypto Loss" else "Crypto Gain"
+                when {
+                    isLoss -> "Crypto Loss"
+                    isBreakEven -> "Crypto Break Even"
+                    else -> "Crypto Gain"
+                }
             } else {
                 "${inc.source.name.lowercase().replaceFirstChar { it.uppercase() }} Receipt"
             }
@@ -243,26 +676,33 @@ class DashboardViewModel @Inject constructor(
                     subtitle = "${inc.occurredDate} • ${if (isLoss) "Loss" else "Inbound"}",
                     amountText = if (isLoss) {
                         "-LKR ${String.format(Locale.US, "%,.2f", lkrDecimal)}"
+                    } else if (isBreakEven) {
+                        "LKR 0.00"
                     } else {
                         "+LKR ${String.format(Locale.US, "%,.2f", lkrDecimal)}"
                     },
                     isRedAmount = isLoss,
                     occurredDate = inc.occurredDate,
-                    isIncome = !isLoss
+                    isIncome = !isLoss && !isBreakEven
                 )
             )
         }
 
         val sortedTimeline = timelineItems.sortedByDescending { it.occurredDate }
 
-        val userSnapshot = authRepository.currentUserSnapshot()
-        val displayName = userSnapshot?.email?.substringBefore("@")?.replaceFirstChar { it.uppercase() } ?: "User"
+        val displayName = authRepository.currentUserSnapshot()
+            ?.displayName
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: "User"
 
         return DashboardUiState(
             userName = displayName,
-            totalAvailableBalanceLkrMinor = balanceMinor,
+            monthlyNetCashFlowLkrMinor = netCashFlowMinor,
             totalIncomeLkrMinor = netIncomeMinor,
             incomeCount = incomes.size,
+            monthlyCryptoResult = monthlyCryptoResult,
+            yearToDateCryptoResult = yearToDateCryptoResult,
             totalExpenseLkrMinor = totalExpenseMinor,
             expenseCount = expenses.size,
             committedExpenseLkrMinor = committedMinor,
@@ -270,6 +710,8 @@ class DashboardViewModel @Inject constructor(
             discretionaryExpenseLkrMinor = discretionaryMinor,
             discretionaryPercent = discretionaryPct,
             activeGoal = primaryGoal,
+            smartSavings = smartSavings,
+            smartSavingsOwnerId = ownerId,
             recentActivity = sortedTimeline,
             isLoading = false
         )

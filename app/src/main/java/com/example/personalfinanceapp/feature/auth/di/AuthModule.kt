@@ -1,6 +1,8 @@
 package com.example.personalfinanceapp.feature.auth.di
 
 import com.example.personalfinanceapp.feature.auth.AuthRepository
+import com.example.personalfinanceapp.feature.auth.AuthSessionCleanup
+import com.example.personalfinanceapp.feature.auth.FirebaseAuthSessionCleanup
 import com.example.personalfinanceapp.feature.auth.FirebaseAuthRepository
 import com.example.personalfinanceapp.feature.auth.PendingRegistrationStore
 import com.example.personalfinanceapp.feature.auth.SharedPreferencesPendingRegistrationStore
@@ -21,6 +23,12 @@ abstract class AuthModule {
     abstract fun bindAuthRepository(
         impl: FirebaseAuthRepository
     ): AuthRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindAuthSessionCleanup(
+        impl: FirebaseAuthSessionCleanup
+    ): AuthSessionCleanup
 
     @Binds
     @Singleton

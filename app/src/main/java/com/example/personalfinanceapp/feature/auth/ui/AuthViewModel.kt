@@ -1,9 +1,13 @@
 package com.example.personalfinanceapp.feature.auth.ui
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.feature.auth.AuthRepository
+import com.example.personalfinanceapp.feature.auth.AuthUserSnapshot
+import com.example.personalfinanceapp.feature.auth.AuthPostSignOutCleanup
+import com.example.personalfinanceapp.feature.auth.AuthPostVerificationSync
 import com.example.personalfinanceapp.feature.auth.PendingRegistration
 import com.example.personalfinanceapp.feature.auth.PendingRegistrationPhase
 import com.example.personalfinanceapp.feature.auth.PendingRegistrationState
@@ -20,6 +24,7 @@ data class LoginUiState(
     val emailInput: String = "",
     val passwordInput: String = "",
     val isLoading: Boolean = false,
+    val isGoogleLoading: Boolean = false,
     val errorMessage: String? = null
 )
 
@@ -42,17 +47,29 @@ data class PasswordResetUiState(
     val errorMessage: String? = null
 )
 
+data class EmailVerificationUiState(
+    val email: String = "",
+    val isResending: Boolean = false,
+    val isChecking: Boolean = false,
+    val successMessage: String? = null,
+    val errorMessage: String? = null
+)
+
 sealed interface AuthNavigationState {
     data object Resolving : AuthNavigationState
     data object Unauthenticated : AuthNavigationState
     data object RegistrationSetup : AuthNavigationState
+    data class EmailVerificationRequired(val userId: UserId) : AuthNavigationState
     data class Authenticated(val userId: UserId) : AuthNavigationState
 }
 
 @HiltViewModel
 class AuthViewModel @Inject constructor(
     private val authRepository: AuthRepository,
-    private val pendingRegistrationStore: PendingRegistrationStore
+    private val pendingRegistrationStore: PendingRegistrationStore,
+    private val authSessionCleanup: AuthPostSignOutCleanup = AuthPostSignOutCleanup.NoOp,
+    private val authPostVerificationSync: AuthPostVerificationSync =
+        AuthPostVerificationSync.NoOp
 ) : ViewModel() {
 
     private var pendingRegistrationState = readPendingRegistrationState()
@@ -61,6 +78,9 @@ class AuthViewModel @Inject constructor(
     private val _pendingRegistration = MutableStateFlow(restoredPendingRegistration)
     private var operationGeneration = 0L
     private val inFlightAccountCreations = mutableMapOf<Long, PendingRegistration>()
+    private var googleRequestGeneration = 0L
+    private var activeGoogleRequestId: Long? = null
+    private var googleExchangeStarted = false
 
     private val _authState = MutableStateFlow<UserId?>(null)
     val authState: StateFlow<UserId?> = _authState.asStateFlow()
@@ -84,6 +104,13 @@ class AuthViewModel @Inject constructor(
     private val _passwordResetUiState = MutableStateFlow(PasswordResetUiState())
     val passwordResetUiState: StateFlow<PasswordResetUiState> =
         _passwordResetUiState.asStateFlow()
+
+    private val _emailVerificationUiState = MutableStateFlow(EmailVerificationUiState())
+    val emailVerificationUiState: StateFlow<EmailVerificationUiState> =
+        _emailVerificationUiState.asStateFlow()
+
+    private val _signOutErrorMessage = MutableStateFlow<String?>(null)
+    val signOutErrorMessage: StateFlow<String?> = _signOutErrorMessage.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -113,7 +140,7 @@ class AuthViewModel @Inject constructor(
     }
 
     fun login() {
-        if (_loginUiState.value.isLoading) return
+        if (_loginUiState.value.isLoading || _loginUiState.value.isGoogleLoading) return
 
         val email = _loginUiState.value.emailInput.trim()
         val password = _loginUiState.value.passwordInput
@@ -148,6 +175,79 @@ class AuthViewModel @Inject constructor(
                 _loginUiState.value = LoginUiState()
             }
         }
+    }
+
+    fun beginGoogleSignIn(): Long? {
+        val state = _loginUiState.value
+        if (
+            state.isLoading ||
+            state.isGoogleLoading ||
+            pendingRegistrationState != PendingRegistrationState.Absent ||
+            authRepository.currentUserId() != null
+        ) {
+            return null
+        }
+
+        val requestId = ++googleRequestGeneration
+        activeGoogleRequestId = requestId
+        googleExchangeStarted = false
+        _loginUiState.value = state.copy(
+            isGoogleLoading = true,
+            errorMessage = null
+        )
+        return requestId
+    }
+
+    fun completeGoogleSignIn(requestId: Long, idToken: String) {
+        if (
+            activeGoogleRequestId != requestId ||
+            googleExchangeStarted ||
+            !_loginUiState.value.isGoogleLoading ||
+            authRepository.currentUserId() != null
+        ) {
+            return
+        }
+        if (idToken.isBlank()) {
+            failGoogleSignIn(requestId, "Google sign-in returned an invalid credential.")
+            return
+        }
+
+        googleExchangeStarted = true
+        viewModelScope.launch {
+            val result = authRepository.loginWithGoogleIdToken(idToken)
+            if (activeGoogleRequestId != requestId) return@launch
+
+            activeGoogleRequestId = null
+            googleExchangeStarted = false
+            if (result.isFailure) {
+                _loginUiState.value = _loginUiState.value.copy(
+                    isGoogleLoading = false,
+                    errorMessage = "Google sign-in failed. Please try again."
+                )
+            } else {
+                _loginUiState.value = LoginUiState()
+            }
+        }
+    }
+
+    fun cancelGoogleSignIn(requestId: Long) {
+        if (activeGoogleRequestId != requestId || googleExchangeStarted) return
+        activeGoogleRequestId = null
+        googleExchangeStarted = false
+        _loginUiState.value = _loginUiState.value.copy(
+            isGoogleLoading = false,
+            errorMessage = null
+        )
+    }
+
+    fun failGoogleSignIn(requestId: Long, message: String) {
+        if (activeGoogleRequestId != requestId || googleExchangeStarted) return
+        activeGoogleRequestId = null
+        googleExchangeStarted = false
+        _loginUiState.value = _loginUiState.value.copy(
+            isGoogleLoading = false,
+            errorMessage = message.ifBlank { "Google sign-in failed. Please try again." }
+        )
     }
 
     fun onRegisterEmailChanged(email: String) {
@@ -412,7 +512,93 @@ class AuthViewModel @Inject constructor(
         }
     }
 
+    fun resendVerificationEmail() {
+        val state = _navigationState.value as? AuthNavigationState.EmailVerificationRequired
+            ?: return
+        if (_emailVerificationUiState.value.isResending || _emailVerificationUiState.value.isChecking) {
+            return
+        }
+        val userId = state.userId
+        val generation = operationGeneration
+        _emailVerificationUiState.value = _emailVerificationUiState.value.copy(
+            isResending = true,
+            successMessage = null,
+            errorMessage = null
+        )
+
+        viewModelScope.launch {
+            val result = authRepository.sendEmailVerification(userId)
+            if (generation != operationGeneration || authRepository.currentUserId() != userId) {
+                return@launch
+            }
+            _emailVerificationUiState.value = _emailVerificationUiState.value.copy(
+                isResending = false,
+                successMessage = if (result.isSuccess) {
+                    "Verification email sent. Check your inbox and spam folder."
+                } else {
+                    null
+                },
+                errorMessage = result.exceptionOrNull()?.let(::verificationEmailFailureMessage)
+            )
+        }
+    }
+
+    fun checkVerificationStatus() {
+        val state = _navigationState.value as? AuthNavigationState.EmailVerificationRequired
+            ?: return
+        if (_emailVerificationUiState.value.isChecking || _emailVerificationUiState.value.isResending) {
+            return
+        }
+        val userId = state.userId
+        val generation = operationGeneration
+        _emailVerificationUiState.value = _emailVerificationUiState.value.copy(
+            isChecking = true,
+            successMessage = null,
+            errorMessage = null
+        )
+
+        viewModelScope.launch {
+            val result = authRepository.reloadAndRefreshUser(userId)
+            if (generation != operationGeneration || authRepository.currentUserId() != userId) {
+                return@launch
+            }
+            val snapshot = result.getOrNull()
+            when {
+                result.isFailure -> {
+                    _emailVerificationUiState.value = _emailVerificationUiState.value.copy(
+                        isChecking = false,
+                        errorMessage = "We couldn't check your status. Check your connection and try again."
+                    )
+                }
+                snapshot == null || snapshot.userId != userId -> {
+                    _emailVerificationUiState.value = _emailVerificationUiState.value.copy(
+                        isChecking = false,
+                        errorMessage = "The signed-in account changed. Please try again."
+                    )
+                }
+                snapshot.requiresEmailVerification -> {
+                    _emailVerificationUiState.value = _emailVerificationUiState.value.copy(
+                        isChecking = false,
+                        errorMessage = "Your email is not verified yet. Open the email link, then check again."
+                    )
+                }
+                else -> {
+                    runCatching { authPostVerificationSync.sync(userId) }
+                    _emailVerificationUiState.value = EmailVerificationUiState()
+                    reconcileAuthenticatedUser(userId)
+                }
+            }
+        }
+    }
+
     fun signOut() {
+        _signOutErrorMessage.value = null
+        if (_navigationState.value is AuthNavigationState.EmailVerificationRequired) {
+            _emailVerificationUiState.value = _emailVerificationUiState.value.copy(
+                successMessage = null,
+                errorMessage = null
+            )
+        }
         invalidateOperations()
         val protectsInFlightCreation = persistAbandonedInFlightMarker()
         if (protectsInFlightCreation == null) return
@@ -430,13 +616,21 @@ class AuthViewModel @Inject constructor(
                     pendingBeforeSignOut.email == signingOutEmail)
         viewModelScope.launch {
             val result = authRepository.signOut()
-            if (result.isFailure) return@launch
+            if (result.isFailure) {
+                _signOutErrorMessage.value = "Unable to sign out. Please try again."
+                return@launch
+            }
+
+            if (signingOutUserId != null) {
+                authSessionCleanup.clearForUser(signingOutUserId)
+            }
 
             if (protectsInFlightCreation) {
                 _authState.value = null
                 _loginUiState.value = LoginUiState()
                 _registerUiState.value = RegisterUiState()
                 _passwordResetUiState.value = PasswordResetUiState()
+                _emailVerificationUiState.value = EmailVerificationUiState()
                 _navigationState.value = AuthNavigationState.Unauthenticated
                 return@launch
             }
@@ -449,6 +643,7 @@ class AuthViewModel @Inject constructor(
                 _loginUiState.value = LoginUiState()
                 _registerUiState.value = RegisterUiState()
                 _passwordResetUiState.value = PasswordResetUiState()
+                _emailVerificationUiState.value = EmailVerificationUiState()
                 _navigationState.value = AuthNavigationState.Unauthenticated
                 return@launch
             }
@@ -471,8 +666,13 @@ class AuthViewModel @Inject constructor(
             _loginUiState.value = LoginUiState()
             _registerUiState.value = RegisterUiState()
             _passwordResetUiState.value = PasswordResetUiState()
+            _emailVerificationUiState.value = EmailVerificationUiState()
             _navigationState.value = AuthNavigationState.Unauthenticated
         }
+    }
+
+    fun clearSignOutError() {
+        _signOutErrorMessage.value = null
     }
 
     private fun retryProfileSetup(fullName: String) {
@@ -577,7 +777,29 @@ class AuthViewModel @Inject constructor(
         pendingRegistrationState = PendingRegistrationState.Absent
         _pendingRegistration.value = null
         _registerUiState.value = RegisterUiState()
-        _navigationState.value = AuthNavigationState.Authenticated(userId)
+        val currentUser = authRepository.currentUserSnapshot()
+        if (currentUser == null || currentUser.userId != userId) return
+        if (!currentUser.requiresEmailVerification) {
+            setSignedInNavigation(currentUser)
+            return
+        }
+        showEmailVerification(userId)
+        _emailVerificationUiState.value = _emailVerificationUiState.value.copy(
+            isResending = true
+        )
+        val verificationResult = authRepository.sendEmailVerification(userId)
+        if (operationId != operationGeneration || authRepository.currentUserId() != userId) {
+            return
+        }
+        _emailVerificationUiState.value = _emailVerificationUiState.value.copy(
+            isResending = false,
+            successMessage = if (verificationResult.isSuccess) {
+                "Verification email sent. Check your inbox and spam folder."
+            } else {
+                null
+            },
+            errorMessage = verificationResult.exceptionOrNull()?.let(::verificationEmailFailureMessage)
+        )
     }
 
     private fun validateAccountCreationIntent(
@@ -763,7 +985,7 @@ class AuthViewModel @Inject constructor(
 
             // The durable cancellation belongs to another account. Keep it for that
             // account while allowing this unrelated existing user to continue.
-            _navigationState.value = AuthNavigationState.Authenticated(userId)
+            setSignedInNavigation(currentUser ?: return)
             return
         }
 
@@ -789,7 +1011,7 @@ class AuthViewModel @Inject constructor(
         }
 
         if (pendingRegistration == null) {
-            _navigationState.value = AuthNavigationState.Authenticated(userId)
+            setSignedInNavigation(currentUser ?: return)
             return
         }
 
@@ -839,7 +1061,7 @@ class AuthViewModel @Inject constructor(
             pendingRegistrationState = PendingRegistrationState.Valid(abandoned)
             _pendingRegistration.value = abandoned
             _registerUiState.value = RegisterUiState()
-            _navigationState.value = AuthNavigationState.Authenticated(userId)
+            setSignedInNavigation(currentUser ?: return)
             return
         }
 
@@ -855,7 +1077,34 @@ class AuthViewModel @Inject constructor(
         pendingRegistrationState = PendingRegistrationState.Absent
         _pendingRegistration.value = null
         _registerUiState.value = RegisterUiState()
-        _navigationState.value = AuthNavigationState.Authenticated(userId)
+        setSignedInNavigation(currentUser ?: return)
+    }
+
+    private fun setSignedInNavigation(user: AuthUserSnapshot) {
+        if (user.requiresEmailVerification) {
+            showEmailVerification(user.userId)
+        } else {
+            _emailVerificationUiState.value = EmailVerificationUiState()
+            _navigationState.value = AuthNavigationState.Authenticated(user.userId)
+        }
+    }
+
+    private fun showEmailVerification(userId: UserId) {
+        val snapshot = authRepository.currentUserSnapshot()
+        if (snapshot == null || snapshot.userId != userId) return
+        _emailVerificationUiState.value = EmailVerificationUiState(
+            email = snapshot.email.orEmpty()
+        )
+        _navigationState.value = AuthNavigationState.EmailVerificationRequired(userId)
+    }
+
+    private fun verificationEmailFailureMessage(exception: Throwable): String {
+        val details = exception.localizedMessage.orEmpty().lowercase(Locale.ROOT)
+        return if ("too many" in details || "rate" in details || "blocked" in details) {
+            "Too many verification emails were requested. Please wait before trying again."
+        } else {
+            "Verification email could not be sent. Check your connection and try Resend."
+        }
     }
 
     private fun isExpectedRegistrationAuthentication(
@@ -899,6 +1148,11 @@ class AuthViewModel @Inject constructor(
 
     private fun invalidateOperations() {
         operationGeneration += 1
+        activeGoogleRequestId = null
+        googleExchangeStarted = false
+        if (_loginUiState.value.isGoogleLoading) {
+            _loginUiState.value = _loginUiState.value.copy(isGoogleLoading = false)
+        }
     }
 
     private fun readPendingRegistrationState(): PendingRegistrationState {

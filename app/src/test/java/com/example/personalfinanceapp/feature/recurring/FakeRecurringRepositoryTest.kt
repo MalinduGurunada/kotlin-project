@@ -3,6 +3,7 @@ package com.example.personalfinanceapp.feature.recurring
 
 import com.example.personalfinanceapp.core.model.RecurrenceFrequency
 import com.example.personalfinanceapp.core.model.RecurringExpense
+import com.example.personalfinanceapp.core.model.RecurringOccurrenceStatus
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -235,5 +236,35 @@ class FakeRecurringRepositoryTest {
             .first()
 
         assertEquals("Internet Bill", savedExpense.title)
+    }
+
+    @Test
+    fun confirmingSameOccurrenceTwiceUsesOneExpenseId() = runTest {
+        val repository = FakeRecurringRepository()
+        repository.saveRecurringExpense(createRecurringExpense())
+        val dueDate = LocalDate.of(2026, 10, 15)
+
+        val first = repository.confirmPayment("internet-001", dueDate, dueDate, 350_000L)
+        val second = repository.confirmPayment("internet-001", dueDate, dueDate, 350_000L)
+
+        assertTrue(first.isSuccess)
+        assertEquals(first.getOrThrow(), second.getOrThrow())
+        assertEquals(1, repository.observeOccurrences().first().size)
+        assertEquals(
+            RecurringOccurrenceStatus.CONFIRMED,
+            repository.observeOccurrences().first().single().status
+        )
+    }
+
+    @Test
+    fun skippedOccurrenceCannotBeConfirmed() = runTest {
+        val repository = FakeRecurringRepository()
+        repository.saveRecurringExpense(createRecurringExpense())
+        val dueDate = LocalDate.of(2026, 10, 15)
+
+        assertTrue(repository.skipOccurrence("internet-001", dueDate).isSuccess)
+        assertTrue(
+            repository.confirmPayment("internet-001", dueDate, dueDate, 350_000L).isFailure
+        )
     }
 }

@@ -1,112 +1,288 @@
 package com.example.personalfinanceapp.navigation
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavHostController
+import androidx.navigation.NavOptionsBuilder
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
-import com.example.personalfinanceapp.feature.auth.ui.AuthViewModel
+import com.example.personalfinanceapp.feature.auth.GoogleCredentialResult
+import com.example.personalfinanceapp.feature.auth.GoogleCredentialSignIn
+import com.example.personalfinanceapp.core.model.Expense
 import com.example.personalfinanceapp.feature.auth.ui.AuthNavigationState
+import com.example.personalfinanceapp.feature.auth.ui.AuthViewModel
+import com.example.personalfinanceapp.feature.auth.ui.EmailVerificationScreen
 import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
 import com.example.personalfinanceapp.feature.auth.ui.PasswordResetScreen
 import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
+import com.example.personalfinanceapp.feature.category.ui.CategoryScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.ActivityScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.DashboardViewModel
+import com.example.personalfinanceapp.feature.dashboard.ui.IncomeSpendingBreakdownScreen
+import com.example.personalfinanceapp.feature.dashboard.ui.MoreScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.NavDestination
 import com.example.personalfinanceapp.feature.dashboard.ui.OverviewScreen
-import com.example.personalfinanceapp.feature.dashboard.ui.GoalsScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.TransactionDetailScreen
-import com.example.personalfinanceapp.core.model.Expense
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseEditorDialog
+import com.example.personalfinanceapp.feature.expense.ui.ExpenseListScreen
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseViewModel
+import com.example.personalfinanceapp.feature.goal.ui.GoalDetailScreen
+import com.example.personalfinanceapp.feature.goal.ui.GoalViewModel
+import com.example.personalfinanceapp.feature.goal.ui.GoalsScreen
 import com.example.personalfinanceapp.feature.income.ui.IncomeListScreen
 import com.example.personalfinanceapp.feature.income.ui.IncomeEditorScreen
 import com.example.personalfinanceapp.feature.income.ui.IncomeViewModel
 import com.example.personalfinanceapp.feature.income.ui.shiftIncomeMonth
+import com.example.personalfinanceapp.feature.receivable.ui.ReceivableScreen
+import com.example.personalfinanceapp.feature.receivable.ui.ReceivableViewModel
+import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigationDecision
+import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigationResolver
+import com.example.personalfinanceapp.feature.notification.FinanceReviewPayload
+import com.example.personalfinanceapp.feature.notification.NotificationPreferencesViewModel
+import com.example.personalfinanceapp.feature.recurring.ui.DueItemsScreen
+import com.example.personalfinanceapp.feature.recurring.ui.RecurringCommitmentsScreen
+import kotlinx.coroutines.launch
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
 internal fun NavHostController.returnToSignIn() {
     if (!popBackStack()) {
         navigate(Login) { launchSingleTop = true }
     }
 }
 
-@Composable
-internal fun HomeActionsScreen(
-    onManageIncome: () -> Unit,
-    onSignOut: () -> Unit
+internal enum class AppNavigationTarget {
+    LOGIN,
+    REGISTRATION_SETUP,
+    EMAIL_VERIFICATION,
+    OVERVIEW,
+    ACTIVITY,
+    GOALS,
+    MORE,
+    EXPENSES,
+    CATEGORIES,
+    INCOME,
+    RECEIVABLES,
+    RECURRING,
+    DUE_ITEMS
+}
+
+internal enum class ManagementDestination {
+    EXPENSES,
+    CATEGORIES,
+    INCOME,
+    RECEIVABLES,
+    RECURRING,
+    DUE_ITEMS
+}
+
+internal fun startupTarget(state: AuthNavigationState): AppNavigationTarget? = when (state) {
+    AuthNavigationState.Resolving -> null
+    AuthNavigationState.Unauthenticated -> AppNavigationTarget.LOGIN
+    AuthNavigationState.RegistrationSetup -> AppNavigationTarget.REGISTRATION_SETUP
+    is AuthNavigationState.EmailVerificationRequired -> AppNavigationTarget.EMAIL_VERIFICATION
+    is AuthNavigationState.Authenticated -> AppNavigationTarget.OVERVIEW
+}
+
+internal fun authenticatedAccountChanged(
+    previousUserId: String?,
+    currentUserId: String
+): Boolean = previousUserId != null && previousUserId != currentUserId
+
+internal fun dashboardTarget(destination: NavDestination): AppNavigationTarget = when (destination) {
+    NavDestination.OVERVIEW -> AppNavigationTarget.OVERVIEW
+    NavDestination.ACTIVITY -> AppNavigationTarget.ACTIVITY
+    NavDestination.GOALS -> AppNavigationTarget.GOALS
+    NavDestination.MORE -> AppNavigationTarget.MORE
+}
+
+internal fun managementTarget(destination: ManagementDestination): AppNavigationTarget =
+    when (destination) {
+        ManagementDestination.EXPENSES -> AppNavigationTarget.EXPENSES
+        ManagementDestination.CATEGORIES -> AppNavigationTarget.CATEGORIES
+        ManagementDestination.INCOME -> AppNavigationTarget.INCOME
+        ManagementDestination.RECEIVABLES -> AppNavigationTarget.RECEIVABLES
+        ManagementDestination.RECURRING -> AppNavigationTarget.RECURRING
+        ManagementDestination.DUE_ITEMS -> AppNavigationTarget.DUE_ITEMS
+    }
+
+private fun NavOptionsBuilder.replaceBackStackIfNeeded(replaceBackStack: Boolean) {
+    if (replaceBackStack) {
+        popUpTo(0) { inclusive = true }
+        launchSingleTop = true
+    }
+}
+
+private fun NavHostController.navigateTo(
+    target: AppNavigationTarget,
+    replaceBackStack: Boolean = false
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Button(onClick = onManageIncome) {
-            Text("Manage Income")
+    when (target) {
+        AppNavigationTarget.LOGIN -> navigate(Login) {
+            replaceBackStackIfNeeded(replaceBackStack)
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = onSignOut) {
-            Text("Sign Out")
+        AppNavigationTarget.REGISTRATION_SETUP -> navigate(Register) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.EMAIL_VERIFICATION -> navigate(EmailVerification) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.OVERVIEW -> navigate(Overview) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.ACTIVITY -> navigate(ActivityRoute) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.GOALS -> navigate(Goals) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.MORE -> navigate(Home) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.EXPENSES -> navigate(ExpenseList) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.CATEGORIES -> navigate(Category) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.INCOME -> navigate(IncomeList) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.RECEIVABLES -> navigate(ReceivableList) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.RECURRING -> navigate(RecurringCommitments) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
+        AppNavigationTarget.DUE_ITEMS -> navigate(DueItems) {
+            replaceBackStackIfNeeded(replaceBackStack)
         }
     }
 }
 
 @Composable
 fun AppNavHost(
-    authViewModel: AuthViewModel = hiltViewModel()
+    authViewModel: AuthViewModel = hiltViewModel(),
+    notificationTarget: FinanceReviewPayload? = null,
+    onNotificationTargetConsumed: () -> Unit = {},
+    onAuthenticated: () -> Unit = {},
+    onNotificationPermissionRequested: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val navigationState by authViewModel.navigationState.collectAsState()
     val loginUiState by authViewModel.loginUiState.collectAsState()
     val registerUiState by authViewModel.registerUiState.collectAsState()
     val resetUiState by authViewModel.passwordResetUiState.collectAsState()
+    val verificationUiState by authViewModel.emailVerificationUiState.collectAsState()
+    val signOutErrorMessage by authViewModel.signOutErrorMessage.collectAsState()
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     var showRecordExpenseDialog by remember { mutableStateOf(false) }
+    var authenticatedStartupComplete by remember { mutableStateOf(false) }
+    var activeAuthenticatedUserId by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(navigationState) {
+    LaunchedEffect(navigationState, notificationTarget) {
         when (navigationState) {
             AuthNavigationState.Resolving -> Unit
             AuthNavigationState.Unauthenticated -> {
-                navController.navigate(Login) {
-                    popUpTo(0) { inclusive = true }
-                    launchSingleTop = true
-                }
+                authenticatedStartupComplete = false
+                activeAuthenticatedUserId = null
+                showRecordExpenseDialog = false
+                navController.navigateTo(AppNavigationTarget.LOGIN, replaceBackStack = true)
             }
             AuthNavigationState.RegistrationSetup -> {
-                navController.navigate(Register) {
-                    popUpTo(0) { inclusive = true }
-                    launchSingleTop = true
-                }
+                authenticatedStartupComplete = false
+                activeAuthenticatedUserId = null
+                showRecordExpenseDialog = false
+                navController.navigateTo(
+                    AppNavigationTarget.REGISTRATION_SETUP,
+                    replaceBackStack = true
+                )
+            }
+            is AuthNavigationState.EmailVerificationRequired -> {
+                authenticatedStartupComplete = false
+                activeAuthenticatedUserId = null
+                showRecordExpenseDialog = false
+                navController.navigateTo(
+                    AppNavigationTarget.EMAIL_VERIFICATION,
+                    replaceBackStack = true
+                )
             }
             is AuthNavigationState.Authenticated -> {
-                navController.navigate(Overview) {
-                    popUpTo(0) { inclusive = true }
-                    launchSingleTop = true
+                onAuthenticated()
+                val authenticatedUserId =
+                    (navigationState as AuthNavigationState.Authenticated).userId
+                if (authenticatedAccountChanged(activeAuthenticatedUserId, authenticatedUserId)) {
+                    authenticatedStartupComplete = false
+                    showRecordExpenseDialog = false
+                }
+                activeAuthenticatedUserId = authenticatedUserId
+                val pendingNotification = notificationTarget
+                if (pendingNotification != null) {
+                    val decision = FinanceReviewNavigationResolver.resolve(
+                        pendingNotification,
+                        authenticatedUserId
+                    )
+                    onNotificationTargetConsumed()
+                    when (decision) {
+                        FinanceReviewNavigationDecision.NAVIGATE_TO_ACTIVITY ->
+                            navController.navigateTo(
+                                AppNavigationTarget.ACTIVITY,
+                                replaceBackStack = true
+                            )
+                        FinanceReviewNavigationDecision.IGNORE,
+                        FinanceReviewNavigationDecision.WAIT_FOR_AUTH -> {
+                            if (!authenticatedStartupComplete) {
+                                navController.navigateTo(
+                                    AppNavigationTarget.OVERVIEW,
+                                    replaceBackStack = true
+                                )
+                            }
+                        }
+                    }
+                    authenticatedStartupComplete = true
+                } else if (!authenticatedStartupComplete) {
+                    navController.navigateTo(
+                        AppNavigationTarget.OVERVIEW,
+                        replaceBackStack = true
+                    )
+                    authenticatedStartupComplete = true
                 }
             }
         }
+    }
+
+    signOutErrorMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = authViewModel::clearSignOutError,
+            title = { Text("Sign out failed") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = authViewModel::clearSignOutError) {
+                    Text("OK")
+                }
+            }
+        )
     }
 
     NavHost(
@@ -119,6 +295,28 @@ fun AppNavHost(
                 onEmailChanged = authViewModel::onLoginEmailChanged,
                 onPasswordChanged = authViewModel::onLoginPasswordChanged,
                 onLoginClicked = authViewModel::login,
+                onGoogleSignInClicked = {
+                    val requestId = authViewModel.beginGoogleSignIn()
+                        ?: return@LoginScreen
+                    val activity = context.findActivity()
+                    if (activity == null) {
+                        authViewModel.failGoogleSignIn(
+                            requestId,
+                            "Google sign-in is unavailable in this context."
+                        )
+                    } else {
+                        coroutineScope.launch {
+                            when (val result = GoogleCredentialSignIn.requestIdToken(activity)) {
+                                is GoogleCredentialResult.Success ->
+                                    authViewModel.completeGoogleSignIn(requestId, result.idToken)
+                                GoogleCredentialResult.Cancelled ->
+                                    authViewModel.cancelGoogleSignIn(requestId)
+                                is GoogleCredentialResult.Failure ->
+                                    authViewModel.failGoogleSignIn(requestId, result.message)
+                            }
+                        }
+                    }
+                },
                 onNavigateToRegister = { navController.navigate(Register) },
                 onNavigateToPasswordReset = { navController.navigate(PasswordReset) }
             )
@@ -146,40 +344,101 @@ fun AppNavHost(
                 uiState = resetUiState,
                 onEmailChanged = authViewModel::onResetEmailChanged,
                 onResetClicked = authViewModel::sendPasswordReset,
-                onNavigateToLogin = {
-                    navController.returnToSignIn()
-                }
+                onNavigateToLogin = { navController.returnToSignIn() }
+            )
+        }
+
+        composable<EmailVerification> {
+            EmailVerificationScreen(
+                uiState = verificationUiState,
+                onResendClicked = authViewModel::resendVerificationEmail,
+                onCheckStatusClicked = authViewModel::checkVerificationStatus,
+                onSignOutClicked = authViewModel::signOut
             )
         }
 
         composable<Home> {
-            HomeActionsScreen(
-                onManageIncome = { navController.navigate(IncomeList) },
-                onSignOut = authViewModel::signOut
+            val dashboardViewModel: DashboardViewModel = hiltViewModel()
+            val uiState by dashboardViewModel.uiState.collectAsState()
+            val notificationPreferencesViewModel: NotificationPreferencesViewModel = hiltViewModel()
+            val notificationsEnabled by
+                notificationPreferencesViewModel.notificationsEnabled.collectAsState()
+
+            MoreScreen(
+                userName = uiState.userName,
+                notificationsEnabled = notificationsEnabled,
+                onNotificationsEnabledChange = { enabled ->
+                    notificationPreferencesViewModel.setNotificationsEnabled(enabled)
+                    if (enabled) onNotificationPermissionRequested()
+                },
+                onCategoriesClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.CATEGORIES)
+                    )
+                },
+                onFinancialSummariesClick = {
+                    navController.navigate(FinancialSummaries)
+                },
+                onExpensesClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.EXPENSES)
+                    )
+                },
+                onIncomeClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.INCOME)
+                    )
+                },
+                onReceivablesClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.RECEIVABLES)
+                    )
+                },
+                onRecurringClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.RECURRING)
+                    )
+                },
+                onDueItemsClick = {
+                    navController.navigateTo(
+                        managementTarget(ManagementDestination.DUE_ITEMS)
+                    )
+                },
+                onSignOut = authViewModel::signOut,
+                onBottomDestinationSelected = { destination ->
+                    if (destination != NavDestination.MORE) {
+                        navController.navigateTo(dashboardTarget(destination))
+                    }
+                }
             )
         }
 
         composable<Overview> {
             val dashboardViewModel: DashboardViewModel = hiltViewModel()
             val uiState by dashboardViewModel.uiState.collectAsState()
+            val savingsCoachActionState by dashboardViewModel.savingsCoachActionState.collectAsState()
 
             OverviewScreen(
                 uiState = uiState,
+                savingsCoachActionState = savingsCoachActionState,
                 currentNavDestination = NavDestination.OVERVIEW,
-                onNavDestinationSelected = { dest ->
-                    when (dest) {
-                        NavDestination.OVERVIEW -> {}
-                        NavDestination.ACTIVITY -> navController.navigate(Activity)
-                        NavDestination.GOALS -> navController.navigate(Goals)
-                        NavDestination.MORE -> navController.navigate(Home)
+                onNavDestinationSelected = { destination ->
+                    if (destination != NavDestination.OVERVIEW) {
+                        navController.navigateTo(dashboardTarget(destination))
                     }
                 },
-                onNavigateToActivity = { navController.navigate(Activity) },
-                onNavigateToIncome = { navController.navigate(IncomeList) }
+                onNavigateToActivity = {
+                    navController.navigateTo(AppNavigationTarget.ACTIVITY)
+                },
+                onNavigateToIncome = {
+                    navController.navigateTo(AppNavigationTarget.INCOME)
+                },
+                onConfirmSavingsContribution = dashboardViewModel::confirmSuggestedContribution,
+                onClearSavingsCoachActionMessage = dashboardViewModel::clearSavingsCoachActionMessage
             )
         }
 
-        composable<Activity> {
+        composable<ActivityRoute> {
             val expenseViewModel: ExpenseViewModel = hiltViewModel()
             val expenseUiState by expenseViewModel.uiState.collectAsState()
             val expenseSaveUiState by expenseViewModel.saveUiState.collectAsState()
@@ -205,7 +464,15 @@ fun AppNavHost(
                         expenseViewModel.consumeSaveResult()
                         expenseViewModel.clearError()
                     },
-                    onSave = { id, categoryId, amountDecimal, currency, channel, spendingClass, date, note ->
+                    onSave = {
+                            id,
+                            categoryId,
+                            amountDecimal,
+                            currency,
+                            channel,
+                            spendingClass,
+                            date,
+                            note ->
                         expenseViewModel.saveExpense(
                             id = id,
                             categoryId = categoryId,
@@ -224,12 +491,9 @@ fun AppNavHost(
             ActivityScreen(
                 expenseUiState = expenseUiState,
                 currentNavDestination = NavDestination.ACTIVITY,
-                onNavDestinationSelected = { dest ->
-                    when (dest) {
-                        NavDestination.OVERVIEW -> navController.navigate(Overview)
-                        NavDestination.ACTIVITY -> {}
-                        NavDestination.GOALS -> navController.navigate(Goals)
-                        NavDestination.MORE -> navController.navigate(Home)
+                onNavDestinationSelected = { destination ->
+                    if (destination != NavDestination.ACTIVITY) {
+                        navController.navigateTo(dashboardTarget(destination))
                     }
                 },
                 onRecordExpenseClicked = {
@@ -243,25 +507,43 @@ fun AppNavHost(
                     showRecordExpenseDialog = true
                 },
                 onNavigateToIncome = {
-                    navController.navigate(IncomeList)
+                    navController.navigateTo(AppNavigationTarget.INCOME)
                 }
             )
         }
 
         composable<Goals> {
-            val dashboardViewModel: DashboardViewModel = hiltViewModel()
-            val uiState by dashboardViewModel.uiState.collectAsState()
+            val goalViewModel: GoalViewModel = hiltViewModel()
 
             GoalsScreen(
-                uiState = uiState,
+                viewModel = goalViewModel,
+                currentNavDestination = NavDestination.GOALS,
                 onNavDestinationSelected = { destination ->
-                    when (destination) {
-                        NavDestination.OVERVIEW -> navController.navigate(Overview)
-                        NavDestination.ACTIVITY -> navController.navigate(Activity)
-                        NavDestination.GOALS -> Unit
-                        NavDestination.MORE -> navController.navigate(Home)
+                    if (destination != NavDestination.GOALS) {
+                        navController.navigateTo(dashboardTarget(destination))
                     }
+                },
+                onGoalSelected = { goalId ->
+                    navController.navigate(GoalDetail(goalId))
                 }
+            )
+        }
+
+        composable<GoalDetail> { backStackEntry ->
+            val detailRoute: GoalDetail = backStackEntry.toRoute()
+            val parentEntry = remember(backStackEntry) {
+                runCatching { navController.getBackStackEntry(Goals) }.getOrNull()
+            }
+            val goalViewModel: GoalViewModel = if (parentEntry != null) {
+                hiltViewModel(parentEntry)
+            } else {
+                hiltViewModel()
+            }
+
+            GoalDetailScreen(
+                viewModel = goalViewModel,
+                goalId = detailRoute.goalId,
+                onBackClicked = { navController.popBackStack() }
             )
         }
 
@@ -273,6 +555,24 @@ fun AppNavHost(
                 onBackClicked = { navController.popBackStack() },
                 onEditClicked = { },
                 onDeleteClicked = { navController.popBackStack() }
+            )
+        }
+
+        composable<Category> {
+            CategoryScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable<ExpenseList> {
+            val expenseViewModel: ExpenseViewModel = hiltViewModel()
+            val expenseUiState by expenseViewModel.uiState.collectAsState()
+
+            ExpenseListScreen(
+                uiState = expenseUiState,
+                onSaveExpense = expenseViewModel::saveExpense,
+                onDeleteExpense = expenseViewModel::deleteExpense,
+                onClearError = expenseViewModel::clearError
             )
         }
 
@@ -292,6 +592,9 @@ fun AppNavHost(
                     onBack = incomeViewModel::closeIncomeEditor,
                     onSourceChanged = incomeViewModel::updateIncomeSource,
                     onAmountChanged = incomeViewModel::updateIncomeAmount,
+                    onCryptoSaleProceedsChanged = incomeViewModel::updateCryptoSaleProceeds,
+                    onCryptoCostBasisChanged = incomeViewModel::updateCryptoCostBasis,
+                    onCryptoFeesChanged = incomeViewModel::updateCryptoFees,
                     onDateChanged = incomeViewModel::updateIncomeDate,
                     onCurrencyChanged = incomeViewModel::updateIncomeCurrency,
                     onRateModeChanged = incomeViewModel::updateRateMode,
@@ -300,6 +603,7 @@ fun AppNavHost(
                     onManualRateDateChanged = incomeViewModel::updateManualRateDate,
                     onRefreshAutomaticRate = incomeViewModel::refreshAutomaticRate,
                     onProjectReferenceChanged = incomeViewModel::updateProjectReference,
+                    onReceivableChanged = incomeViewModel::updateReceivableId,
                     onAssetSymbolChanged = incomeViewModel::updateAssetSymbol,
                     onPnlDirectionChanged = incomeViewModel::updatePnlDirection,
                     onNoteChanged = incomeViewModel::updateIncomeNote,
@@ -338,6 +642,50 @@ fun AppNavHost(
                     canNavigateToNextMonth = nextMonth != null
                 )
             }
+        }
+
+        composable<ReceivableList> {
+            val viewModel: ReceivableViewModel = hiltViewModel()
+            val uiState by viewModel.uiState.collectAsState()
+            val formState by viewModel.formState.collectAsState()
+            ReceivableScreen(
+                uiState = uiState,
+                formState = formState,
+                onBack = { navController.popBackStack() },
+                onRetry = viewModel::retry,
+                onCreate = viewModel::openCreate,
+                onEdit = viewModel::openEdit,
+                onArchive = viewModel::setArchived,
+                onCloseForm = viewModel::closeForm,
+                onTitleChanged = viewModel::updateTitle,
+                onProjectChanged = viewModel::updateProject,
+                onAmountChanged = viewModel::updateAmount,
+                onCurrencyChanged = viewModel::updateCurrency,
+                onDateChanged = viewModel::updateDate,
+                onSave = viewModel::save
+            )
+        }
+
+        composable<RecurringCommitments> {
+            RecurringCommitmentsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenDueItems = { navController.navigate(DueItems) }
+            )
+        }
+
+        composable<DueItems> {
+            DueItemsScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable<FinancialSummaries> {
+            val dashboardViewModel: DashboardViewModel = hiltViewModel()
+            val summaryUiState by dashboardViewModel.financialSummaryState.collectAsState()
+
+            IncomeSpendingBreakdownScreen(
+                uiState = summaryUiState,
+                onPeriodSelected = dashboardViewModel::selectFinancialSummaryPeriod,
+                onBackClicked = { navController.popBackStack() }
+            )
         }
     }
 }

@@ -35,6 +35,23 @@ object MoneyConverter {
         )
     }
 
+    fun fromLkrNonNegative(
+        amountInput: String,
+        transactionDate: LocalDate
+    ): Result<Money> {
+        val amount = MoneyValidator.parseNonNegativeAmount(amountInput).getOrElse {
+            return Result.failure(it)
+        }
+        return buildMoney(
+            amount = amount,
+            currency = CurrencyCode.LKR,
+            rate = BigDecimal.ONE,
+            rateSource = RateSource.LKR_FIXED,
+            rateDate = transactionDate,
+            allowZero = true
+        )
+    }
+
     fun fromUsd(
         amountInput: String,
         rateLkrPerUsdInput: String,
@@ -89,12 +106,50 @@ object MoneyConverter {
         )
     }
 
+    fun fromUsdNonNegative(
+        amountInput: String,
+        rateLkrPerUsdInput: String,
+        rateSource: RateSource,
+        rateDate: LocalDate
+    ): Result<Money> {
+        if (
+            rateSource != RateSource.MANUAL_TRANSFER &&
+            rateSource != RateSource.MANUAL_REFERENCE &&
+            rateSource != RateSource.EXCHANGE_RATE_API_REFERENCE
+        ) {
+            return Result.failure(IllegalArgumentException("USD requires a supported exchange rate source"))
+        }
+
+        val amount = MoneyValidator.parseNonNegativeAmount(amountInput).getOrElse {
+            return Result.failure(it)
+        }
+        val rateText = rateLkrPerUsdInput.trim()
+        if (!ratePattern.matches(rateText)) {
+            return Result.failure(
+                IllegalArgumentException("Enter a valid exchange rate with up to 6 decimal places")
+            )
+        }
+        val rate = rateText.toBigDecimalOrNull()
+        if (rate == null || rate <= BigDecimal.ZERO) {
+            return Result.failure(IllegalArgumentException("Exchange rate must be greater than zero"))
+        }
+        return buildMoney(
+            amount = amount,
+            currency = CurrencyCode.USD,
+            rate = rate,
+            rateSource = rateSource,
+            rateDate = rateDate,
+            allowZero = true
+        )
+    }
+
     private fun buildMoney(
         amount: BigDecimal,
         currency: CurrencyCode,
         rate: BigDecimal,
         rateSource: RateSource,
-        rateDate: LocalDate
+        rateDate: LocalDate,
+        allowZero: Boolean = false
     ): Result<Money> {
 
         return runCatching {
@@ -105,8 +160,14 @@ object MoneyConverter {
                 .setScale(0, RoundingMode.HALF_UP)
                 .longValueExact()
 
-            require(baseAmountMinor > 0L) {
-                "Converted amount is too small to represent in LKR cents"
+            if (allowZero) {
+                require(baseAmountMinor >= 0L) {
+                    "Converted amount cannot be negative"
+                }
+            } else {
+                require(baseAmountMinor > 0L) {
+                    "Converted amount is too small to represent in LKR cents"
+                }
             }
 
             Money(

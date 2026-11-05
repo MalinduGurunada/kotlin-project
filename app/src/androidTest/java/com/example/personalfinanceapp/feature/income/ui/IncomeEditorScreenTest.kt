@@ -71,7 +71,9 @@ class IncomeEditorScreenTest {
         composeRule.onNodeWithTag("income-source").performClick()
         composeRule.onNodeWithTag("income-source-option-CRYPTO").performClick()
         composeRule.onAllNodesWithTag("income-project-reference").assertCountEquals(0)
-        composeRule.onNodeWithTag("income-pnl-direction").assertIsDisplayed()
+        composeRule.onNodeWithTag("crypto-sale-proceeds").assertIsDisplayed()
+        composeRule.onNodeWithTag("crypto-cost-basis").assertIsDisplayed()
+        composeRule.onNodeWithTag("crypto-fees").assertIsDisplayed()
         composeRule.onNodeWithTag("income-asset-symbol").assertIsDisplayed()
     }
 
@@ -81,15 +83,15 @@ class IncomeEditorScreenTest {
             addState().copy(
                 selectedSource = IncomeSource.CRYPTO,
                 errors = IncomeFormErrors(
-                    amount = "Amount cannot be empty",
-                    pnlDirection = "Select gain or loss",
+                    saleProceeds = "Sale proceeds cannot be empty",
+                    costBasis = "Cost basis cannot be empty",
                     form = "Check the income details"
                 )
             )
         )
 
-        composeRule.onNodeWithText("Amount cannot be empty").assertIsDisplayed()
-        composeRule.onNodeWithText("Select gain or loss").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Sale proceeds cannot be empty").assertIsDisplayed()
+        composeRule.onNodeWithText("Cost basis cannot be empty").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Check the income details").performScrollTo().assertIsDisplayed()
     }
 
@@ -323,6 +325,9 @@ class IncomeEditorScreenTest {
                         )
                     },
                     onAmountChanged = { state = state.copy(amountText = it) },
+                    onCryptoSaleProceedsChanged = { state = state.copy(saleProceedsText = it) },
+                    onCryptoCostBasisChanged = { state = state.copy(costBasisText = it) },
+                    onCryptoFeesChanged = { state = state.copy(feesText = it) },
                     onDateChanged = {
                         state = state.copy(transactionDate = it)
                         onTransactionDateChanged(it)
@@ -337,6 +342,7 @@ class IncomeEditorScreenTest {
                     },
                     onRefreshAutomaticRate = {},
                     onProjectReferenceChanged = { state = state.copy(projectReference = it) },
+                    onReceivableChanged = { state = state.copy(selectedReceivableId = it) },
                     onAssetSymbolChanged = { state = state.copy(assetSymbol = it) },
                     onPnlDirectionChanged = { state = state.copy(pnlDirection = it) },
                     onNoteChanged = { state = state.copy(note = it) },

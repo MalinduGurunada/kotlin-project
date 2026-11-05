@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">PersonalFinanceApp</string>
+    <string name="finance_review_channel_name">Finance reviews</string>
+    <string name="finance_review_channel_description">Prompts to review recent finance activity</string>
 </resources>

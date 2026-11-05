@@ -7,6 +7,28 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
+    // Financial collections require a freshly issued token carrying Firebase Auth's
+    // verified-email claim. The parent user document intentionally remains owner-only
+    // so registration/profile bootstrap is not blocked.
+    function isVerifiedOwner(userId) {
+      return isOwner(userId) && request.auth.token.email_verified == true;
+    }
+
+    function isValidFcmRegistrationData(data, userId) {
+      return data.keys().hasAll([
+               'schemaVersion', 'userId', 'installationId', 'platform', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'userId', 'installationId', 'platform', 'updatedAt'
+             ]) &&
+             data.schemaVersion is int && data.schemaVersion == 1 &&
+             data.userId is string && data.userId == userId &&
+             data.installationId is string &&
+             data.installationId.size() > 0 && data.installationId.size() <= 256 &&
+             data.platform == 'android' &&
+             data.updatedAt == request.time;
+    }
+
     // Helper function validating expense schema and preventing ownership forging
     function isValidExpenseData(data, userId) {
       return data.userId == userId &&
@@ -18,7 +40,87 @@ service cloud.firestore {
              data.baseAmountMinor >= 0 &&
              data.spendingClass in ['COMMITTED', 'DISCRETIONARY'] &&
              data.paymentChannel in ['CASH', 'CARD', 'BANK', 'OTHER'] &&
-             data.occurredDate is string;
+             data.occurredDate is string &&
+             (!('recurringExpenseId' in data) ||
+               data.recurringExpenseId == null ||
+               data.recurringExpenseId is string) &&
+             (!('recurringOccurrenceId' in data) ||
+               data.recurringOccurrenceId == null ||
+               data.recurringOccurrenceId is string);
+    }
+
+    function isValidRecurringExpenseData(data, userId, recurringId) {
+      return data.keys().hasAll([
+               'id', 'userId', 'title', 'categoryId', 'expectedAmountMinor',
+               'frequency', 'intervalCount', 'anchorDate', 'startDate',
+               'endDate', 'status', 'paymentChannel', 'channelLabel',
+               'reminderEnabled', 'reminderLeadDays'
+             ]) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'title', 'categoryId', 'expectedAmountMinor',
+               'frequency', 'intervalCount', 'anchorDate', 'startDate',
+               'endDate', 'status', 'paymentChannel', 'channelLabel',
+               'reminderEnabled', 'reminderLeadDays', 'reminderTimeMinutes'
+             ]) &&
+             data.id == recurringId &&
+             data.userId == userId &&
+             data.title is string && data.title.trim().size() > 0 && data.title.size() <= 80 &&
+             data.categoryId is string && data.categoryId.size() > 0 &&
+             exists(/databases/$(database)/documents/users/$(userId)/categories/$(data.categoryId)) &&
+             data.expectedAmountMinor is int && data.expectedAmountMinor > 0 &&
+             data.frequency in ['WEEKLY', 'MONTHLY', 'YEARLY'] &&
+             data.intervalCount is int && data.intervalCount > 0 && data.intervalCount <= 120 &&
+             isIsoDate(data.anchorDate) &&
+             isIsoDate(data.startDate) &&
+             (data.endDate == null || isIsoDate(data.endDate)) &&
+             data.status in ['ACTIVE', 'PAUSED', 'CANCELLED'] &&
+             data.paymentChannel in ['CASH', 'CARD', 'BANK', 'OTHER'] &&
+             (data.channelLabel == null || data.channelLabel is string) &&
+             data.reminderEnabled is bool &&
+             data.reminderLeadDays is int &&
+             data.reminderLeadDays >= 0 && data.reminderLeadDays <= 365 &&
+             (!('reminderTimeMinutes' in data) ||
+               (data.reminderTimeMinutes is int &&
+                data.reminderTimeMinutes >= 0 &&
+                data.reminderTimeMinutes < 1440));
+    }
+
+    function isValidRecurringOccurrenceData(data, userId, occurrenceId) {
+      return data.keys().hasAll([
+               'id', 'userId', 'recurringExpenseId', 'dueDate',
+               'status', 'expenseId', 'actionAt'
+             ]) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'recurringExpenseId', 'dueDate',
+               'status', 'expenseId', 'actionAt'
+             ]) &&
+             data.id == occurrenceId &&
+             data.userId == userId &&
+             data.recurringExpenseId is string && data.recurringExpenseId.size() > 0 &&
+             isIsoDate(data.dueDate) &&
+             occurrenceId == data.recurringExpenseId + '_' + data.dueDate &&
+             exists(/databases/$(database)/documents/users/$(userId)/recurringExpenses/$(data.recurringExpenseId)) &&
+             data.status in ['CONFIRMED', 'SKIPPED'] &&
+             data.actionAt is timestamp &&
+             ((data.status == 'CONFIRMED' &&
+               data.expenseId == 'recurring_' + occurrenceId &&
+               existsAfter(/databases/$(database)/documents/users/$(userId)/expenses/$(data.expenseId)) &&
+               getAfter(/databases/$(database)/documents/users/$(userId)/expenses/$(data.expenseId)).data.recurringExpenseId == data.recurringExpenseId &&
+               getAfter(/databases/$(database)/documents/users/$(userId)/expenses/$(data.expenseId)).data.recurringOccurrenceId == occurrenceId) ||
+              (data.status == 'SKIPPED' && data.expenseId == null));
+    }
+
+    // Category documents use the exact field set written by FirestoreCategoryRepository.
+    function isValidCategoryData(data, categoryId) {
+      return data.keys().hasAll(['id', 'name', 'defaultSpendingClass', 'archived']) &&
+             data.keys().hasOnly(['id', 'name', 'defaultSpendingClass', 'archived']) &&
+             data.id is string &&
+             data.id == categoryId &&
+             data.name is string &&
+             data.name.trim().size() > 0 &&
+             data.name.size() <= 50 &&
+             data.defaultSpendingClass in ['COMMITTED', 'DISCRETIONARY'] &&
+             data.archived is bool;
     }
 
     // Income documents use the exact v1 field set emitted by IncomeFirestoreMapper.
@@ -42,6 +144,7 @@ service cloud.firestore {
                'projectReference',
                'receivableId',
                'assetSymbol',
+               'cryptoRealizedDetails',
                'note'
              ]);
     }
@@ -55,6 +158,11 @@ service cloud.firestore {
       return value is string &&
              value.trim().matches('[0-9]+([.][0-9]{1,2})?') &&
              !value.trim().matches('0+([.]0{1,2})?');
+    }
+
+    function isNonNegativeAmountDecimal(value) {
+      return value is string &&
+             value.trim().matches('[0-9]+([.][0-9]{1,2})?');
     }
 
     function isPositiveRateDecimal(value) {
@@ -93,11 +201,11 @@ service cloud.firestore {
     }
 
     function hasValidMoneyTypes(money) {
-      return isPositiveAmountDecimal(money.originalAmountDecimal) &&
+      return isNonNegativeAmountDecimal(money.originalAmountDecimal) &&
              money.originalCurrency is string &&
              money.rateLkrPerUnitDecimal is string &&
              money.baseAmountMinor is int &&
-             money.baseAmountMinor > 0 &&
+             money.baseAmountMinor >= 0 &&
              money.rateSource is string &&
              isIsoDate(money.rateDate);
     }
@@ -120,20 +228,82 @@ service cloud.firestore {
       return (!('projectReference' in data) || data.projectReference is string) &&
              (!('receivableId' in data) || data.receivableId is string) &&
              (!('assetSymbol' in data) || data.assetSymbol is string) &&
+             (!('cryptoRealizedDetails' in data) || data.cryptoRealizedDetails is map) &&
              (!('note' in data) || data.note is string);
+    }
+
+    function hasValidCryptoRealizedDetails(data) {
+      return !('cryptoRealizedDetails' in data) ||
+             (data.source == 'CRYPTO' &&
+              data.entryKind == 'REALIZED_PNL' &&
+              data.cryptoRealizedDetails.keys().hasAll([
+                'costBasisOriginalDecimal',
+                'saleProceedsOriginalDecimal',
+                'feesOriginalDecimal'
+              ]) &&
+              data.cryptoRealizedDetails.keys().hasOnly([
+                'costBasisOriginalDecimal',
+                'saleProceedsOriginalDecimal',
+                'feesOriginalDecimal'
+              ]) &&
+              isNonNegativeAmountDecimal(data.cryptoRealizedDetails.costBasisOriginalDecimal) &&
+              isNonNegativeAmountDecimal(data.cryptoRealizedDetails.saleProceedsOriginalDecimal) &&
+              isNonNegativeAmountDecimal(data.cryptoRealizedDetails.feesOriginalDecimal));
     }
 
     function hasValidIncomeKind(data) {
       return (data.source == 'CRYPTO' &&
               data.entryKind == 'REALIZED_PNL' &&
               'pnlDirection' in data &&
-              data.pnlDirection in ['GAIN', 'LOSS']) ||
+              data.pnlDirection in ['GAIN', 'LOSS', 'BREAK_EVEN'] &&
+              (data.money.baseAmountMinor > 0 ||
+               ('cryptoRealizedDetails' in data &&
+                data.pnlDirection == 'BREAK_EVEN' &&
+                data.money.baseAmountMinor == 0))) ||
              (data.source in ['SALARY', 'FREELANCE', 'ADSENSE'] &&
               data.entryKind == 'RECEIPT' &&
-              !('pnlDirection' in data));
+              !('pnlDirection' in data) &&
+              !('cryptoRealizedDetails' in data) &&
+              data.money.baseAmountMinor > 0);
     }
 
-    function isValidIncomeData(data, incomeId) {
+    function hasValidReceivableFields(data) {
+      return data.keys().hasAll([
+               'schemaVersion', 'id', 'title', 'projectReference',
+               'expectedOriginalDecimal', 'currency', 'expectedDate', 'archived'
+             ]) &&
+             data.keys().hasOnly([
+               'schemaVersion', 'id', 'title', 'projectReference',
+               'expectedOriginalDecimal', 'currency', 'expectedDate', 'archived'
+             ]);
+    }
+
+    function isValidReceivableData(data, receivableId) {
+      return hasValidReceivableFields(data) &&
+             data.schemaVersion is int &&
+             data.schemaVersion == 1 &&
+             data.id is string && data.id == receivableId &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+             data.projectReference is string &&
+             data.projectReference.size() > 0 && data.projectReference.size() <= 200 &&
+             isPositiveAmountDecimal(data.expectedOriginalDecimal) &&
+             data.currency in ['LKR', 'USD'] &&
+             isIsoDate(data.expectedDate) &&
+             data.archived is bool;
+    }
+
+    function hasValidReceivableLink(data, userId) {
+      return !('receivableId' in data) ||
+             (data.receivableId is string &&
+              data.receivableId.size() > 0 &&
+              data.source == 'FREELANCE' &&
+              data.entryKind == 'RECEIPT' &&
+              exists(/databases/$(database)/documents/users/$(userId)/receivables/$(data.receivableId)) &&
+              get(/databases/$(database)/documents/users/$(userId)/receivables/$(data.receivableId)).data.archived == false &&
+              get(/databases/$(database)/documents/users/$(userId)/receivables/$(data.receivableId)).data.currency == data.money.originalCurrency);
+    }
+
+    function isValidIncomeData(data, userId, incomeId) {
       return hasValidIncomeFields(data) &&
              data.schemaVersion is int &&
              data.schemaVersion == 1 &&
@@ -146,9 +316,15 @@ service cloud.firestore {
              isIsoDate(data.occurredDate) &&
              hasValidMoneyFields(data.money) &&
              hasValidMoneyTypes(data.money) &&
+             (isPositiveAmountDecimal(data.money.originalAmountDecimal) ||
+              ('cryptoRealizedDetails' in data &&
+               data.pnlDirection == 'BREAK_EVEN' &&
+               data.money.originalAmountDecimal.matches('0+([.]0{1,2})?'))) &&
              hasValidCurrencyAndRate(data) &&
              hasValidOptionalIncomeTypes(data) &&
-             hasValidIncomeKind(data);
+             hasValidIncomeKind(data) &&
+             hasValidCryptoRealizedDetails(data) &&
+             hasValidReceivableLink(data, userId);
     }
 
     function isValidGoalData(data, goalId) {
@@ -263,30 +439,83 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, write: if isOwner(userId);
 
+      // FCM installation registrations are write-only to their authenticated owner. A trusted
+      // backend uses Admin SDK access when sending and is not governed by these rules.
+      match /fcmRegistrations/{registrationId} {
+        allow create, update: if isVerifiedOwner(userId) &&
+                              isValidFcmRegistrationData(request.resource.data, userId);
+        // Sign-out cleanup must remain available before email verification. The path is
+        // still UID scoped, and clients cannot read or list registration documents.
+        allow delete: if isOwner(userId);
+        allow get, list: if false;
+      }
+
       // Scoped expenses collection for signed-in user
       match /expenses/{expenseId} {
-        allow read, delete: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidExpenseData(request.resource.data, userId);
+        allow read, delete: if isVerifiedOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) && isValidExpenseData(request.resource.data, userId);
+      }
+
+      // Recurring templates are retained when paused or cancelled.
+      match /recurringExpenses/{recurringId} {
+        allow get, list: if isVerifiedOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) &&
+                              isValidRecurringExpenseData(
+                                request.resource.data,
+                                userId,
+                                recurringId
+                              );
+        allow delete: if false;
+      }
+
+      // Only confirmed and skipped actions are persisted; pending dates are derived.
+      match /recurringOccurrences/{occurrenceId} {
+        allow get, list: if isVerifiedOwner(userId);
+        allow create: if isVerifiedOwner(userId) &&
+                      isValidRecurringOccurrenceData(
+                        request.resource.data,
+                        userId,
+                        occurrenceId
+                      );
+        allow update, delete: if false;
+      }
+
+      // UID-scoped expense categories. Categories are archived, never deleted.
+      match /categories/{categoryId} {
+        allow get, list: if isVerifiedOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) &&
+                              isValidCategoryData(request.resource.data, categoryId);
+        allow delete: if false;
       }
 
       // UID-scoped income reads and complete-schema writes.
       match /incomes/{incomeId} {
-        allow get, list: if isOwner(userId);
-        allow create, update: if isOwner(userId) &&
-                              isValidIncomeData(request.resource.data, incomeId);
-        allow delete: if isOwner(userId);
+        allow get, list: if isVerifiedOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) &&
+                              isValidIncomeData(request.resource.data, userId, incomeId);
+        allow delete: if isVerifiedOwner(userId);
+      }
+
+      match /receivables/{receivableId} {
+        allow get, list: if isVerifiedOwner(userId);
+        allow create: if isVerifiedOwner(userId) &&
+                         isValidReceivableData(request.resource.data, receivableId);
+        allow update: if isVerifiedOwner(userId) &&
+                         isValidReceivableData(request.resource.data, receivableId) &&
+                         request.resource.data.currency == resource.data.currency;
+        allow delete: if false;
       }
 
       // UID-scoped goals and immutable contribution ledger entries.
       match /goals/{goalId} {
-        allow get, list: if isOwner(userId);
-        allow create, update: if isOwner(userId) &&
+        allow get, list: if isVerifiedOwner(userId);
+        allow create, update: if isVerifiedOwner(userId) &&
                               isValidGoalData(request.resource.data, goalId);
         allow delete: if false;
 
         match /contributions/{contributionId} {
-          allow get, list: if isOwner(userId);
-          allow create: if isOwner(userId) &&
+          allow get, list: if isVerifiedOwner(userId);
+          allow create: if isVerifiedOwner(userId) &&
                         isValidContributionData(
                           request.resource.data,
                           userId,
@@ -297,8 +526,8 @@ service cloud.firestore {
         }
 
         match /reversalClaims/{originalId} {
-          allow get: if isOwner(userId);
-          allow create: if isOwner(userId) &&
+          allow get: if isVerifiedOwner(userId);
+          allow create: if isVerifiedOwner(userId) &&
                         isValidReversalClaim(
                           request.resource.data,
                           userId,

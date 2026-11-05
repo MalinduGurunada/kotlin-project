@@ -71,6 +71,16 @@ class FakeCategoryRepository : CategoryRepository {
     override suspend fun renameCategory(
         id: DocumentId,
         newName: String
+    ): Result<Unit> {
+        val currentCategory = categories.value.firstOrNull { it.id == id }
+            ?: return Result.failure(NoSuchElementException("Category not found"))
+        return updateCategory(id, newName, currentCategory.defaultSpendingClass)
+    }
+
+    override suspend fun updateCategory(
+        id: DocumentId,
+        newName: String,
+        spendingClass: SpendingClass
     ): Result<Unit> = mutex.withLock {
 
         val name = newName.trim()
@@ -97,7 +107,11 @@ class FakeCategoryRepository : CategoryRepository {
         }
 
         categories.value = current.map {
-            if (it.id == id) it.copy(name = name) else it
+            if (it.id == id) {
+                it.copy(name = name, defaultSpendingClass = spendingClass)
+            } else {
+                it
+            }
         }
 
         Result.success(Unit)

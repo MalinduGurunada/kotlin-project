@@ -4,6 +4,7 @@ import com.example.personalfinanceapp.core.model.DocumentId
 import com.example.personalfinanceapp.core.model.Income
 import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.feature.auth.AuthRepository
+import com.example.personalfinanceapp.feature.receivable.ReceivableRepository
 import com.google.android.gms.tasks.Task
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -21,10 +22,10 @@ import javax.inject.Inject
 class FirestoreIncomeRepository internal constructor(
     private val authRepository: AuthRepository,
     private val observer: IncomeFirestoreObserver,
-    private val writeGateway: IncomeFirestoreWriteGateway
+    private val writeGateway: IncomeFirestoreWriteGateway,
+    private val receivableRepository: ReceivableRepository? = null
 ) : IncomeRepository {
 
-    @Inject
     constructor(
         authRepository: AuthRepository,
         firestore: FirebaseFirestore
@@ -32,6 +33,18 @@ class FirestoreIncomeRepository internal constructor(
         authRepository = authRepository,
         observer = IncomeFirestoreObserver(authRepository, firestore),
         writeGateway = FirebaseIncomeFirestoreWriteGateway(firestore)
+    )
+
+    @Inject
+    constructor(
+        authRepository: AuthRepository,
+        firestore: FirebaseFirestore,
+        receivableRepository: ReceivableRepository
+    ) : this(
+        authRepository = authRepository,
+        observer = IncomeFirestoreObserver(authRepository, firestore),
+        writeGateway = FirebaseIncomeFirestoreWriteGateway(firestore),
+        receivableRepository = receivableRepository
     )
 
     override fun observeIncomes(
@@ -73,6 +86,22 @@ class FirestoreIncomeRepository internal constructor(
         if (expectedOwnerId != null) {
             check(authenticatedUid == expectedOwnerId) {
                 "Authenticated user changed before income could be saved"
+            }
+        }
+
+        income.receivableId?.let { receivableId ->
+            receivableRepository?.let { repository ->
+                require(income.source == com.example.personalfinanceapp.core.model.IncomeSource.FREELANCE &&
+                    income.entryKind == com.example.personalfinanceapp.core.model.IncomeEntryKind.RECEIPT
+                ) { "Only freelance receipts can be linked to a receivable" }
+                val receivable = repository.getReceivableForOwner(authenticatedUid, receivableId).getOrThrow()
+                require(!receivable.archived) { "Archived receivables cannot accept new payments" }
+                require(receivable.currency == income.money.originalCurrency) {
+                    "Income currency must match the linked receivable"
+                }
+                check(requireAuthenticatedUid() == authenticatedUid) {
+                    "Authenticated user changed before linked income could be saved"
+                }
             }
         }
 

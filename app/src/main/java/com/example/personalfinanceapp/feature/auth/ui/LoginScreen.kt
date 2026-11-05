@@ -37,6 +37,7 @@ fun LoginScreen(
     onEmailChanged: (String) -> Unit,
     onPasswordChanged: (String) -> Unit,
     onLoginClicked: () -> Unit,
+    onGoogleSignInClicked: () -> Unit,
     onNavigateToRegister: () -> Unit,
     onNavigateToPasswordReset: () -> Unit
 ) {
@@ -90,7 +91,8 @@ fun LoginScreen(
                                 keyboardType = KeyboardType.Email,
                                 imeAction = ImeAction.Next
                             ),
-                            leadingIcon = AuthFieldIcon.Email
+                            leadingIcon = AuthFieldIcon.Email,
+                            enabled = !uiState.isLoading && !uiState.isGoogleLoading
                         )
                         AuthTextField(
                             value = uiState.passwordInput,
@@ -102,6 +104,7 @@ fun LoginScreen(
                                 imeAction = ImeAction.Done
                             ),
                             leadingIcon = AuthFieldIcon.Lock,
+                            enabled = !uiState.isLoading && !uiState.isGoogleLoading,
                             visualTransformation = if (passwordVisible) {
                                 VisualTransformation.None
                             } else {
@@ -139,7 +142,21 @@ fun LoginScreen(
                         text = "Sign in",
                         onClick = onLoginClicked,
                         isLoading = uiState.isLoading,
-                        modifier = Modifier.padding(top = 20.dp)
+                        modifier = Modifier.padding(top = 20.dp),
+                        enabled = !uiState.isGoogleLoading
+                    )
+
+                    Text(
+                        text = "or",
+                        color = AuthColors.TextMuted,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+
+                    AuthGoogleButton(
+                        onClick = onGoogleSignInClicked,
+                        isLoading = uiState.isGoogleLoading,
+                        enabled = !uiState.isLoading
                     )
                 }
             }
@@ -169,6 +186,7 @@ private fun LoginScreenPreview() {
             onEmailChanged = {},
             onPasswordChanged = {},
             onLoginClicked = {},
+            onGoogleSignInClicked = {},
             onNavigateToRegister = {},
             onNavigateToPasswordReset = {}
         )

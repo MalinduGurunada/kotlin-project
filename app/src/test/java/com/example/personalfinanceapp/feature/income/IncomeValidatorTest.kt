@@ -1,6 +1,7 @@
 package com.example.personalfinanceapp.feature.income
 
 import com.example.personalfinanceapp.core.model.CurrencyCode
+import com.example.personalfinanceapp.core.model.CryptoRealizedDetails
 import com.example.personalfinanceapp.core.model.Income
 import com.example.personalfinanceapp.core.model.IncomeEntryKind
 import com.example.personalfinanceapp.core.model.IncomeSource
@@ -204,6 +205,16 @@ class IncomeValidatorTest {
         )
 
         assertTrue(IncomeValidator.validate(income).isSuccess)
+    }
+
+    @Test
+    fun rejectsReceivableLinkOnNonFreelanceIncome() {
+        assertFailureMessage(
+            income = createIncome(source = IncomeSource.SALARY).copy(
+                receivableId = "receivable-001"
+            ),
+            expectedMessage = "Only freelance receipts can be linked to a receivable"
+        )
     }
 
     @Test
@@ -481,6 +492,27 @@ class IncomeValidatorTest {
         assertFailureMessage(
             income,
             "Converted amount is too small to represent in LKR cents"
+        )
+    }
+
+    @Test
+    fun acceptsStructuredBreakEvenAndRejectsTamperedDerivedResult() {
+        val valid = Income(
+            id = "crypto-zero",
+            source = IncomeSource.CRYPTO,
+            entryKind = IncomeEntryKind.REALIZED_PNL,
+            money = MoneyConverter.fromLkrNonNegative("0", occurredDate).getOrThrow(),
+            occurredDate = occurredDate,
+            pnlDirection = PnlDirection.BREAK_EVEN,
+            cryptoRealizedDetails = CryptoRealizedDetails("600", "600", "0")
+        )
+
+        assertTrue(IncomeValidator.validate(valid).isSuccess)
+        assertFailureMessage(
+            valid.copy(
+                money = MoneyConverter.fromLkrNonNegative("1", occurredDate).getOrThrow()
+            ),
+            "Crypto realised result amount does not match proceeds, cost basis, and fees"
         )
     }
 }

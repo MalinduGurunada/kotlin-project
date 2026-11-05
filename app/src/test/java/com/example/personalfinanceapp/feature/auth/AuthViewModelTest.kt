@@ -27,6 +27,7 @@ class AuthViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var fakeAuthRepository: FakeAuthRepository
     private lateinit var pendingStore: InMemoryPendingRegistrationStore
+    private lateinit var sessionCleanup: RecordingSessionCleanup
     private lateinit var viewModel: AuthViewModel
 
     @Before
@@ -34,7 +35,8 @@ class AuthViewModelTest {
         Dispatchers.setMain(testDispatcher)
         fakeAuthRepository = FakeAuthRepository()
         pendingStore = InMemoryPendingRegistrationStore()
-        viewModel = AuthViewModel(fakeAuthRepository, pendingStore)
+        sessionCleanup = RecordingSessionCleanup()
+        viewModel = AuthViewModel(fakeAuthRepository, pendingStore, sessionCleanup)
     }
 
     @After
@@ -87,6 +89,24 @@ class AuthViewModelTest {
     }
 
     @Test
+    fun existingUnverifiedPasswordUserIsBlockedAfterRestart() = runTest {
+        val repository = FakeAuthRepository(
+            initialUserId = "unverified-user",
+            initialEmail = "pending@example.com",
+            initialEmailVerified = false
+        )
+        val restartedViewModel = AuthViewModel(repository, pendingStore)
+
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            AuthNavigationState.EmailVerificationRequired("unverified-user"),
+            restartedViewModel.navigationState.value
+        )
+        assertEquals("pending@example.com", restartedViewModel.emailVerificationUiState.value.email)
+    }
+
+    @Test
     fun loginSuccessUpdatesAuthState() = runTest {
         viewModel.onLoginEmailChanged("user@example.com")
         viewModel.onLoginPasswordChanged("password123")
@@ -98,6 +118,72 @@ class AuthViewModelTest {
         assertEquals("user_user_at_example_com", userId)
         assertEquals(
             AuthNavigationState.Authenticated(userId!!),
+            viewModel.navigationState.value
+        )
+    }
+
+    @Test
+    fun googleLoginSuccessAuthenticatesAndDuplicateRequestsAreIgnored() = runTest {
+        val requestId = viewModel.beginGoogleSignIn()
+        assertTrue(requestId != null)
+        assertNull(viewModel.beginGoogleSignIn())
+
+        viewModel.completeGoogleSignIn(requestId!!, "google-id-token")
+        viewModel.completeGoogleSignIn(requestId, "duplicate-token")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, fakeAuthRepository.googleLoginCallCount)
+        assertEquals("google-user", fakeAuthRepository.currentUserId())
+        assertEquals(
+            AuthNavigationState.Authenticated("google-user"),
+            viewModel.navigationState.value
+        )
+    }
+
+    @Test
+    fun googleLoginCancellationRestoresIdleStateWithoutError() = runTest {
+        val requestId = viewModel.beginGoogleSignIn()!!
+
+        viewModel.cancelGoogleSignIn(requestId)
+
+        assertFalse(viewModel.loginUiState.value.isGoogleLoading)
+        assertNull(viewModel.loginUiState.value.errorMessage)
+        assertEquals(0, fakeAuthRepository.googleLoginCallCount)
+    }
+
+    @Test
+    fun googleLoginFailureShowsSafeErrorAndEmailLoginStillWorks() = runTest {
+        fakeAuthRepository.shouldFailGoogleLogin = true
+        val requestId = viewModel.beginGoogleSignIn()!!
+        viewModel.completeGoogleSignIn(requestId, "rejected-token")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "Google sign-in failed. Please try again.",
+            viewModel.loginUiState.value.errorMessage
+        )
+        fakeAuthRepository.shouldFailGoogleLogin = false
+        viewModel.onLoginEmailChanged("user@example.com")
+        viewModel.onLoginPasswordChanged("password123")
+        viewModel.login()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("user_user_at_example_com", fakeAuthRepository.currentUserId())
+    }
+
+    @Test
+    fun staleGoogleCallbackAfterAccountSwitchCannotReplaceCurrentAccount() = runTest {
+        val requestId = viewModel.beginGoogleSignIn()!!
+        fakeAuthRepository.simulateAccountSwitch("other-user", "other@example.com")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.completeGoogleSignIn(requestId, "stale-token")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(0, fakeAuthRepository.googleLoginCallCount)
+        assertEquals("other-user", fakeAuthRepository.currentUserId())
+        assertEquals(
+            AuthNavigationState.Authenticated("other-user"),
             viewModel.navigationState.value
         )
     }
@@ -117,7 +203,7 @@ class AuthViewModelTest {
     }
 
     @Test
-    fun normalRegistrationPersistsNameAndClearsPendingMarker() = runTest {
+    fun normalRegistrationPersistsNameSendsVerificationAndBlocksFinancialFeatures() = runTest {
         fillValidRegistration(fullName = "  New User  ")
 
         viewModel.register()
@@ -126,10 +212,202 @@ class AuthViewModelTest {
         val userId = fakeAuthRepository.observeAuthState().first()
         assertEquals("user_newuser_at_example_com", userId)
         assertEquals("New User", fakeAuthRepository.displayName)
+        assertEquals("New User", fakeAuthRepository.currentUserSnapshot()?.displayName)
+        assertEquals(PendingRegistrationState.Absent, pendingStore.read())
+        assertEquals(1, fakeAuthRepository.verificationEmailCallCount)
+        assertEquals(
+            AuthNavigationState.EmailVerificationRequired(userId!!),
+            viewModel.navigationState.value
+        )
+    }
+
+    @Test
+    fun checkStatusRefreshesUserAndTokenBeforeUnlockingFeatures() = runTest {
+        val repository = FakeAuthRepository(
+            initialUserId = "unverified-user",
+            initialEmail = "pending@example.com",
+            initialEmailVerified = false
+        )
+        val postVerificationSync = RecordingPostVerificationSync()
+        val restartedViewModel = AuthViewModel(
+            authRepository = repository,
+            pendingRegistrationStore = pendingStore,
+            authPostVerificationSync = postVerificationSync
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        restartedViewModel.checkVerificationStatus()
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals(
+            "Your email is not verified yet. Open the email link, then check again.",
+            restartedViewModel.emailVerificationUiState.value.errorMessage
+        )
+
+        repository.markEmailVerified()
+        restartedViewModel.checkVerificationStatus()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(2, repository.verificationRefreshCallCount)
+        assertEquals(listOf("unverified-user"), postVerificationSync.syncedUserIds)
+        assertEquals(
+            AuthNavigationState.Authenticated("unverified-user"),
+            restartedViewModel.navigationState.value
+        )
+    }
+
+    @Test
+    fun tokenRefreshFailureKeepsUserGatedAndDoesNotRetryFcmSync() = runTest {
+        val repository = FakeAuthRepository(
+            initialUserId = "unverified-user",
+            initialEmail = "pending@example.com",
+            initialEmailVerified = false
+        ).apply {
+            shouldFailVerificationRefresh = true
+        }
+        val postVerificationSync = RecordingPostVerificationSync()
+        val restartedViewModel = AuthViewModel(
+            authRepository = repository,
+            pendingRegistrationStore = pendingStore,
+            authPostVerificationSync = postVerificationSync
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        restartedViewModel.checkVerificationStatus()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(postVerificationSync.syncedUserIds.isEmpty())
+        assertEquals(
+            AuthNavigationState.EmailVerificationRequired("unverified-user"),
+            restartedViewModel.navigationState.value
+        )
+        assertEquals(
+            "We couldn't check your status. Check your connection and try again.",
+            restartedViewModel.emailVerificationUiState.value.errorMessage
+        )
+    }
+
+    @Test
+    fun unverifiedUserCanSignOut() = runTest {
+        val repository = FakeAuthRepository(
+            initialUserId = "unverified-user",
+            initialEmail = "pending@example.com",
+            initialEmailVerified = false
+        )
+        val restartedViewModel = AuthViewModel(repository, pendingStore)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        restartedViewModel.signOut()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(repository.currentUserId())
+        assertEquals(
+            AuthNavigationState.Unauthenticated,
+            restartedViewModel.navigationState.value
+        )
+    }
+
+    @Test
+    fun actualSignOutFailureIsShownToUnverifiedUser() = runTest {
+        val repository = FakeAuthRepository(
+            initialUserId = "unverified-user",
+            initialEmail = "pending@example.com",
+            initialEmailVerified = false
+        ).apply {
+            shouldFailSignOut = true
+        }
+        val restartedViewModel = AuthViewModel(repository, pendingStore)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        restartedViewModel.signOut()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("unverified-user", repository.currentUserId())
+        assertEquals(
+            AuthNavigationState.EmailVerificationRequired("unverified-user"),
+            restartedViewModel.navigationState.value
+        )
+        assertEquals(
+            "Unable to sign out. Please try again.",
+            restartedViewModel.signOutErrorMessage.value
+        )
+
+        restartedViewModel.clearSignOutError()
+        assertNull(restartedViewModel.signOutErrorMessage.value)
+    }
+
+    @Test
+    fun resendRateLimitIsRecoverableAndDoesNotUnlockFeatures() = runTest {
+        val repository = FakeAuthRepository(
+            initialUserId = "unverified-user",
+            initialEmail = "pending@example.com",
+            initialEmailVerified = false
+        ).apply {
+            shouldFailVerificationEmail = true
+        }
+        val restartedViewModel = AuthViewModel(repository, pendingStore)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        restartedViewModel.resendVerificationEmail()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, repository.verificationEmailCallCount)
+        assertEquals(
+            "Too many verification emails were requested. Please wait before trying again.",
+            restartedViewModel.emailVerificationUiState.value.errorMessage
+        )
+        assertEquals(
+            AuthNavigationState.EmailVerificationRequired("unverified-user"),
+            restartedViewModel.navigationState.value
+        )
+    }
+
+    @Test
+    fun initialVerificationEmailFailureKeepsRegistrationRecoverable() = runTest {
+        fakeAuthRepository.shouldFailVerificationEmail = true
+        fillValidRegistration()
+
+        viewModel.register()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val userId = fakeAuthRepository.currentUserId()!!
         assertEquals(PendingRegistrationState.Absent, pendingStore.read())
         assertEquals(
-            AuthNavigationState.Authenticated(userId!!),
+            AuthNavigationState.EmailVerificationRequired(userId),
             viewModel.navigationState.value
+        )
+        assertEquals(
+            "Too many verification emails were requested. Please wait before trying again.",
+            viewModel.emailVerificationUiState.value.errorMessage
+        )
+    }
+
+    @Test
+    fun accountSwitchLeavesOldVerificationActionsUnableToAffectNewAccount() = runTest {
+        val repository = FakeAuthRepository(
+            initialUserId = "unverified-user",
+            initialEmail = "pending@example.com",
+            initialEmailVerified = false
+        )
+        val postVerificationSync = RecordingPostVerificationSync()
+        val restartedViewModel = AuthViewModel(
+            authRepository = repository,
+            pendingRegistrationStore = pendingStore,
+            authPostVerificationSync = postVerificationSync
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        repository.simulateAccountSwitch("verified-user", "verified@example.com")
+        testDispatcher.scheduler.advanceUntilIdle()
+        restartedViewModel.resendVerificationEmail()
+        restartedViewModel.checkVerificationStatus()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(0, repository.verificationEmailCallCount)
+        assertEquals(0, repository.verificationRefreshCallCount)
+        assertTrue(postVerificationSync.syncedUserIds.isEmpty())
+        assertEquals(
+            AuthNavigationState.Authenticated("verified-user"),
+            restartedViewModel.navigationState.value
         )
     }
 
@@ -347,6 +625,25 @@ class AuthViewModelTest {
     }
 
     @Test
+    fun reminderCleanupFailureDoesNotPreventSignOut() = runTest {
+        sessionCleanup.failure = IllegalStateException("cleanup failed")
+        viewModel.onLoginEmailChanged("user@example.com")
+        viewModel.onLoginPasswordChanged("password123")
+        viewModel.login()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.signOut()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(fakeAuthRepository.observeAuthState().first())
+        assertEquals(listOf("user_user_at_example_com"), sessionCleanup.clearedUserIds)
+        assertEquals(
+            AuthNavigationState.Unauthenticated,
+            viewModel.navigationState.value
+        )
+    }
+
+    @Test
     fun passwordResetSuccessUpdatesState() = runTest {
         viewModel.onResetEmailChanged("user@example.com")
         viewModel.sendPasswordReset()
@@ -381,6 +678,7 @@ class AuthViewModelTest {
             AuthNavigationState.Unauthenticated,
             viewModel.navigationState.value
         )
+        assertEquals(listOf("user_user_at_example_com"), sessionCleanup.clearedUserIds)
     }
 
     @Test
@@ -879,6 +1177,24 @@ class AuthViewModelTest {
 
         fun validRegistration(): PendingRegistration? {
             return (read() as? PendingRegistrationState.Valid)?.registration
+        }
+    }
+
+    private class RecordingSessionCleanup : AuthPostSignOutCleanup {
+        val clearedUserIds = mutableListOf<String>()
+        var failure: Exception? = null
+
+        override suspend fun clearForUser(userId: String): Result<Unit> {
+            clearedUserIds += userId
+            return failure?.let { Result.failure(it) } ?: Result.success(Unit)
+        }
+    }
+
+    private class RecordingPostVerificationSync : AuthPostVerificationSync {
+        val syncedUserIds = mutableListOf<String>()
+
+        override fun sync(userId: String) {
+            syncedUserIds += userId
         }
     }
 

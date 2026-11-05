@@ -7,6 +7,7 @@ import com.example.personalfinanceapp.core.model.IncomeEntryKind
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.RateSource
+import com.example.personalfinanceapp.core.model.Receivable
 import com.example.personalfinanceapp.core.model.UserId
 import com.example.personalfinanceapp.core.money.MoneyConverter
 import com.example.personalfinanceapp.feature.auth.AuthRepository
@@ -18,6 +19,7 @@ import com.example.personalfinanceapp.feature.income.IncomeRepository
 import com.example.personalfinanceapp.feature.income.IncomeObservationSnapshot
 import com.example.personalfinanceapp.feature.income.rate.IncomeManualRateSource
 import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionMode
+import com.example.personalfinanceapp.feature.receivable.FakeReceivableRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -59,6 +61,7 @@ class IncomeFormViewModelTest {
     private lateinit var repository: SavingIncomeRepository
     private lateinit var authRepository: FormAuthRepository
     private lateinit var exchangeRateRepository: FormExchangeRateRepository
+    private lateinit var receivableRepository: FakeReceivableRepository
     private lateinit var viewModel: IncomeViewModel
 
     @Before
@@ -67,11 +70,13 @@ class IncomeFormViewModelTest {
         repository = SavingIncomeRepository()
         authRepository = FormAuthRepository(USER_A)
         exchangeRateRepository = FormExchangeRateRepository()
+        receivableRepository = FakeReceivableRepository(USER_A)
         viewModel = IncomeViewModel(
             repository,
             authRepository,
             exchangeRateRepository,
-            clock
+            clock,
+            receivableRepository
         )
         dispatcher.scheduler.runCurrent()
     }
@@ -149,12 +154,13 @@ class IncomeFormViewModelTest {
     }
 
     @Test
-    fun `crypto gain uses realized PNL entry kind and asset`() = runTest {
+    fun `crypto gain is derived from proceeds basis and fees`() = runTest {
         openNewDraft()
         viewModel.updateIncomeSource(IncomeSource.CRYPTO)
-        viewModel.updatePnlDirection(PnlDirection.GAIN)
         viewModel.updateAssetSymbol("  BTC  ")
-        viewModel.updateIncomeAmount("250.25")
+        viewModel.updateCryptoSaleProceeds("1000")
+        viewModel.updateCryptoCostBasis("600")
+        viewModel.updateCryptoFees("50")
 
         saveAndRun()
 
@@ -162,20 +168,25 @@ class IncomeFormViewModelTest {
         assertEquals(IncomeEntryKind.REALIZED_PNL, saved.entryKind)
         assertEquals(PnlDirection.GAIN, saved.pnlDirection)
         assertEquals("BTC", saved.assetSymbol)
+        assertEquals("350", saved.money.originalAmountDecimal)
+        assertEquals("600", saved.cryptoRealizedDetails?.costBasisOriginalDecimal)
+        assertEquals("1000", saved.cryptoRealizedDetails?.saleProceedsOriginalDecimal)
+        assertEquals("50", saved.cryptoRealizedDetails?.feesOriginalDecimal)
     }
 
     @Test
-    fun `crypto loss stores a positive magnitude and loss direction`() = runTest {
+    fun `crypto loss stores derived positive magnitude and loss direction`() = runTest {
         openNewDraft()
         viewModel.updateIncomeSource(IncomeSource.CRYPTO)
-        viewModel.updatePnlDirection(PnlDirection.LOSS)
-        viewModel.updateIncomeAmount("25")
+        viewModel.updateCryptoSaleProceeds("500")
+        viewModel.updateCryptoCostBasis("600")
+        viewModel.updateCryptoFees("25")
 
         saveAndRun()
 
         val saved = repository.saved.single()
         assertEquals(PnlDirection.LOSS, saved.pnlDirection)
-        assertTrue(saved.money.baseAmountMinor > 0L)
+        assertEquals(12_500L, saved.money.baseAmountMinor)
     }
 
     @Test
@@ -193,14 +204,13 @@ class IncomeFormViewModelTest {
     }
 
     @Test
-    fun `crypto without gain or loss exposes required metadata error`() = runTest {
+    fun `crypto requires proceeds and cost basis inputs`() = runTest {
         openNewDraft()
         viewModel.updateIncomeSource(IncomeSource.CRYPTO)
-        viewModel.updateIncomeAmount("100")
 
         viewModel.saveIncome()
 
-        assertEquals("Select gain or loss", viewModel.formState.value?.errors?.pnlDirection)
+        assertEquals("Sale proceeds cannot be empty", viewModel.formState.value?.errors?.saleProceeds)
         assertTrue(repository.saved.isEmpty())
     }
 
@@ -239,6 +249,17 @@ class IncomeFormViewModelTest {
 
     @Test
     fun `editing preserves ID and untouched linked receivable`() = runTest {
+        receivableRepository.saveReceivable(
+            Receivable(
+                id = "receivable-7",
+                title = "Project 7",
+                projectReference = "project-7",
+                expectedOriginalDecimal = "1000.00",
+                currency = CurrencyCode.LKR,
+                expectedDate = TODAY
+            )
+        ).getOrThrow()
+        dispatcher.scheduler.runCurrent()
         val existing = income(id = "existing", source = IncomeSource.FREELANCE).copy(
             projectReference = "old-project",
             receivableId = "receivable-7"

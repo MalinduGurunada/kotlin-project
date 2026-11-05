@@ -3,6 +3,7 @@ package com.example.personalfinanceapp.feature.category
 
 import com.example.personalfinanceapp.core.model.Category
 import com.example.personalfinanceapp.core.model.DocumentId
+import com.example.personalfinanceapp.core.model.SpendingClass
 import kotlinx.coroutines.flow.Flow
 
 interface CategoryRepository {
@@ -17,6 +18,12 @@ interface CategoryRepository {
         id: DocumentId,
         newName: String
     ): Result<Unit>
+
+    suspend fun updateCategory(
+        id: DocumentId,
+        newName: String,
+        spendingClass: SpendingClass
+    ): Result<Unit> = renameCategory(id, newName)
 
     suspend fun setCategoryArchived(
         id: DocumentId,

@@ -27,7 +27,8 @@ users/{uid}
 |-- expenses/{expenseId}        implemented repository/rules path
 |-- categories/{categoryId}     proposed Firestore path
 |-- receivables/{receivableId}  proposed Firestore path
-|-- recurringExpenses/{id}      proposed Firestore path
+|-- recurringExpenses/{id}      recurring commitment templates
+|-- recurringOccurrences/{id}   immutable confirmed/skipped occurrence ledger
 `-- goals/{goalId}              proposed Firestore path
     `-- contributions/{id}      proposed Firestore path
 ```
@@ -84,11 +85,20 @@ Stored original amount/currency, rate, source, rate date, and LKR minor result f
 | `entryKind` | string | Yes | `RECEIPT` or `REALIZED_PNL`, constrained by source |
 | `money` | map | Yes | Exact six-field shape defined above |
 | `occurredDate` | string | Yes | ISO date-only string |
-| `pnlDirection` | string | Conditional | `GAIN` or `LOSS`; required for Crypto and absent for regular receipts |
+| `pnlDirection` | string | Conditional | `GAIN`, `LOSS`, or `BREAK_EVEN`; required for Crypto and absent for regular receipts |
 | `projectReference` | string | Optional | Current UI exposes it for Freelance and stores blank input as absent |
 | `receivableId` | string | Optional | Domain link; not entered by the current Income editor |
 | `assetSymbol` | string | Optional | Optional Crypto asset symbol |
+| `cryptoRealizedDetails` | map | Optional | New realised-Crypto entries store exact `costBasisOriginalDecimal`, `saleProceedsOriginalDecimal`, and `feesOriginalDecimal` strings; absent on legacy Crypto records |
 | `note` | string | Optional | User note |
+
+For structured Crypto entries, all three detail values use `money.originalCurrency` and the same
+historical rate snapshot. The signed result is `sale proceeds - cost basis - fees`.
+`money.originalAmountDecimal` and `money.baseAmountMinor` store the absolute result magnitude while
+`pnlDirection` stores its sign. A zero result is represented by `BREAK_EVEN` with zero money fields.
+Legacy Crypto documents without `cryptoRealizedDetails` remain valid, but cannot use `BREAK_EVEN`.
+Sale proceeds are calculation metadata only: no gross proceeds or cash withdrawal is persisted as a
+second Income receipt.
 
 The mapper accepts only the required fields plus the documented optional fields and rejects unknown fields. It validates schema version, types, supported enum names, ISO dates, document/path ID equality, and the domain/money contract.
 
@@ -312,13 +322,14 @@ The following sections preserve the model-aligned design for features without Fi
 
 ### `users/{uid}/recurringExpenses/{recurringId}`
 
-**Status: PROPOSED.** Only `FakeRecurringRepository` exists.
+**Status: IMPLEMENTED.** `FirestoreRecurringRepository` stores owner-scoped templates.
 
 **Purpose:** Scheduling templates for expected recurring costs, not confirmed Expense records.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `id` | string | Yes | Must equal `{recurringId}` |
+| `userId` | string | Yes | Must match the authenticated path owner |
 | `title` | string | Yes | Trimmed, non-blank title |
 | `categoryId` | string | Yes | User-owned Category reference |
 | `expectedAmountMinor` | integer | Yes | Positive LKR minor-unit estimate |
@@ -326,18 +337,22 @@ The following sections preserve the model-aligned design for features without Fi
 | `intervalCount` | integer | Yes | Positive number of frequency units |
 | `anchorDate` | string | Yes | ISO recurrence anchor date |
 | `startDate` | string | Yes | ISO first-active date |
-| `endDate` | string | Optional | ISO date not before `startDate` |
-| `active` | boolean | Yes | Scheduling state |
+| `endDate` | string/null | Yes | Optional ISO date not before `startDate` |
+| `status` | string | Yes | `ACTIVE`, `PAUSED`, or `CANCELLED` |
+| `paymentChannel` | string | Yes | `CASH`, `CARD`, `BANK`, or `OTHER` |
+| `channelLabel` | string/null | Yes | Optional account/channel label |
 | `reminderEnabled` | boolean | Yes | Reminder preference |
 | `reminderLeadDays` | integer | Yes | Non-negative number of days |
+| `reminderTimeMinutes` | integer | No | Local minutes after midnight (`0..1439`); missing legacy values default to `540` (9:00 AM) |
 
-**Relationships:** `categoryId` refers to a user-owned Category. A template has no automatic accounting relationship to Expense; confirmation would require a separate Expense record.
+**Relationships:** `categoryId` refers to a user-owned Category. Confirming an occurrence atomically creates a linked Expense.
 
-**Validation if implemented:** Match the fake checks for non-blank ID/title/category, positive amount/interval, valid date order, and non-negative reminder lead time. Also enforce exact types/enums/dates and define short-month anchor behavior before use.
+**Validation:** Rules enforce exact fields, ownership, an existing user category, positive amounts/intervals, supported enums, ISO dates, and bounded reminder lead days. Short months clamp to their last day while later months continue to use the original anchor day.
 
 ```json
 {
   "id": "recurring-example-001",
+  "userId": "firebase-uid",
   "title": "Internet bill",
   "categoryId": "bills",
   "expectedAmountMinor": 350000,
@@ -345,11 +360,31 @@ The following sections preserve the model-aligned design for features without Fi
   "intervalCount": 1,
   "anchorDate": "2026-10-15",
   "startDate": "2026-10-15",
-  "active": true,
+  "endDate": null,
+  "status": "ACTIVE",
+  "paymentChannel": "BANK",
+  "channelLabel": "ComBank CASA",
   "reminderEnabled": true,
-  "reminderLeadDays": 2
+  "reminderLeadDays": 2,
+  "reminderTimeMinutes": 1110
 }
 ```
+
+### `users/{uid}/recurringOccurrences/{occurrenceId}`
+
+**Status: IMPLEMENTED.** Pending dates are calculated from the template. Only user actions are persisted.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | string | Yes | `{recurringId}_{YYYY-MM-DD}` |
+| `userId` | string | Yes | Must match the authenticated path owner |
+| `recurringExpenseId` | string | Yes | Existing recurring template |
+| `dueDate` | string | Yes | ISO date |
+| `status` | string | Yes | `CONFIRMED` or `SKIPPED` |
+| `expenseId` | string/null | Yes | Deterministic linked Expense ID when confirmed |
+| `actionAt` | timestamp | Yes | Server action timestamp |
+
+Occurrence documents cannot be updated or deleted. A confirmed occurrence and its linked Expense must be created in the same atomic transaction. The deterministic IDs prevent duplicate payment records.
 
 ### `users/{uid}/goals/{goalId}`
 

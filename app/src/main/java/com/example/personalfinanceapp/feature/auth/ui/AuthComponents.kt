@@ -2,6 +2,7 @@ package com.example.personalfinanceapp.feature.auth.ui
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,6 +46,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -56,6 +58,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.personalfinanceapp.R
 
 internal object AuthColors {
     val EmeraldTop = Color(0xFF073E32)
@@ -279,12 +282,46 @@ internal fun AuthPrimaryButton(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = AuthDimens.ButtonHeight)
+            .semantics { contentDescription = text }
             .shadow(12.dp, RoundedCornerShape(AuthDimens.ButtonRadius), ambientColor = AuthColors.Lime.copy(alpha = .2f), spotColor = AuthColors.Lime.copy(alpha = .2f))
     ) {
         if (isLoading) {
             CircularProgressIndicator(Modifier.size(23.dp), color = AuthColors.EmeraldDeep, strokeWidth = 2.5.dp)
         } else {
             Text(text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+internal fun AuthGoogleButton(
+    onClick: () -> Unit,
+    isLoading: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled && !isLoading,
+        modifier = modifier
+            .size(52.dp)
+            .shadow(8.dp, CircleShape, ambientColor = Color.Black.copy(alpha = .2f))
+            .clip(CircleShape)
+            .background(AuthColors.White)
+            .semantics { contentDescription = "Continue with Google" }
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                Modifier.size(22.dp),
+                color = AuthColors.EmeraldDeep,
+                strokeWidth = 2.25.dp
+            )
+        } else {
+            Image(
+                painter = painterResource(R.drawable.ic_google_g),
+                contentDescription = null,
+                modifier = Modifier.size(22.dp)
+            )
         }
     }
 }

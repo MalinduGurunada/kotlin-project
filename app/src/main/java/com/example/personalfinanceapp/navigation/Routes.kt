@@ -12,7 +12,13 @@ data object Register
 data object PasswordReset
 
 @Serializable
+data object EmailVerification
+
+@Serializable
 data object Home
+
+@Serializable
+data object Category
 
 @Serializable
 data object ExpenseList
@@ -21,13 +27,28 @@ data object ExpenseList
 data object IncomeList
 
 @Serializable
+data object ReceivableList
+
+@Serializable
+data object RecurringCommitments
+
+@Serializable
+data object DueItems
+
+@Serializable
+data object FinancialSummaries
+
+@Serializable
 data object Overview
 
 @Serializable
-data object Activity
+data object ActivityRoute
 
 @Serializable
 data object Goals
+
+@Serializable
+data class GoalDetail(val goalId: String)
 
 @Serializable
 data class TransactionDetail(val transactionId: String)

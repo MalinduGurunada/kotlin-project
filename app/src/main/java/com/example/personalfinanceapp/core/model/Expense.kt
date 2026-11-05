@@ -19,5 +19,7 @@ data class Expense(
     val money: Money,
     val occurredDate: LocalDate,
     val note: String? = null,
-    val channelLabel: String? = null
+    val channelLabel: String? = null,
+    val recurringExpenseId: DocumentId? = null,
+    val recurringOccurrenceId: DocumentId? = null
 )
