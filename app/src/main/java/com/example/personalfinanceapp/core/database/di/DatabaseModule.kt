@@ -1,10 +1,13 @@
 package com.example.personalfinanceapp.core.database.di
 
+import android.content.Context
+import androidx.room.Room
 import com.example.personalfinanceapp.core.database.AppDatabase
 import com.example.personalfinanceapp.core.database.ReminderDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
@@ -14,13 +17,17 @@ object DatabaseModule {
 
     @Provides
     @Singleton
-    fun provideAppDatabase(): AppDatabase {
-        return AppDatabase()
+    fun provideAppDatabase(@ApplicationContext context: Context): AppDatabase {
+        return Room.databaseBuilder(
+            context,
+            AppDatabase::class.java,
+            "finclarity_reminders.db"
+        ).fallbackToDestructiveMigration().build()
     }
 
     @Provides
     @Singleton
     fun provideReminderDao(database: AppDatabase): ReminderDao {
-        return database.reminderDao
+        return database.reminderDao()
     }
 }
