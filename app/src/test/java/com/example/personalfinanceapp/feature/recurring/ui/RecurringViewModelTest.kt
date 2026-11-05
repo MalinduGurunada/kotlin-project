@@ -2,6 +2,7 @@ package com.example.personalfinanceapp.feature.recurring.ui
 
 import com.example.personalfinanceapp.core.model.RecurrenceFrequency
 import com.example.personalfinanceapp.core.model.RecurringExpense
+import com.example.personalfinanceapp.core.model.RecurringOccurrenceStatus
 import com.example.personalfinanceapp.core.model.RecurringStatus
 import com.example.personalfinanceapp.feature.category.FakeCategoryRepository
 import com.example.personalfinanceapp.feature.recurring.FakeRecurringRepository
@@ -60,7 +61,10 @@ class RecurringViewModelTest {
 
         val firstDates = firstCoordinator.syncCalls.single().dueDates
         val recreatedDates = secondCoordinator.syncCalls.single().dueDates
-        assertEquals(listOf(LocalDate.of(2026, 10, 31)), firstDates)
+        assertEquals(
+            listOf(LocalDate.of(2026, 10, 31), LocalDate.of(2026, 11, 30)),
+            firstDates
+        )
         assertEquals(firstDates, recreatedDates)
     }
 
@@ -85,7 +89,7 @@ class RecurringViewModelTest {
 
         assertEquals(1, coordinator.syncCalls.size)
         assertEquals(
-            listOf(LocalDate.of(2026, 10, 31)),
+            listOf(LocalDate.of(2026, 10, 31), LocalDate.of(2026, 11, 30)),
             coordinator.syncCalls.single().dueDates
         )
         assertEquals(
@@ -114,7 +118,64 @@ class RecurringViewModelTest {
             listOf("electricity" to LocalDate.of(2026, 10, 31)),
             coordinator.cancelledOccurrences
         )
+        val nextPendingDates = viewModel.uiState.value.dueItems
+            .filter { it.occurrence.status == RecurringOccurrenceStatus.PENDING }
+            .map { it.dueDate }
+        assertEquals(listOf(LocalDate.of(2026, 11, 30)), nextPendingDates)
+        assertEquals(
+            listOf(LocalDate.of(2026, 11, 30)),
+            coordinator.syncCalls.last().dueDates
+        )
         assertTrue(viewModel.paymentState.value == null)
+    }
+
+    @Test
+    fun skippingOccurrenceExposesAndSchedulesNextMonthlyDateBeyondThirtyDays() = runTest {
+        val repository = FakeRecurringRepository()
+        repository.saveRecurringExpense(recurringExpense())
+        val coordinator = RecordingReminderCoordinator()
+        val viewModel = viewModel(repository, coordinator)
+        backgroundScope.launch { viewModel.uiState.collect() }
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val current = viewModel.uiState.value.dueItems.single {
+            it.dueDate == LocalDate.of(2026, 10, 31)
+        }
+        viewModel.skip(current)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val nextPendingDates = viewModel.uiState.value.dueItems
+            .filter { it.occurrence.status == RecurringOccurrenceStatus.PENDING }
+            .map { it.dueDate }
+        assertEquals(listOf(LocalDate.of(2026, 11, 30)), nextPendingDates)
+        assertEquals(
+            listOf(LocalDate.of(2026, 11, 30)),
+            coordinator.syncCalls.last().dueDates
+        )
+    }
+
+    @Test
+    fun confirmingFinalOccurrenceWithEndDateLeavesCommitmentUnscheduled() = runTest {
+        val repository = FakeRecurringRepository()
+        repository.saveRecurringExpense(
+            recurringExpense().copy(endDate = LocalDate.of(2026, 10, 31))
+        )
+        val coordinator = RecordingReminderCoordinator()
+        val viewModel = viewModel(repository, coordinator)
+        backgroundScope.launch { viewModel.uiState.collect() }
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val finalOccurrence = viewModel.uiState.value.dueItems.single()
+        viewModel.openPayment(finalOccurrence)
+        viewModel.confirmPayment()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(
+            viewModel.uiState.value.dueItems.none {
+                it.occurrence.status == RecurringOccurrenceStatus.PENDING
+            }
+        )
+        assertTrue(coordinator.syncCalls.last().dueDates.isEmpty())
     }
 
     @Test

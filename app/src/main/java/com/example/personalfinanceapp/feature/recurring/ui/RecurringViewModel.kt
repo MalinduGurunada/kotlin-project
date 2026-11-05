@@ -98,6 +98,23 @@ data class PaymentConfirmationState(
     val errorMessage: String? = null
 )
 
+internal fun nextPendingDueDate(
+    schedule: RecurringExpense,
+    storedOccurrences: Map<String, RecurringOccurrence>,
+    fromInclusive: LocalDate
+): LocalDate? {
+    var candidate = RecurringScheduleCalculator.nextDueDate(schedule, fromInclusive)
+    while (candidate != null) {
+        val occurrenceId = RecurringScheduleCalculator.occurrenceId(schedule.id, candidate)
+        val existing = storedOccurrences[occurrenceId]
+        if (existing == null || existing.status == RecurringOccurrenceStatus.PENDING) {
+            return candidate
+        }
+        candidate = RecurringScheduleCalculator.nextDueDate(schedule, candidate.plusDays(1))
+    }
+    return null
+}
+
 @HiltViewModel
 class RecurringViewModel @Inject constructor(
     private val recurringRepository: RecurringRepository,
@@ -190,7 +207,17 @@ class RecurringViewModel @Inject constructor(
         today: LocalDate
     ): List<RecurringDueItem> {
         val start = maxOf(schedule.startDate, today.minusDays(90))
-        val end = today.plusDays(30)
+        val visiblePeriodEnd = today.plusDays(30)
+        val firstPendingAfterVisiblePeriod = if (schedule.status == RecurringStatus.ACTIVE) {
+            nextPendingDueDate(
+                schedule = schedule,
+                storedOccurrences = stored,
+                fromInclusive = visiblePeriodEnd.plusDays(1)
+            )
+        } else {
+            null
+        }
+        val end = firstPendingAfterVisiblePeriod ?: visiblePeriodEnd
         return RecurringScheduleCalculator.datesBetween(schedule, start, end).mapNotNull { dueDate ->
             val id = RecurringScheduleCalculator.occurrenceId(schedule.id, dueDate)
             val existing = stored[id]
