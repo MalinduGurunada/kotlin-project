@@ -358,6 +358,26 @@ internal fun AuthGoogleButton(
 }
 
 @Composable
+internal fun AuthBiometricButton(
+    onClick: () -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier
+            .size(52.dp)
+            .shadow(8.dp, CircleShape, ambientColor = Color.Black.copy(alpha = .2f))
+            .clip(CircleShape)
+            .background(AuthColors.White)
+            .semantics { contentDescription = "Sign in with Biometrics" }
+    ) {
+        Text("👆", fontSize = 22.sp)
+    }
+}
+
+@Composable
 internal fun AuthInlineLink(prompt: String, link: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier

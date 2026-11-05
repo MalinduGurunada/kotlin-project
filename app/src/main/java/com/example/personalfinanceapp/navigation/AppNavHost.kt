@@ -237,6 +237,7 @@ fun AppNavHost(
                     showRecordExpenseDialog = false
                 }
                 activeAuthenticatedUserId = authenticatedUserId
+
                 val pendingNotification = notificationTarget
                 if (pendingNotification != null) {
                     val decision = FinanceReviewNavigationResolver.resolve(

@@ -39,7 +39,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathBuilder
 import androidx.compose.ui.graphics.vector.path
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.disabled
@@ -47,7 +46,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.example.personalfinanceapp.feature.dashboard.TransactionCsvExporter
 import com.example.personalfinanceapp.ui.theme.MutedCoral
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 import com.example.personalfinanceapp.ui.theme.PrimaryDarkGreen
@@ -78,7 +76,6 @@ fun MoreScreen(
 ) {
     val displayName = userName.ifBlank { "User" }
     val profileInitial = displayName.first().uppercase()
-    val context = LocalContext.current
 
     Scaffold(
         modifier = modifier
@@ -98,7 +95,7 @@ fun MoreScreen(
                             size = 38.dp
                         )
                         Text(
-                            text = "More / Preferences",
+                            text = "More",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimaryDark
@@ -109,7 +106,8 @@ fun MoreScreen(
                     Surface(
                         modifier = Modifier
                             .padding(end = 16.dp)
-                            .size(40.dp),
+                            .size(40.dp)
+                            .clickable { onBottomDestinationSelected(NavDestination.MORE) },
                         shape = CircleShape,
                         color = PrimaryDarkGreen
                     ) {
@@ -259,15 +257,6 @@ fun MoreScreen(
                 MoreSection(
                     title = "Data, privacy & vault",
                     items = listOf(
-                        MoreItem(
-                            title = "Export CSV Report (FR-58)",
-                            subtitle = "Generate & share transaction CSV export file",
-                            icon = MoreIcons.Expenses,
-                            status = "Export",
-                            onClick = {
-                                TransactionCsvExporter.exportAndShareCsv(context, emptyList())
-                            }
-                        ),
                         MoreItem(
                             title = "Protected local data",
                             subtitle = "Financial data remains scoped to the signed-in user",
