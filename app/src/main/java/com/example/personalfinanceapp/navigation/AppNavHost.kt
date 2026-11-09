@@ -57,6 +57,8 @@ import com.example.personalfinanceapp.feature.notification.FinanceReviewPayload
 import com.example.personalfinanceapp.feature.notification.NotificationPreferencesViewModel
 import com.example.personalfinanceapp.feature.recurring.ui.DueItemsScreen
 import com.example.personalfinanceapp.feature.recurring.ui.RecurringCommitmentsScreen
+import com.example.personalfinanceapp.feature.reminder.daily.DailyCaptureNotificationTarget
+import com.example.personalfinanceapp.feature.reminder.daily.DailyCaptureReminderViewModel
 import kotlinx.coroutines.launch
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
@@ -184,6 +186,8 @@ fun AppNavHost(
     authViewModel: AuthViewModel = hiltViewModel(),
     notificationTarget: FinanceReviewPayload? = null,
     onNotificationTargetConsumed: () -> Unit = {},
+    dailyCaptureTarget: DailyCaptureNotificationTarget? = null,
+    onDailyCaptureTargetConsumed: () -> Unit = {},
     onAuthenticated: () -> Unit = {},
     onNotificationPermissionRequested: () -> Unit = {}
 ) {
@@ -201,7 +205,7 @@ fun AppNavHost(
     var authenticatedStartupComplete by remember { mutableStateOf(false) }
     var activeAuthenticatedUserId by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(navigationState, notificationTarget) {
+    LaunchedEffect(navigationState, notificationTarget, dailyCaptureTarget) {
         when (navigationState) {
             AuthNavigationState.Resolving -> Unit
             AuthNavigationState.Unauthenticated -> {
@@ -237,9 +241,24 @@ fun AppNavHost(
                     showRecordExpenseDialog = false
                 }
                 activeAuthenticatedUserId = authenticatedUserId
-
+                val pendingDailyCapture = dailyCaptureTarget
                 val pendingNotification = notificationTarget
-                if (pendingNotification != null) {
+                if (pendingDailyCapture != null) {
+                    onDailyCaptureTargetConsumed()
+                    if (pendingDailyCapture.userId == authenticatedUserId) {
+                        navController.navigateTo(
+                            AppNavigationTarget.ACTIVITY,
+                            replaceBackStack = true
+                        )
+                        showRecordExpenseDialog = true
+                    } else if (!authenticatedStartupComplete) {
+                        navController.navigateTo(
+                            AppNavigationTarget.OVERVIEW,
+                            replaceBackStack = true
+                        )
+                    }
+                    authenticatedStartupComplete = true
+                } else if (pendingNotification != null) {
                     val decision = FinanceReviewNavigationResolver.resolve(
                         pendingNotification,
                         authenticatedUserId
@@ -364,6 +383,9 @@ fun AppNavHost(
             val notificationPreferencesViewModel: NotificationPreferencesViewModel = hiltViewModel()
             val notificationsEnabled by
                 notificationPreferencesViewModel.notificationsEnabled.collectAsState()
+            val dailyCaptureReminderViewModel: DailyCaptureReminderViewModel = hiltViewModel()
+            val dailyCaptureSettings by
+                dailyCaptureReminderViewModel.settings.collectAsState()
 
             MoreScreen(
                 userName = uiState.userName,
@@ -372,6 +394,14 @@ fun AppNavHost(
                     notificationPreferencesViewModel.setNotificationsEnabled(enabled)
                     if (enabled) onNotificationPermissionRequested()
                 },
+                dailyCaptureReminderEnabled = dailyCaptureSettings.enabled,
+                dailyCaptureReminderTimeMinutes = dailyCaptureSettings.timeMinutes,
+                onDailyCaptureReminderEnabledChange = { enabled ->
+                    dailyCaptureReminderViewModel.setEnabled(enabled)
+                    if (enabled) onNotificationPermissionRequested()
+                },
+                onDailyCaptureReminderTimeChange =
+                    dailyCaptureReminderViewModel::setTimeMinutes,
                 onCategoriesClick = {
                     navController.navigateTo(
                         managementTarget(ManagementDestination.CATEGORIES)

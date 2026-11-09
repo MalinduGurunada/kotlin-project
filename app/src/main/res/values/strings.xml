@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">PersonalFinanceApp</string>
+    <string name="app_name">FinClarity</string>
     <string name="finance_review_channel_name">Finance reviews</string>
     <string name="finance_review_channel_description">Prompts to review recent finance activity</string>
     <string name="default_web_client_id">214557124508-6o2h0nvf7gs1li6ge53veeju1ibvprg7.apps.googleusercontent.com</string>
