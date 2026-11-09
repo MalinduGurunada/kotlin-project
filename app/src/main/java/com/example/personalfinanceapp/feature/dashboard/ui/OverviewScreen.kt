@@ -17,9 +17,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
@@ -94,7 +94,8 @@ fun OverviewScreen(
                     Box(
                         modifier = Modifier
                             .size(36.dp)
-                            .background(PrimaryDarkGreen, CircleShape),
+                            .background(PrimaryDarkGreen, CircleShape)
+                            .clickable { onNavDestinationSelected(NavDestination.MORE) },
                         contentAlignment = Alignment.Center
                     ) {
                         Text("👤", fontSize = 16.sp)
@@ -144,7 +145,8 @@ fun OverviewScreen(
                     OverviewBalanceCard(
                         uiState = uiState,
                         onNavigateToIncome = onNavigateToIncome,
-                        onNavigateToActivity = onNavigateToActivity
+                        onNavigateToActivity = onNavigateToActivity,
+                        onNavigateToProfile = { onNavDestinationSelected(NavDestination.MORE) }
                     )
                 }
 
@@ -152,24 +154,40 @@ fun OverviewScreen(
                     Card(
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigateToIncome() }
                     ) {
                         val monthlyCryptoLkr = uiState.monthlyCryptoResult.netLkrMinor.toDouble() / 100.0
                         val ytdCryptoLkr = uiState.yearToDateCryptoResult.netLkrMinor.toDouble() / 100.0
-                        Text(
-                            text = "Realised crypto · Month: LKR ${String.format(Locale.US, "%+,.2f", monthlyCryptoLkr)} · YTD: LKR ${String.format(Locale.US, "%+,.2f", ytdCryptoLkr)}",
-                            modifier = Modifier.padding(14.dp),
-                            fontSize = 12.sp,
-                            color = TextPrimaryDark
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Realised crypto · Month: LKR ${String.format(Locale.US, "%+,.2f", monthlyCryptoLkr)} · YTD: LKR ${String.format(Locale.US, "%+,.2f", ytdCryptoLkr)}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimaryDark
+                            )
+                            Text("›", fontSize = 16.sp, color = TextSecondaryMuted)
+                        }
                     }
                 }
 
                 // Active Savings Goal Card
                 item {
                     uiState.activeGoal?.let { goal ->
-                        ActiveGoalCard(goal = goal)
-                    } ?: GoalEmptyCard()
+                        ActiveGoalCard(
+                            goal = goal,
+                            onClick = { onNavDestinationSelected(NavDestination.GOALS) }
+                        )
+                    } ?: GoalEmptyCard(
+                        onClick = { onNavDestinationSelected(NavDestination.GOALS) }
+                    )
                 }
 
                 item {
@@ -179,7 +197,8 @@ fun OverviewScreen(
                         onReviewContribution = {
                             onClearSavingsCoachActionMessage()
                             showSavingsContributionDialog = true
-                        }
+                        },
+                        onClick = { onNavDestinationSelected(NavDestination.GOALS) }
                     )
                 }
 
@@ -285,7 +304,8 @@ fun OverviewScreen(
 private fun OverviewBalanceCard(
     uiState: DashboardUiState,
     onNavigateToIncome: () -> Unit,
-    onNavigateToActivity: () -> Unit
+    onNavigateToActivity: () -> Unit,
+    onNavigateToProfile: () -> Unit = {}
 ) {
     Card(
         shape = RoundedCornerShape(24.dp),
@@ -302,7 +322,10 @@ private fun OverviewBalanceCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable { onNavigateToProfile() }
+                ) {
                     Box(
                         modifier = Modifier
                             .size(44.dp)
@@ -326,7 +349,6 @@ private fun OverviewBalanceCard(
                         )
                     }
                 }
-
             }
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -448,12 +470,17 @@ private fun OverviewBalanceCard(
 }
 
 @Composable
-private fun ActiveGoalCard(goal: ActiveSavingsGoalUiState) {
+private fun ActiveGoalCard(
+    goal: ActiveSavingsGoalUiState,
+    onClick: () -> Unit = {}
+) {
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -556,12 +583,14 @@ private fun ActiveGoalCard(goal: ActiveSavingsGoalUiState) {
 }
 
 @Composable
-private fun GoalEmptyCard() {
+private fun GoalEmptyCard(onClick: () -> Unit = {}) {
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
     ) {
         Column(
             modifier = Modifier
@@ -588,13 +617,16 @@ private fun GoalEmptyCard() {
 private fun SmartSavingsCard(
     result: SavingsCoachResult?,
     actionState: SavingsCoachActionState,
-    onReviewContribution: () -> Unit
+    onReviewContribution: () -> Unit,
+    onClick: () -> Unit = {}
 ) {
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -634,6 +666,7 @@ private fun SmartSavingsCard(
                 Text(
                     text = "Estimated capacity after 20% reserve: ${formatLkrMinor(capacity)}",
                     fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
                     color = TextPrimaryDark
                 )
             }
@@ -642,14 +675,9 @@ private fun SmartSavingsCard(
             if (suggestion != null) {
                 Text(
                     text = "Suggested contribution: ${formatLkrMinor(suggestion)}",
-                    fontSize = 16.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = PrimaryDarkGreen
-                )
-                Text(
-                    text = "Based on recorded receipts, expenses, unpaid bills, goal allocations and crypto losses. This is an estimate, not bank cash or guaranteed savings.",
-                    fontSize = 12.sp,
-                    color = TextSecondaryMuted
                 )
             } else {
                 Text(
@@ -661,8 +689,9 @@ private fun SmartSavingsCard(
 
             result?.discretionaryReductionTipMinor?.let { reduction ->
                 Text(
-                    text = "Tip: Cutting 10% of recorded discretionary spending could retain about ${formatLkrMinor(reduction)}.",
+                    text = "💡 Tip: Cutting 10% discretionary spend retains ~${formatLkrMinor(reduction)}.",
                     fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
                     color = PrimaryDarkGreen
                 )
             }
@@ -689,17 +718,17 @@ private fun SmartSavingsCard(
 
 private fun savingsCoachUnavailableText(reason: SavingsCoachUnavailableReason?): String = when (reason) {
     SavingsCoachUnavailableReason.REQUIRED_DATA_UNAVAILABLE ->
-        "No suggestion because required financial data is unavailable or unreliable."
+        "No suggestion because required financial data is unavailable."
     SavingsCoachUnavailableReason.NO_ACTIVE_GOAL ->
         "Create an active savings goal to receive a suggestion."
     SavingsCoachUnavailableReason.EXPIRED_DEADLINE ->
         "Update the expired goal deadline before using a savings suggestion."
     SavingsCoachUnavailableReason.NO_QUALIFYING_RECEIPTS ->
-        "No suggestion because no qualifying non-crypto receipts are recorded this month."
+        "No suggestion because no non-crypto receipts are recorded this month."
     SavingsCoachUnavailableReason.NO_POSITIVE_CAPACITY ->
-        "No positive estimated capacity remains after recorded commitments and the safety reserve."
+        "No positive capacity remains after commitments and safety reserve."
     SavingsCoachUnavailableReason.BELOW_ONE_RUPEE ->
-        "The calculated suggestion is below one rupee."
+        "Calculated suggestion is below one rupee."
     null -> "A savings suggestion is not available yet."
 }
 

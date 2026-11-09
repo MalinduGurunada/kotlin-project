@@ -142,6 +142,37 @@ internal fun AuthBrand(modifier: Modifier = Modifier) {
 }
 
 @Composable
+internal fun AuthBrandLarge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(46.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(AuthColors.Lime),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(Modifier.size(26.dp)) {
+                val stroke = 3.dp.toPx()
+                drawLine(AuthColors.EmeraldDeep, Offset(size.width * .18f, size.height * .72f), Offset(size.width * .45f, size.height * .45f), stroke, StrokeCap.Round)
+                drawLine(AuthColors.EmeraldDeep, Offset(size.width * .45f, size.height * .45f), Offset(size.width * .62f, size.height * .59f), stroke, StrokeCap.Round)
+                drawLine(AuthColors.EmeraldDeep, Offset(size.width * .62f, size.height * .59f), Offset(size.width * .84f, size.height * .28f), stroke, StrokeCap.Round)
+            }
+        }
+        Text(
+            text = "FinClarity",
+            color = AuthColors.White,
+            fontSize = 36.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-0.5).sp
+        )
+    }
+}
+
+@Composable
 internal fun AuthTopBar(onBack: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxWidth()) {
         IconButton(
@@ -323,6 +354,26 @@ internal fun AuthGoogleButton(
                 modifier = Modifier.size(22.dp)
             )
         }
+    }
+}
+
+@Composable
+internal fun AuthBiometricButton(
+    onClick: () -> Unit,
+    enabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier
+            .size(52.dp)
+            .shadow(8.dp, CircleShape, ambientColor = Color.Black.copy(alpha = .2f))
+            .clip(CircleShape)
+            .background(AuthColors.White)
+            .semantics { contentDescription = "Sign in with Biometrics" }
+    ) {
+        Text("👆", fontSize = 22.sp)
     }
 }
 

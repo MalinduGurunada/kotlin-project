@@ -109,7 +109,7 @@ fun MoreScreen(
                             size = 38.dp
                         )
                         Text(
-                            text = "More / Preferences",
+                            text = "More",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimaryDark
@@ -120,7 +120,8 @@ fun MoreScreen(
                     Surface(
                         modifier = Modifier
                             .padding(end = 16.dp)
-                            .size(40.dp),
+                            .size(40.dp)
+                            .clickable { onBottomDestinationSelected(NavDestination.MORE) },
                         shape = CircleShape,
                         color = PrimaryDarkGreen
                     ) {

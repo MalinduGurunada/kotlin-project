@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -143,6 +144,8 @@ fun GoalDetailScreen(
     onReverseContributionClicked: (Contribution) -> Unit,
     onBackClicked: () -> Unit
 ) {
+    var selectedWhatIfMonths by remember { mutableIntStateOf(12) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -253,6 +256,71 @@ fun GoalDetailScreen(
                 }
             }
 
+            // FR-42 What-If Deadlines Selector Card
+            item {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "WHAT-IF DEADLINE SCENARIOS (FR-42)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextSecondaryMuted,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Explore required monthly savings for different timeframes:",
+                            fontSize = 13.sp,
+                            color = TextPrimaryDark
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(12, 15, 18).forEach { months ->
+                                val isSelected = selectedWhatIfMonths == months
+                                val reqMonthly = if (months > 0) goal.remainingLkr / months else 0L
+
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .background(
+                                            color = if (isSelected) PrimaryDarkGreen else SecondaryPaleGreen,
+                                            shape = RoundedCornerShape(12.dp)
+                                        )
+                                        .clickable { selectedWhatIfMonths = months }
+                                        .padding(vertical = 10.dp, horizontal = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            text = "$months Mos",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) AccentLime else PrimaryDarkGreen
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "LKR ${String.format(Locale.US, "%,d", reqMonthly)}/mo",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (isSelected) SurfaceWhite else TextPrimaryDark
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Action Button
             item {
                 Button(
@@ -302,7 +370,7 @@ fun GoalDetailScreen(
                                         .size(38.dp)
                                         .background(
                                             if (item.kind == ContributionKind.REVERSAL) Color(0xFFFFEBEE) else SecondaryPaleGreen,
-                                             CircleShape
+                                            CircleShape
                                         ),
                                     contentAlignment = Alignment.Center
                                 ) {

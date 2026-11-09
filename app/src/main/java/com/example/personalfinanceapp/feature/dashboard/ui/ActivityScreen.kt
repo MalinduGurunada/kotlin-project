@@ -677,7 +677,8 @@ private fun formatPaymentChannel(channel: PaymentChannel): String {
     return when (channel) {
         PaymentChannel.CASH -> "Cash"
         PaymentChannel.CARD -> "Debit Card"
-        PaymentChannel.BANK -> "Transfer"
+        PaymentChannel.BANK -> "Bank Transfer"
+        PaymentChannel.TRANSFER -> "Cash Transfer"
         PaymentChannel.OTHER -> "Auto-debit"
     }
 }
