@@ -15,5 +15,7 @@ interface PreferencesRepository {
 
     suspend fun updateReminderLeadDays(userId: String, leadDays: Int): Result<Unit>
 
+    suspend fun updateBiometricUnlockEnabled(userId: String, enabled: Boolean): Result<Unit>
+
     suspend fun clearUserPreferencesOnLogout(userId: String): Result<Unit>
 }

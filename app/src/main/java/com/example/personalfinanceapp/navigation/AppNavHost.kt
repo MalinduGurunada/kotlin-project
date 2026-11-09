@@ -32,6 +32,7 @@ import com.example.personalfinanceapp.feature.auth.ui.LoginScreen
 import com.example.personalfinanceapp.feature.auth.ui.PasswordResetScreen
 import com.example.personalfinanceapp.feature.auth.ui.RegisterScreen
 import com.example.personalfinanceapp.feature.category.ui.CategoryScreen
+import com.example.personalfinanceapp.feature.preferences.ui.UserPreferencesViewModel
 import com.example.personalfinanceapp.feature.dashboard.ui.ActivityScreen
 import com.example.personalfinanceapp.feature.dashboard.ui.DashboardViewModel
 import com.example.personalfinanceapp.feature.dashboard.ui.IncomeSpendingBreakdownScreen
@@ -386,6 +387,8 @@ fun AppNavHost(
             val dailyCaptureReminderViewModel: DailyCaptureReminderViewModel = hiltViewModel()
             val dailyCaptureSettings by
                 dailyCaptureReminderViewModel.settings.collectAsState()
+            val userPreferencesViewModel: UserPreferencesViewModel = hiltViewModel()
+            val userPreferences by userPreferencesViewModel.userPreferences.collectAsState()
 
             MoreScreen(
                 userName = uiState.userName,
@@ -402,6 +405,9 @@ fun AppNavHost(
                 },
                 onDailyCaptureReminderTimeChange =
                     dailyCaptureReminderViewModel::setTimeMinutes,
+                biometricUnlockEnabled = userPreferences.biometricUnlockEnabled,
+                onBiometricUnlockEnabledChange =
+                    userPreferencesViewModel::setBiometricUnlockEnabled,
                 onCategoriesClick = {
                     navController.navigateTo(
                         managementTarget(ManagementDestination.CATEGORIES)

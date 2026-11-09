@@ -1,6 +1,7 @@
 package com.example.personalfinanceapp.feature.income.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -22,6 +24,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -38,16 +41,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.personalfinanceapp.core.model.IncomeSource
 import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.PnlDirection
 import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.feature.income.rate.IncomeManualRateSource
 import com.example.personalfinanceapp.feature.income.rate.IncomeRateSelectionMode
+import com.example.personalfinanceapp.ui.theme.MutedCoral
+import com.example.personalfinanceapp.ui.theme.PrimaryDarkGreen
+import com.example.personalfinanceapp.ui.theme.SurfaceWhite
+import com.example.personalfinanceapp.ui.theme.TextPrimaryDark
+import com.example.personalfinanceapp.ui.theme.TextSecondaryMuted
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
@@ -101,7 +112,7 @@ fun IncomeEditorScreen(
                         showDatePicker = false
                     }
                 ) {
-                    Text("Select")
+                    Text("Select", color = PrimaryDarkGreen, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -129,7 +140,7 @@ fun IncomeEditorScreen(
                         showRateDatePicker = false
                     }
                 ) {
-                    Text("Select")
+                    Text("Select", color = PrimaryDarkGreen, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -147,26 +158,21 @@ fun IncomeEditorScreen(
             TopAppBar(
                 title = {
                     Text(
-                        if (uiState.mode == IncomeEditorMode.ADD) {
-                            "Add Income"
-                        } else {
-                            "Edit Income"
-                        }
+                        text = if (uiState.mode == IncomeEditorMode.ADD) "Add Income" else "Edit Income",
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimaryDark,
+                        fontSize = 18.sp
                     )
                 },
                 navigationIcon = {
-                    TextButton(
+                    IconButton(
                         onClick = onBack,
                         enabled = !uiState.isSaving
                     ) {
-                        Text("Back")
+                        Text("←", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = TextPrimaryDark)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite)
             )
         }
     ) { paddingValues ->
@@ -174,6 +180,7 @@ fun IncomeEditorScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .background(Color(0xFFF8F9FA))
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -181,14 +188,14 @@ fun IncomeEditorScreen(
             Text(
                 text = "Choose LKR or USD. USD values are stored with their exchange-rate snapshot.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = TextSecondaryMuted
             )
 
             Column(
                 modifier = Modifier.testTag("income-currency"),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text("Currency", style = MaterialTheme.typography.labelLarge)
+                Text("Currency", style = MaterialTheme.typography.labelLarge, color = TextPrimaryDark, fontWeight = FontWeight.Bold)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CurrencyCode.entries.forEach { currency ->
                         RadioButton(
@@ -197,7 +204,7 @@ fun IncomeEditorScreen(
                             enabled = !uiState.isSaving,
                             modifier = Modifier.testTag("income-currency-${currency.name}")
                         )
-                        Text(currency.name)
+                        Text(currency.name, color = TextPrimaryDark)
                     }
                 }
             }
@@ -276,6 +283,7 @@ fun IncomeEditorScreen(
                 Button(
                     onClick = { showDatePicker = true },
                     enabled = !uiState.isSaving,
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryDarkGreen, contentColor = SurfaceWhite),
                     modifier = Modifier.testTag("income-date")
                 ) {
                     Text(
@@ -287,7 +295,7 @@ fun IncomeEditorScreen(
                     Text(
                         text = error,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
+                        color = MutedCoral
                     )
                 }
             }
@@ -409,7 +417,7 @@ fun IncomeEditorScreen(
                             Text(
                                 text = error,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
+                                color = MutedCoral
                             )
                         }
                     }
@@ -443,14 +451,14 @@ fun IncomeEditorScreen(
             uiState.errors.form?.let { error ->
                 Text(
                     text = error,
-                    color = MaterialTheme.colorScheme.error,
+                    color = MutedCoral,
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
             uiState.saveError?.let { error ->
                 Text(
                     text = error,
-                    color = MaterialTheme.colorScheme.error,
+                    color = MutedCoral,
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.testTag("income-save-error")
                 )
@@ -465,7 +473,7 @@ fun IncomeEditorScreen(
                     onClick = onBack,
                     enabled = !uiState.isSaving
                 ) {
-                    Text("Cancel")
+                    Text("Cancel", color = TextSecondaryMuted)
                 }
                 Button(
                     onClick = onSave,
@@ -473,6 +481,7 @@ fun IncomeEditorScreen(
                         !uiState.isLoadingAutomaticRate &&
                         (uiState.selectedCurrency == CurrencyCode.LKR ||
                             uiState.estimatedMoney != null),
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryDarkGreen, contentColor = SurfaceWhite),
                     modifier = Modifier.testTag("income-save")
                 ) {
                     if (uiState.isSaving) {
@@ -480,6 +489,7 @@ fun IncomeEditorScreen(
                             modifier = Modifier
                                 .size(20.dp)
                                 .testTag("income-saving"),
+                            color = SurfaceWhite,
                             strokeWidth = 2.dp
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -539,7 +549,7 @@ private fun UsdRateControls(
             .testTag("income-usd-rate-controls"),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text("USD/LKR exchange rate", style = MaterialTheme.typography.titleMedium)
+        Text("USD/LKR exchange rate", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = TextPrimaryDark)
         Row(verticalAlignment = Alignment.CenterVertically) {
             RateModeOption(
                 label = "Automatic reference",
@@ -560,28 +570,30 @@ private fun UsdRateControls(
         if (uiState.selectedRateMode == IncomeRateSelectionMode.AUTOMATIC) {
             Text(
                 "Automatic rates are reference suggestions and may differ from your transfer rate.",
-                style = MaterialTheme.typography.bodySmall
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondaryMuted
             )
             if (uiState.isLoadingAutomaticRate) {
                 Row(
                     modifier = Modifier.testTag("income-rate-loading"),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = PrimaryDarkGreen, strokeWidth = 2.dp)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Loading USD/LKR reference rate")
+                    Text("Loading USD/LKR reference rate", color = TextSecondaryMuted)
                 }
             }
             uiState.automaticRateError?.let { error ->
                 Text(
                     error,
-                    color = MaterialTheme.colorScheme.error,
+                    color = MutedCoral,
                     modifier = Modifier.testTag("income-rate-network-error")
                 )
             }
             Button(
                 onClick = onRefreshAutomaticRate,
                 enabled = !uiState.isSaving && !uiState.isLoadingAutomaticRate,
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryDarkGreen, contentColor = SurfaceWhite),
                 modifier = Modifier.testTag("income-rate-refresh")
             ) {
                 Text(if (uiState.automaticRateError == null) "Refresh reference rate" else "Retry rate")
@@ -592,7 +604,7 @@ private fun UsdRateControls(
                     enabled = !uiState.isSaving,
                     modifier = Modifier.testTag("income-rate-manual-fallback")
                 ) {
-                    Text("Enter a manual rate")
+                    Text("Enter a manual rate", color = PrimaryDarkGreen, fontWeight = FontWeight.Bold)
                 }
             }
         } else if (uiState.selectedRateMode == IncomeRateSelectionMode.MANUAL) {
@@ -614,7 +626,7 @@ private fun UsdRateControls(
                     .fillMaxWidth()
                     .testTag("income-manual-rate")
             )
-            Text("Manual rate type", style = MaterialTheme.typography.labelLarge)
+            Text("Manual rate type", style = MaterialTheme.typography.labelLarge, color = TextPrimaryDark, fontWeight = FontWeight.Bold)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 RateSourceOption(
                     label = "Actual transfer",
@@ -632,6 +644,7 @@ private fun UsdRateControls(
             Button(
                 onClick = onSelectManualRateDate,
                 enabled = !uiState.isSaving,
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryDarkGreen, contentColor = SurfaceWhite),
                 modifier = Modifier.testTag("income-manual-rate-date")
             ) {
                 Text("Rate date: ${uiState.manualRateDate ?: "Select date"}")
@@ -641,7 +654,7 @@ private fun UsdRateControls(
         uiState.errors.rate?.takeIf {
             uiState.selectedRateMode != IncomeRateSelectionMode.MANUAL
         }?.let { error ->
-            Text(error, color = MaterialTheme.colorScheme.error)
+            Text(error, color = MutedCoral)
         }
 
         uiState.estimatedMoney?.let { money ->
@@ -649,10 +662,10 @@ private fun UsdRateControls(
                 modifier = Modifier.testTag("income-conversion-preview"),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                Text("Selected rate: ${money.rateLkrPerUnitDecimal} LKR/USD")
-                Text("Converted amount: LKR ${formatMinorUnits(money.baseAmountMinor)}")
-                Text("Rate source: ${money.rateSource.displayName}")
-                Text("Rate date: ${money.rateDate}")
+                Text("Selected rate: ${money.rateLkrPerUnitDecimal} LKR/USD", color = TextPrimaryDark, fontWeight = FontWeight.SemiBold)
+                Text("Converted amount: LKR ${formatMinorUnits(money.baseAmountMinor)}", color = PrimaryDarkGreen, fontWeight = FontWeight.Bold)
+                Text("Rate source: ${money.rateSource.displayName}", color = TextSecondaryMuted)
+                Text("Rate date: ${money.rateDate}", color = TextSecondaryMuted)
             }
         }
     }
@@ -673,7 +686,7 @@ private fun RateModeOption(
             enabled = enabled,
             modifier = Modifier.testTag(tag)
         )
-        Text(label)
+        Text(label, color = TextPrimaryDark)
     }
 }
 
@@ -691,7 +704,7 @@ private fun RateSourceOption(
             enabled = !uiState.isSaving,
             modifier = Modifier.testTag("income-manual-source-${source.name}")
         )
-        Text(label)
+        Text(label, color = TextPrimaryDark)
     }
 }
 
