@@ -13,15 +13,18 @@
 A fully functional, user-configurable **Fingerprint & Face Recognition Authentication System** has been implemented in FinClarity.
 
 ### Key Verified Features:
-1. **User-Configurable Biometric Setting**:
+1. **`MainActivity` Inheritance Fix**:
+   - `MainActivity.kt` updated to inherit from `androidx.fragment.app.FragmentActivity` instead of `ComponentActivity`.
+   - AndroidX `BiometricPrompt` requires `FragmentActivity` to attach its dialog fragment; this fix allows `BiometricPrompt` to launch natively on real Android phones and emulators!
+2. **User-Configurable Biometric Setting**:
    - Added **"Fingerprint Unlock"** setting card under `MoreScreen.kt` with switch **"Use Fingerprint to Unlock"**.
    - Verified device hardware capability (`canAuthenticate`) before enabling.
    - Requires successful `BiometricPrompt` authentication before toggling ON.
-2. **UID-Scoped DataStore Preference**:
+3. **UID-Scoped DataStore Preference**:
    - Persisted per authenticated user `userId` in `UserPreferences.kt` & `DataStorePreferencesRepository.kt`.
    - Disabled by default (`biometricUnlockEnabled = false`).
    - Automatically reset on logout (`clearUserPreferencesOnLogout`) so account switching never leaks unlocked states across users.
-3. **Biometric App Lock Gate on Launch & Resume**:
+4. **Biometric App Lock Gate on Launch & Resume**:
    - When an authenticated user launches or reopens FinClarity with `biometricUnlockEnabled == true`, the app presents `BiometricLockScreen.kt`:
      - **FinClarity** title
      - **Welcome back, [First Name]** (using shared `ProfileAvatar`)
@@ -29,10 +32,10 @@ A fully functional, user-configurable **Fingerprint & Face Recognition Authentic
      - **Unlock with Fingerprint** primary button (`#0C5037` Dark Green container)
      - **Use Account Login Instead** fallback button (signs out safely and returns to Login)
    - Scanning a registered fingerprint/face unlocks access to the financial dashboard (`Overview`).
-4. **Zero Unsafe Shortcuts**:
+5. **Zero Unsafe Shortcuts**:
    - Biometric unlock is an additional local security check on top of Firebase Authentication. It never grants access when `auth.currentUser == null`.
-5. **Automated Testing & Build Verification**:
-   - Executed `./gradlew app:testDebugUnitTest`: **594 unit tests passed 100%**.
+6. **Automated Testing & Build Verification**:
+   - Executed `./gradlew app:testDebugUnitTest`: **596 unit tests passed 100%**.
    - Executed `./gradlew app:assembleDebug`: **BUILD SUCCESSFUL** (`app/build/outputs/apk/debug/app-debug.apk`).
    - **Zero Git commits or pushes made**, preserving your local working tree for emulator testing.
 
@@ -42,6 +45,7 @@ A fully functional, user-configurable **Fingerprint & Face Recognition Authentic
 
 | File Path | Description |
 | :--- | :--- |
+| `app/src/main/java/com/example/personalfinanceapp/MainActivity.kt` | Inherits from `FragmentActivity` enabling native AndroidX `BiometricPrompt` dialog attachment. |
 | `app/src/main/java/com/example/personalfinanceapp/feature/preferences/UserPreferences.kt` | Added `biometricUnlockEnabled: Boolean = false` field to user preference model. |
 | `app/src/main/java/com/example/personalfinanceapp/feature/preferences/PreferencesRepository.kt` | Added `updateBiometricUnlockEnabled(userId, enabled)` contract. |
 | `app/src/main/java/com/example/personalfinanceapp/feature/preferences/DataStorePreferencesRepository.kt` | Implemented `updateBiometricUnlockEnabled` with UID map persistence and logout cleanup. |
@@ -58,7 +62,7 @@ A fully functional, user-configurable **Fingerprint & Face Recognition Authentic
 1. **Test Enabling Fingerprint Unlock**:
    - Open **FinClarity** ➔ Log in with Firebase.
    - Tap **"More"** tab ➔ Locate **"Fingerprint Unlock"** card ➔ Toggle **"Use Fingerprint to Unlock"** ON.
-   - Android system prompt *"Verify your fingerprint to enable biometric app lock"* appears.
+   - Android system prompt *"Verify your fingerprint to enable biometric app lock"* appears immediately.
    - Touch fingerprint sensor (`adb emu finger touch 1` in emulator or real finger on phone) ➔ Setting toggles ON!
 2. **Test App Launch / Re-open Lock Gate**:
    - Close or background FinClarity.
