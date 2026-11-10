@@ -65,6 +65,17 @@ class DataStorePreferencesRepository @Inject constructor() : PreferencesReposito
         Result.success(Unit)
     }
 
+    override suspend fun updateBiometricUnlockEnabled(
+        userId: String,
+        enabled: Boolean
+    ): Result<Unit> = mutex.withLock {
+        val current = userPrefsMap.value.toMutableMap()
+        val existing = current[userId] ?: UserPreferences(userId = userId)
+        current[userId] = existing.copy(biometricUnlockEnabled = enabled)
+        userPrefsMap.value = current
+        Result.success(Unit)
+    }
+
     override suspend fun clearUserPreferencesOnLogout(
         userId: String
     ): Result<Unit> = mutex.withLock {

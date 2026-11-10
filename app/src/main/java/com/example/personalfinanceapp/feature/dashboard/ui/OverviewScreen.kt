@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.personalfinanceapp.feature.auth.ui.ProfileAvatar
 import com.example.personalfinanceapp.feature.goal.ui.AddContributionDialog
 import com.example.personalfinanceapp.feature.savings.SavingsCoachResult
 import com.example.personalfinanceapp.feature.savings.SavingsCoachUnavailableReason
@@ -83,7 +85,7 @@ fun OverviewScreen(
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Rupee Pulse",
+                            text = "FinClarity",
                             fontWeight = FontWeight.Bold,
                             color = PrimaryDarkGreen,
                             fontSize = 20.sp
@@ -91,15 +93,13 @@ fun OverviewScreen(
                     }
                 },
                 actions = {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(PrimaryDarkGreen, CircleShape)
-                            .clickable { onNavDestinationSelected(NavDestination.MORE) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("👤", fontSize = 16.sp)
-                    }
+                    ProfileAvatar(
+                        name = uiState.userName,
+                        size = 38.dp,
+                        containerColor = PrimaryDarkGreen,
+                        contentColor = SurfaceWhite,
+                        onClick = { onNavDestinationSelected(NavDestination.MORE) }
+                    )
                     Spacer(modifier = Modifier.width(12.dp))
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite)
@@ -326,14 +326,13 @@ private fun OverviewBalanceCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.clickable { onNavigateToProfile() }
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .background(AccentLime, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("👩‍💼", fontSize = 24.sp)
-                    }
+                    ProfileAvatar(
+                        name = uiState.userName,
+                        size = 44.dp,
+                        containerColor = AccentLime,
+                        contentColor = PrimaryDarkGreen,
+                        fontSize = 16
+                    )
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
@@ -341,8 +340,9 @@ private fun OverviewBalanceCard(
                             fontSize = 12.sp,
                             color = SurfaceWhite.copy(alpha = 0.7f)
                         )
+                        val firstName = uiState.userName.trim().split(" ").firstOrNull()?.ifBlank { "User" } ?: "User"
                         Text(
-                            text = "Good morning, ${uiState.userName}",
+                            text = "Good morning, $firstName",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = SurfaceWhite
@@ -707,9 +707,14 @@ private fun SmartSavingsCard(
                 Button(
                     onClick = onReviewContribution,
                     enabled = !actionState.isSaving,
-                    modifier = Modifier.fillMaxWidth()
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryDarkGreen, contentColor = SurfaceWhite),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) {
-                    Text(if (actionState.isSaving) "Recording allocation" else "Review contribution")
+                    Text(
+                        if (actionState.isSaving) "Recording allocation" else "Review contribution",
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -753,7 +758,10 @@ private fun RecentActivityCard(item: TimelineActivityItem) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Box(
                     modifier = Modifier
                         .size(40.dp)
@@ -771,7 +779,7 @@ private fun RecentActivityCard(item: TimelineActivityItem) {
                     )
                 }
                 Spacer(modifier = Modifier.width(12.dp))
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = item.title,
                         fontSize = 15.sp,
@@ -787,11 +795,13 @@ private fun RecentActivityCard(item: TimelineActivityItem) {
                 }
             }
 
+            Spacer(modifier = Modifier.width(8.dp))
+
             Text(
                 text = item.amountText,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (item.isRedAmount) MutedCoral else TextPrimaryDark
+                color = if (item.isRedAmount) MutedCoral else PrimaryDarkGreen
             )
         }
     }

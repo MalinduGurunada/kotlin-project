@@ -48,9 +48,11 @@ import androidx.compose.ui.unit.sp
 import com.example.personalfinanceapp.core.model.Expense
 import com.example.personalfinanceapp.core.model.PaymentChannel
 import com.example.personalfinanceapp.core.model.SpendingClass
+import com.example.personalfinanceapp.feature.auth.ui.ProfileAvatar
 import com.example.personalfinanceapp.feature.expense.ui.ExpenseUiState
 import com.example.personalfinanceapp.ui.theme.AccentLime
 import com.example.personalfinanceapp.ui.theme.MutedCoral
+import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 import com.example.personalfinanceapp.ui.theme.PrimaryDarkGreen
 import com.example.personalfinanceapp.ui.theme.SecondaryPaleGreen
 import com.example.personalfinanceapp.ui.theme.SurfaceWhite
@@ -157,7 +159,7 @@ fun ActivityScreen(
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Rupee Pulse",
+                            text = "FinClarity",
                             fontWeight = FontWeight.Bold,
                             color = PrimaryDarkGreen,
                             fontSize = 20.sp
@@ -165,14 +167,13 @@ fun ActivityScreen(
                     }
                 },
                 actions = {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(PrimaryDarkGreen, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("👤", fontSize = 16.sp)
-                    }
+                    ProfileAvatar(
+                        name = "User",
+                        size = 36.dp,
+                        containerColor = PrimaryDarkGreen,
+                        contentColor = SurfaceWhite,
+                        onClick = { onNavDestinationSelected(NavDestination.MORE) }
+                    )
                     Spacer(modifier = Modifier.width(12.dp))
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite)
@@ -617,17 +618,20 @@ private fun ActivityTransactionCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Box(
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(40.dp)
                         .background(SecondaryPaleGreen, RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(iconSymbol, fontSize = 20.sp)
                 }
                 Spacer(modifier = Modifier.width(12.dp))
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = title,
                         fontSize = 15.sp,
@@ -643,14 +647,14 @@ private fun ActivityTransactionCard(
                 }
             }
 
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    text = amountText,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MutedCoral
-                )
-            }
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Text(
+                text = amountText,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = MutedCoral
+            )
         }
     }
 }
