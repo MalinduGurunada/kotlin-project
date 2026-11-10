@@ -243,7 +243,7 @@ function structuredCryptoIncome(incomeId, {
   });
 }
 
-function expenseDocument(userId, expenseId) {
+function expenseDocument(userId, expenseId, overrides = {}) {
   return {
     id: expenseId,
     userId,
@@ -260,6 +260,9 @@ function expenseDocument(userId, expenseId) {
     occurredDate: "2026-10-21",
     note: null,
     channelLabel: null,
+    recurringExpenseId: null,
+    recurringOccurrenceId: null,
+    ...overrides,
   };
 }
 
@@ -786,6 +789,9 @@ test("existing expense authorization remains owner-scoped", async () => {
   const otherFirestore = userFirestore("user-b");
   const ownerReference = expenseReference(ownerFirestore, "user-a", "expense-1");
 
+  await expectAllowed(
+    setDoc(categoryReference(ownerFirestore, "user-a", "food"), categoryDocument("food")),
+  );
   await expectAllowed(setDoc(ownerReference, expenseDocument("user-a", "expense-1")));
   await expectAllowed(getDoc(ownerReference));
   await expectDenied(getDoc(expenseReference(otherFirestore, "user-a", "expense-1")));
@@ -798,6 +804,82 @@ test("existing expense authorization remains owner-scoped", async () => {
   await expectDenied(updateDoc(expenseReference(otherFirestore, "user-a", "expense-1"), { note: "denied" }));
   await expectDenied(deleteDoc(expenseReference(otherFirestore, "user-a", "expense-1")));
   await expectAllowed(deleteDoc(ownerReference));
+});
+
+test("expense writes require the exact financial schema and valid ownership", async () => {
+  const firestore = userFirestore("user-a");
+  await expectAllowed(
+    setDoc(categoryReference(firestore, "user-a", "food"), categoryDocument("food")),
+  );
+
+  const validReference = expenseReference(firestore, "user-a", "valid-expense");
+  await expectAllowed(
+    setDoc(validReference, expenseDocument("user-a", "valid-expense")),
+  );
+  await expectAllowed(updateDoc(validReference, { note: "Edited offline-compatible note" }));
+  await expectDenied(updateDoc(validReference, { userId: "user-b" }));
+  await expectDenied(updateDoc(validReference, { id: "forged-id" }));
+  await expectDenied(updateDoc(validReference, { unexpected: true }));
+  await expectDenied(updateDoc(validReference, { baseAmountMinor: 0 }));
+
+  const invalidDocuments = [
+    withoutField(expenseDocument("user-a", "missing-note"), "note"),
+    expenseDocument("user-a", "extra-field", { unexpected: true }),
+    expenseDocument("user-b", "forged-owner"),
+    expenseDocument("user-a", "zero-amount", { originalAmountDecimal: "0.00" }),
+    expenseDocument("user-a", "numeric-amount", { originalAmountDecimal: 1500 }),
+    expenseDocument("user-a", "zero-base", { baseAmountMinor: 0 }),
+    expenseDocument("user-a", "bad-currency", { originalCurrency: "EUR" }),
+    expenseDocument("user-a", "bad-rate", { rateLkrPerUnitDecimal: "1.25" }),
+    expenseDocument("user-a", "bad-rate-source", { rateSource: "MANUAL_REFERENCE" }),
+    expenseDocument("user-a", "bad-date", { occurredDate: "21-10-2026" }),
+    expenseDocument("user-a", "blank-category-name", { categoryNameSnapshot: " " }),
+    expenseDocument("user-a", "one-sided-link", { recurringExpenseId: "ceb" }),
+  ];
+  for (const invalid of invalidDocuments) {
+    await expectDenied(
+      setDoc(expenseReference(firestore, "user-a", invalid.id), invalid),
+    );
+  }
+  await expectDenied(
+    setDoc(
+      expenseReference(firestore, "user-a", "wrong-id"),
+      expenseDocument("user-a", "another-id"),
+    ),
+  );
+
+  await expectDenied(
+    setDoc(
+      expenseReference(firestore, "user-a", "missing-category"),
+      expenseDocument("user-a", "missing-category", { categoryId: "does-not-exist" }),
+    ),
+  );
+});
+
+test("Expense PaymentChannel values exactly match the Kotlin enum", async () => {
+  const firestore = userFirestore("user-a");
+  await expectAllowed(
+    setDoc(categoryReference(firestore, "user-a", "food"), categoryDocument("food")),
+  );
+
+  for (const channel of ["CASH", "CARD", "BANK", "TRANSFER", "OTHER"]) {
+    const expenseId = `channel-${channel.toLowerCase()}`;
+    await expectAllowed(
+      setDoc(
+        expenseReference(firestore, "user-a", expenseId),
+        expenseDocument("user-a", expenseId, { paymentChannel: channel }),
+      ),
+    );
+  }
+  for (const channel of ["WIRE", "BANK_TRANSFER", "transfer", ""]) {
+    const expenseId = `invalid-channel-${channel || "blank"}`;
+    await expectDenied(
+      setDoc(
+        expenseReference(firestore, "user-a", expenseId),
+        expenseDocument("user-a", expenseId, { paymentChannel: channel }),
+      ),
+    );
+  }
 });
 
 test("FCM tokens are owner-written, write-only, schema-checked, and cross-account isolated", async () => {
@@ -975,6 +1057,18 @@ test("recurring commitments are owner scoped, validated, and never deleted", asy
       withoutField(recurringDocument("user-a", "legacy-time"), "reminderTimeMinutes"),
     ),
   );
+  await expectAllowed(
+    setDoc(
+      recurringReference(owner, "user-a", "transfer-template"),
+      recurringDocument("user-a", "transfer-template", { paymentChannel: "TRANSFER" }),
+    ),
+  );
+  await expectDenied(
+    setDoc(
+      recurringReference(owner, "user-a", "invalid-channel"),
+      recurringDocument("user-a", "invalid-channel", { paymentChannel: "WIRE" }),
+    ),
+  );
 });
 
 test("skipped recurring occurrence is immutable and uses a deterministic id", async () => {
@@ -1011,7 +1105,7 @@ test("skipped recurring occurrence is immutable and uses a deterministic id", as
   );
 });
 
-test("confirmed occurrence and linked expense must be created atomically", async () => {
+test("confirmed occurrence requires a consistent linked expense and remains intact", async () => {
   const firestore = userFirestore("user-a");
   await expectAllowed(
     setDoc(categoryReference(firestore, "user-a", "utilities"), categoryDocument("utilities")),
@@ -1034,12 +1128,28 @@ test("confirmed occurrence and linked expense must be created atomically", async
     expenseReference(firestore, "user-a", expenseId),
     {
       ...expenseDocument("user-a", expenseId),
+      categoryId: "utilities",
+      categoryNameSnapshot: "Utilities & Bills",
       recurringExpenseId: "ceb",
       recurringOccurrenceId: occurrenceId,
     },
   );
   batch.set(occurrenceReference(firestore, "user-a", occurrenceId), confirmed);
   await expectAllowed(batch.commit());
+
+  const linkedExpense = expenseReference(firestore, "user-a", expenseId);
+  await expectAllowed(updateDoc(linkedExpense, {
+    note: "Corrected description",
+    paymentChannel: "TRANSFER",
+  }));
+  await expectDenied(updateDoc(linkedExpense, {
+    recurringExpenseId: null,
+    recurringOccurrenceId: null,
+  }));
+  await expectDenied(updateDoc(linkedExpense, { recurringExpenseId: "forged-template" }));
+  await expectDenied(updateDoc(linkedExpense, { recurringOccurrenceId: "ceb_2026-11-30" }));
+  await expectDenied(deleteDoc(linkedExpense));
+  await expectDenied(deleteDoc(occurrenceReference(firestore, "user-a", occurrenceId)));
 
   await expectDenied(
     setDoc(
@@ -1049,6 +1159,30 @@ test("confirmed occurrence and linked expense must be created atomically", async
       }),
     ),
   );
+
+  const inconsistentOccurrenceId = "ceb_2027-01-31";
+  const inconsistentExpenseId = `recurring_${inconsistentOccurrenceId}`;
+  await expectAllowed(
+    setDoc(
+      recurringReference(firestore, "user-a", "different-template"),
+      recurringDocument("user-a", "different-template"),
+    ),
+  );
+  const inconsistentBatch = writeBatch(firestore);
+  inconsistentBatch.set(
+    expenseReference(firestore, "user-a", inconsistentExpenseId),
+    expenseDocument("user-a", inconsistentExpenseId, {
+      categoryId: "utilities",
+      categoryNameSnapshot: "Utilities & Bills",
+      recurringExpenseId: "different-template",
+      recurringOccurrenceId: inconsistentOccurrenceId,
+    }),
+  );
+  inconsistentBatch.set(
+    occurrenceReference(firestore, "user-a", inconsistentOccurrenceId),
+    occurrenceDocument("user-a", "ceb", "2027-01-31", "CONFIRMED"),
+  );
+  await expectDenied(inconsistentBatch.commit());
 });
 
 test("unrelated paths and broader cross-user access remain denied", async () => {
