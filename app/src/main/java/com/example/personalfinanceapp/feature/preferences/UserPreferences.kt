@@ -7,5 +7,6 @@ data class UserPreferences(
     val defaultCategoryId: String = "food",
     val defaultPaymentChannel: PaymentChannel = PaymentChannel.CASH,
     val notificationsEnabled: Boolean = true,
-    val reminderLeadDays: Int = 2
+    val reminderLeadDays: Int = 2,
+    val biometricUnlockEnabled: Boolean = false
 )

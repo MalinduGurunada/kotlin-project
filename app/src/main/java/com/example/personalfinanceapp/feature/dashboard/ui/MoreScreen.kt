@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -29,9 +30,16 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -39,6 +47,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathBuilder
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.disabled
@@ -46,6 +55,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
+import com.example.personalfinanceapp.feature.auth.biometric.BiometricAuthManager
+import com.example.personalfinanceapp.feature.auth.biometric.BiometricStatus
+import com.example.personalfinanceapp.feature.auth.ui.ProfileAvatar
+import com.example.personalfinanceapp.feature.reminder.daily.DailyCaptureReminderSettings
+import com.example.personalfinanceapp.feature.reminder.daily.formatDailyCaptureReminderTime
 import com.example.personalfinanceapp.ui.theme.MutedCoral
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 import com.example.personalfinanceapp.ui.theme.PrimaryDarkGreen
@@ -63,6 +78,12 @@ fun MoreScreen(
     userName: String,
     notificationsEnabled: Boolean = true,
     onNotificationsEnabledChange: (Boolean) -> Unit = {},
+    dailyCaptureReminderEnabled: Boolean = false,
+    dailyCaptureReminderTimeMinutes: Int = DailyCaptureReminderSettings.DEFAULT_TIME_MINUTES,
+    onDailyCaptureReminderEnabledChange: (Boolean) -> Unit = {},
+    onDailyCaptureReminderTimeChange: (Int) -> Unit = {},
+    biometricUnlockEnabled: Boolean = false,
+    onBiometricUnlockEnabledChange: (Boolean) -> Unit = {},
     onCategoriesClick: () -> Unit,
     onFinancialSummariesClick: () -> Unit,
     onExpensesClick: () -> Unit,
@@ -75,7 +96,8 @@ fun MoreScreen(
     modifier: Modifier = Modifier
 ) {
     val displayName = userName.ifBlank { "User" }
-    val profileInitial = displayName.first().uppercase()
+    val context = LocalContext.current
+    val biometricAuthManager = remember(context) { BiometricAuthManager(context) }
 
     Scaffold(
         modifier = modifier
@@ -103,22 +125,14 @@ fun MoreScreen(
                     }
                 },
                 actions = {
-                    Surface(
-                        modifier = Modifier
-                            .padding(end = 16.dp)
-                            .size(40.dp)
-                            .clickable { onBottomDestinationSelected(NavDestination.MORE) },
-                        shape = CircleShape,
-                        color = PrimaryDarkGreen
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = profileInitial,
-                                color = SurfaceWhite,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
+                    ProfileAvatar(
+                        name = displayName,
+                        size = 38.dp,
+                        containerColor = PrimaryDarkGreen,
+                        contentColor = SurfaceWhite,
+                        onClick = { onBottomDestinationSelected(NavDestination.MORE) }
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite)
             )
@@ -140,13 +154,48 @@ fun MoreScreen(
         ) {
             item {
                 Spacer(modifier = Modifier.height(4.dp))
-                ProfileSummaryCard(displayName = displayName, profileInitial = profileInitial)
+                ProfileSummaryCard(displayName = displayName)
             }
 
             item {
                 NotificationPreferenceCard(
                     enabled = notificationsEnabled,
                     onEnabledChange = onNotificationsEnabledChange
+                )
+            }
+
+            item {
+                DailyCaptureReminderCard(
+                    notificationsEnabled = notificationsEnabled,
+                    enabled = dailyCaptureReminderEnabled,
+                    timeMinutes = dailyCaptureReminderTimeMinutes,
+                    onEnabledChange = onDailyCaptureReminderEnabledChange,
+                    onTimeChange = onDailyCaptureReminderTimeChange
+                )
+            }
+
+            item {
+                BiometricPreferenceCard(
+                    enabled = biometricUnlockEnabled,
+                    onEnabledChange = { requested ->
+                        if (requested) {
+                            val activity = context as? FragmentActivity
+                            if (activity != null && biometricAuthManager.checkBiometricStatus() == BiometricStatus.AVAILABLE) {
+                                biometricAuthManager.promptBiometricAuthentication(
+                                    activity = activity,
+                                    title = "Enable Fingerprint Unlock",
+                                    subtitle = "Verify your fingerprint to enable biometric app lock",
+                                    onSuccess = { onBiometricUnlockEnabledChange(true) },
+                                    onError = { onBiometricUnlockEnabledChange(true) },
+                                    onCancel = { }
+                                )
+                            } else {
+                                onBiometricUnlockEnabledChange(true)
+                            }
+                        } else {
+                            onBiometricUnlockEnabledChange(false)
+                        }
+                    }
                 )
             }
 
@@ -181,6 +230,35 @@ fun MoreScreen(
                             icon = MoreIcons.Reminder,
                             testTag = "more_due_items",
                             onClick = onDueItemsClick
+                        )
+                    )
+                )
+            }
+
+            item {
+                MoreSection(
+                    title = "Finance tools",
+                    items = listOf(
+                        MoreItem(
+                            title = "Expenses",
+                            subtitle = "Review and manage recorded expenses",
+                            icon = MoreIcons.Expenses,
+                            testTag = "more_expenses",
+                            onClick = onExpensesClick
+                        ),
+                        MoreItem(
+                            title = "Income",
+                            subtitle = "Review income and historical currency values",
+                            icon = MoreIcons.Income,
+                            testTag = "more_income",
+                            onClick = onIncomeClick
+                        ),
+                        MoreItem(
+                            title = "Receivables",
+                            subtitle = "Track outstanding and partially received payments",
+                            icon = MoreIcons.Receivables,
+                            testTag = "more_receivables",
+                            onClick = onReceivablesClick
                         )
                     )
                 )
@@ -226,35 +304,6 @@ fun MoreScreen(
 
             item {
                 MoreSection(
-                    title = "Finance tools",
-                    items = listOf(
-                        MoreItem(
-                            title = "Expenses",
-                            subtitle = "Review and manage recorded expenses",
-                            icon = MoreIcons.Expenses,
-                            testTag = "more_expenses",
-                            onClick = onExpensesClick
-                        ),
-                        MoreItem(
-                            title = "Income",
-                            subtitle = "Review income and historical currency values",
-                            icon = MoreIcons.Income,
-                            testTag = "more_income",
-                            onClick = onIncomeClick
-                        ),
-                        MoreItem(
-                            title = "Receivables",
-                            subtitle = "Track outstanding and partially received payments",
-                            icon = MoreIcons.Receivables,
-                            testTag = "more_receivables",
-                            onClick = onReceivablesClick
-                        )
-                    )
-                )
-            }
-
-            item {
-                MoreSection(
                     title = "Data, privacy & vault",
                     items = listOf(
                         MoreItem(
@@ -291,6 +340,170 @@ fun MoreScreen(
 
             item {
                 Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun BiometricPreferenceCard(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("biometric_preference"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 76.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            MoreIconBadge(
+                icon = MoreIcons.Shield,
+                contentDescription = null
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Fingerprint Unlock",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = TextPrimaryDark,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Use Fingerprint to Unlock",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondaryMuted
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChange,
+                modifier = Modifier.testTag("biometric_preference_switch"),
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = TextPrimaryDark,
+                    checkedTrackColor = SecondaryPaleGreen
+                )
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DailyCaptureReminderCard(
+    notificationsEnabled: Boolean,
+    enabled: Boolean,
+    timeMinutes: Int,
+    onEnabledChange: (Boolean) -> Unit,
+    onTimeChange: (Int) -> Unit
+) {
+    var showTimePicker by remember { mutableStateOf(false) }
+    val timePickerState = rememberTimePickerState(
+        initialHour = timeMinutes / 60,
+        initialMinute = timeMinutes % 60,
+        is24Hour = false
+    )
+
+    if (showTimePicker) {
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            title = { Text("Daily reminder time") },
+            text = { TimePicker(state = timePickerState) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onTimeChange(timePickerState.hour * 60 + timePickerState.minute)
+                        showTimePicker = false
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTimePicker = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("daily_capture_reminder"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                MoreIconBadge(icon = MoreIcons.Reminder, contentDescription = null)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Daily expense reminder",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = TextPrimaryDark,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (notificationsEnabled) {
+                            "Remind me only when no expense was recorded today"
+                        } else {
+                            "Enable Notifications above to receive this reminder"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondaryMuted
+                    )
+                }
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = onEnabledChange,
+                    enabled = notificationsEnabled,
+                    modifier = Modifier.testTag("daily_capture_reminder_switch"),
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = TextPrimaryDark,
+                        checkedTrackColor = SecondaryPaleGreen
+                    )
+                )
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable(enabled = notificationsEnabled && enabled) {
+                        showTimePicker = true
+                    }
+                    .testTag("daily_capture_reminder_time"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Reminder time",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondaryMuted
+                )
+                Text(
+                    text = formatDailyCaptureReminderTime(timeMinutes),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = PrimaryDarkGreen,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
@@ -349,8 +562,7 @@ private fun NotificationPreferenceCard(
 
 @Composable
 private fun ProfileSummaryCard(
-    displayName: String,
-    profileInitial: String
+    displayName: String
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -366,20 +578,13 @@ private fun ProfileSummaryCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Surface(
-                    modifier = Modifier.size(56.dp),
-                    shape = CircleShape,
-                    color = SecondaryPaleGreen
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = profileInitial,
-                            style = MaterialTheme.typography.titleLarge,
-                            color = PrimaryDarkGreen,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
+                ProfileAvatar(
+                    name = displayName,
+                    size = 56.dp,
+                    containerColor = SecondaryPaleGreen,
+                    contentColor = PrimaryDarkGreen,
+                    fontSize = 20
+                )
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(

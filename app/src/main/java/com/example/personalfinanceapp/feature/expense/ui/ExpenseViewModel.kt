@@ -305,7 +305,9 @@ class ExpenseViewModel @Inject constructor(
                 money = money,
                 occurredDate = occurredDate,
                 note = note?.trim()?.ifBlank { null },
-                channelLabel = storedExpense?.channelLabel
+                channelLabel = storedExpense?.channelLabel,
+                recurringExpenseId = storedExpense?.recurringExpenseId,
+                recurringOccurrenceId = storedExpense?.recurringOccurrenceId
             )
 
             val result = expenseRepository.saveExpenseForOwner(ownerId, expense)
@@ -372,6 +374,12 @@ class ExpenseViewModel @Inject constructor(
     }
 
     fun deleteExpense(id: DocumentId) {
+        val expense = uiState.value.expenses.firstOrNull { it.id == id }
+        if (expense?.recurringOccurrenceId != null) {
+            _errorMessage.value =
+                "Confirmed recurring payments cannot be deleted. Edit the expense instead."
+            return
+        }
         val ownerId = authRepository.currentUserId()
         if (ownerId.isNullOrBlank()) {
             _errorMessage.value = "User is not authenticated"

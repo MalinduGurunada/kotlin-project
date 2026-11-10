@@ -373,6 +373,53 @@ class ExpenseViewModelTest {
     }
 
     @Test
+    fun editingConfirmedRecurringExpensePreservesImmutableLinkage() = runTest {
+        backgroundScope.launch { viewModel.uiState.collect() }
+        val occurredDate = LocalDate.now().withDayOfMonth(10)
+        val existing = Expense(
+            id = "recurring-rent_2026-11-01",
+            categoryId = "bills",
+            categoryNameSnapshot = "Bills",
+            spendingClass = SpendingClass.COMMITTED,
+            paymentChannel = PaymentChannel.TRANSFER,
+            money = Money(
+                originalAmountDecimal = "25000.00",
+                originalCurrency = CurrencyCode.LKR,
+                rateLkrPerUnitDecimal = "1",
+                baseAmountMinor = 2_500_000L,
+                rateSource = RateSource.LKR_FIXED,
+                rateDate = occurredDate
+            ),
+            occurredDate = occurredDate,
+            note = "Original rent",
+            channelLabel = "Standing order",
+            recurringExpenseId = "rent",
+            recurringOccurrenceId = "rent_2026-11-01"
+        )
+        fakeExpenseRepository.saveExpense(existing).getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.saveExpense(
+            id = existing.id,
+            categoryId = existing.categoryId,
+            amountDecimal = existing.money.originalAmountDecimal,
+            currency = existing.money.originalCurrency,
+            paymentChannel = PaymentChannel.BANK,
+            spendingClass = existing.spendingClass,
+            occurredDate = existing.occurredDate,
+            note = "Corrected rent"
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val saved = viewModel.uiState.value.expenses.single()
+        assertEquals("rent", saved.recurringExpenseId)
+        assertEquals("rent_2026-11-01", saved.recurringOccurrenceId)
+        assertEquals("Standing order", saved.channelLabel)
+        assertEquals("Corrected rent", saved.note)
+        assertEquals(PaymentChannel.BANK, saved.paymentChannel)
+    }
+
+    @Test
     fun editingUsdAmountRecalculatesWithHistoricalSnapshotNotLatestQuote() = runTest {
         backgroundScope.launch { viewModel.uiState.collect() }
         testDispatcher.scheduler.advanceUntilIdle()
@@ -534,6 +581,39 @@ class ExpenseViewModelTest {
         val state = viewModel.uiState.value
         assertTrue(state.expenses.isEmpty())
         assertEquals(0L, state.totalLkrMinor)
+    }
+
+    @Test
+    fun deleteConfirmedRecurringExpenseIsRejectedBeforeRepositoryWrite() = runTest {
+        backgroundScope.launch { viewModel.uiState.collect() }
+        val occurredDate = LocalDate.now().withDayOfMonth(10)
+        val linkedExpense = Expense(
+            id = "recurring-rent_2026-11-01",
+            categoryId = "bills",
+            categoryNameSnapshot = "Bills",
+            spendingClass = SpendingClass.COMMITTED,
+            paymentChannel = PaymentChannel.TRANSFER,
+            money = Money(
+                originalAmountDecimal = "25000.00",
+                originalCurrency = CurrencyCode.LKR,
+                rateLkrPerUnitDecimal = "1",
+                baseAmountMinor = 2_500_000L,
+                rateSource = RateSource.LKR_FIXED,
+                rateDate = occurredDate
+            ),
+            occurredDate = occurredDate,
+            recurringExpenseId = "rent",
+            recurringOccurrenceId = "rent_2026-11-01"
+        )
+        fakeExpenseRepository.saveExpense(linkedExpense).getOrThrow()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.deleteExpense(linkedExpense.id)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(linkedExpense.id, state.expenses.single().id)
+        assertTrue(state.errorMessage.orEmpty().contains("cannot be deleted"))
     }
 
     @Test

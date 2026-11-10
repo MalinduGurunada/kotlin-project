@@ -29,24 +29,90 @@ service cloud.firestore {
              data.updatedAt == request.time;
     }
 
-    // Helper function validating expense schema and preventing ownership forging
-    function isValidExpenseData(data, userId) {
-      return data.userId == userId &&
+    function hasValidExpenseFields(data) {
+      return data.keys().hasAll([
+               'id', 'userId', 'categoryId', 'categoryNameSnapshot',
+               'spendingClass', 'paymentChannel', 'originalAmountDecimal',
+               'originalCurrency', 'rateLkrPerUnitDecimal', 'baseAmountMinor',
+               'rateSource', 'rateDate', 'occurredDate', 'note',
+               'channelLabel', 'recurringExpenseId', 'recurringOccurrenceId'
+             ]) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'categoryId', 'categoryNameSnapshot',
+               'spendingClass', 'paymentChannel', 'originalAmountDecimal',
+               'originalCurrency', 'rateLkrPerUnitDecimal', 'baseAmountMinor',
+               'rateSource', 'rateDate', 'occurredDate', 'note',
+               'channelLabel', 'recurringExpenseId', 'recurringOccurrenceId'
+             ]);
+    }
+
+    function hasValidExpenseMoney(data) {
+      return isPositiveAmountDecimal(data.originalAmountDecimal) &&
+             data.originalAmountDecimal == data.originalAmountDecimal.trim() &&
+             data.originalAmountDecimal.size() <= 24 &&
+             isPositiveRateDecimal(data.rateLkrPerUnitDecimal) &&
+             data.rateLkrPerUnitDecimal == data.rateLkrPerUnitDecimal.trim() &&
+             data.rateLkrPerUnitDecimal.size() <= 24 &&
+             data.baseAmountMinor is int && data.baseAmountMinor > 0 &&
+             ((data.originalCurrency == 'LKR' &&
+               data.rateSource == 'LKR_FIXED' &&
+               isLkrUnitRate(data.rateLkrPerUnitDecimal) &&
+               data.rateDate == data.occurredDate) ||
+              (data.originalCurrency == 'USD' &&
+               data.rateSource in [
+                 'MANUAL_TRANSFER',
+                 'MANUAL_REFERENCE',
+                 'EXCHANGE_RATE_API_REFERENCE'
+               ]));
+    }
+
+    function hasNoRecurringExpenseLink(data) {
+      return (!('recurringExpenseId' in data) || data.recurringExpenseId == null) &&
+             (!('recurringOccurrenceId' in data) || data.recurringOccurrenceId == null);
+    }
+
+    function hasValidExpenseRecurringLink(data, userId, expenseId) {
+      return (data.recurringExpenseId == null &&
+              data.recurringOccurrenceId == null) ||
+             (data.recurringExpenseId is string &&
+              data.recurringExpenseId.size() > 0 &&
+              data.recurringOccurrenceId is string &&
+              data.recurringOccurrenceId.size() > 0 &&
+              expenseId == 'recurring_' + data.recurringOccurrenceId &&
+              exists(/databases/$(database)/documents/users/$(userId)/recurringExpenses/$(data.recurringExpenseId)));
+    }
+
+    function preservesExpenseRecurringLink(before, after) {
+      return (hasNoRecurringExpenseLink(before) &&
+              after.recurringExpenseId == null &&
+              after.recurringOccurrenceId == null) ||
+             (before.recurringExpenseId is string &&
+              before.recurringOccurrenceId is string &&
+              after.recurringExpenseId == before.recurringExpenseId &&
+              after.recurringOccurrenceId == before.recurringOccurrenceId);
+    }
+
+    // Exact Expense schema emitted by FirestoreExpenseRepository and recurring confirmation.
+    // Firestore rules cannot safely reproduce arbitrary-precision decimal multiplication, so
+    // baseAmountMinor consistency remains independently checked by the Android mapper.
+    function isValidExpenseData(data, userId, expenseId) {
+      return hasValidExpenseFields(data) &&
+             data.id is string && data.id == expenseId &&
+             data.userId is string && data.userId == userId &&
              data.categoryId is string &&
-             data.categoryId.size() > 0 &&
+             data.categoryId.size() > 0 && data.categoryId.size() <= 256 &&
+             exists(/databases/$(database)/documents/users/$(userId)/categories/$(data.categoryId)) &&
              data.categoryNameSnapshot is string &&
-             data.originalAmountDecimal is string &&
-             data.baseAmountMinor is int &&
-             data.baseAmountMinor >= 0 &&
+             data.categoryNameSnapshot.trim().size() > 0 &&
+             data.categoryNameSnapshot.size() <= 50 &&
              data.spendingClass in ['COMMITTED', 'DISCRETIONARY'] &&
-             data.paymentChannel in ['CASH', 'CARD', 'BANK', 'OTHER'] &&
-             data.occurredDate is string &&
-             (!('recurringExpenseId' in data) ||
-               data.recurringExpenseId == null ||
-               data.recurringExpenseId is string) &&
-             (!('recurringOccurrenceId' in data) ||
-               data.recurringOccurrenceId == null ||
-               data.recurringOccurrenceId is string);
+             data.paymentChannel in ['CASH', 'CARD', 'BANK', 'TRANSFER', 'OTHER'] &&
+             isIsoDate(data.occurredDate) &&
+             isIsoDate(data.rateDate) &&
+             (data.note == null || data.note is string) &&
+             (data.channelLabel == null || data.channelLabel is string) &&
+             hasValidExpenseMoney(data) &&
+             hasValidExpenseRecurringLink(data, userId, expenseId);
     }
 
     function isValidRecurringExpenseData(data, userId, recurringId) {
@@ -74,7 +140,7 @@ service cloud.firestore {
              isIsoDate(data.startDate) &&
              (data.endDate == null || isIsoDate(data.endDate)) &&
              data.status in ['ACTIVE', 'PAUSED', 'CANCELLED'] &&
-             data.paymentChannel in ['CASH', 'CARD', 'BANK', 'OTHER'] &&
+             data.paymentChannel in ['CASH', 'CARD', 'BANK', 'TRANSFER', 'OTHER'] &&
              (data.channelLabel == null || data.channelLabel is string) &&
              data.reminderEnabled is bool &&
              data.reminderLeadDays is int &&
@@ -452,8 +518,14 @@ service cloud.firestore {
 
       // Scoped expenses collection for signed-in user
       match /expenses/{expenseId} {
-        allow read, delete: if isVerifiedOwner(userId);
-        allow create, update: if isVerifiedOwner(userId) && isValidExpenseData(request.resource.data, userId);
+        allow read: if isVerifiedOwner(userId);
+        allow create: if isVerifiedOwner(userId) &&
+                      isValidExpenseData(request.resource.data, userId, expenseId);
+        allow update: if isVerifiedOwner(userId) &&
+                      isValidExpenseData(request.resource.data, userId, expenseId) &&
+                      preservesExpenseRecurringLink(resource.data, request.resource.data);
+        allow delete: if isVerifiedOwner(userId) &&
+                      hasNoRecurringExpenseLink(resource.data);
       }
 
       // Recurring templates are retained when paused or cancelled.

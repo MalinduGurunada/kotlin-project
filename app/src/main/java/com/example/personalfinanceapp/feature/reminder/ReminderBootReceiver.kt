@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.example.personalfinanceapp.core.database.ReminderDao
+import com.example.personalfinanceapp.feature.reminder.daily.DailyCaptureReminderScheduler
 import com.google.firebase.auth.FirebaseAuth
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -18,9 +19,13 @@ class ReminderBootReceiver : BroadcastReceiver() {
     @Inject
     lateinit var reminderDao: ReminderDao
 
+    @Inject
+    lateinit var dailyCaptureReminderScheduler: DailyCaptureReminderScheduler
+
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED ||
             intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            dailyCaptureReminderScheduler.rescheduleForCurrentUser()
             val pendingResult = goAsync()
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 try {

@@ -1,5 +1,6 @@
 package com.example.personalfinanceapp.feature.expense.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,14 +9,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -32,16 +36,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.personalfinanceapp.core.model.CurrencyCode
 import com.example.personalfinanceapp.core.model.Expense
 import com.example.personalfinanceapp.core.model.Money
 import com.example.personalfinanceapp.core.model.PaymentChannel
 import com.example.personalfinanceapp.core.model.RateSource
 import com.example.personalfinanceapp.core.model.SpendingClass
+import com.example.personalfinanceapp.ui.theme.MutedCoral
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
+import com.example.personalfinanceapp.ui.theme.PrimaryDarkGreen
+import com.example.personalfinanceapp.ui.theme.SurfaceWhite
+import com.example.personalfinanceapp.ui.theme.TextPrimaryDark
+import com.example.personalfinanceapp.ui.theme.TextSecondaryMuted
 import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -99,11 +110,15 @@ fun ExpenseListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Expenses") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                title = {
+                    Text(
+                        text = "Expenses",
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimaryDark,
+                        fontSize = 18.sp
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceWhite)
             )
         },
         floatingActionButton = {
@@ -111,9 +126,13 @@ fun ExpenseListScreen(
                 onClick = {
                     expenseToEdit = null
                     showEditorDialog = true
-                }
+                },
+                containerColor = PrimaryDarkGreen,
+                contentColor = SurfaceWhite,
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.navigationBarsPadding()
             ) {
-                Text("+", style = MaterialTheme.typography.titleLarge)
+                Text("+", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
@@ -122,23 +141,25 @@ fun ExpenseListScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .background(Color(0xFFF8F9FA))
         ) {
             // Summary Card
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer
-                )
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = PrimaryDarkGreen)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(20.dp)) {
                     Text(
-                        text = "Total Monthly Expenses",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                        text = "TOTAL MONTHLY EXPENSES",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = SurfaceWhite.copy(alpha = 0.7f),
+                        letterSpacing = 1.sp
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = if (uiState.totalsAvailable) {
                             val lkrAmountDecimal = uiState.totalLkrMinor.toDouble() / 100.0
@@ -146,9 +167,9 @@ fun ExpenseListScreen(
                         } else {
                             "Unavailable"
                         },
-                        style = MaterialTheme.typography.headlineLarge,
+                        fontSize = 32.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                        color = SurfaceWhite
                     )
                 }
             }
@@ -158,7 +179,7 @@ fun ExpenseListScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator()
+                    CircularProgressIndicator(color = PrimaryDarkGreen)
                 }
             } else if (uiState.expenses.isEmpty()) {
                 Box(
@@ -168,13 +189,13 @@ fun ExpenseListScreen(
                     Text(
                         text = "No expenses recorded for this month.\nTap + to add your first expense.",
                         style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = TextSecondaryMuted
                     )
                 }
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
                         horizontal = 16.dp,
                         vertical = 8.dp
@@ -204,7 +225,9 @@ fun ExpenseItemCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(
             modifier = Modifier
@@ -216,20 +239,21 @@ fun ExpenseItemCard(
                 Text(
                     text = expense.categoryNameSnapshot,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimaryDark
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "${expense.paymentChannel.name} • ${expense.occurredDate}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = TextSecondaryMuted
                 )
                 if (!expense.note.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = expense.note,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = TextPrimaryDark
                     )
                 }
             }
@@ -239,23 +263,23 @@ fun ExpenseItemCard(
                     text = "${expense.money.originalCurrency.name} ${expense.money.originalAmountDecimal}",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = MutedCoral
                 )
                 if (expense.money.originalCurrency != CurrencyCode.LKR) {
                     val baseLkr = expense.money.baseAmountMinor.toDouble() / 100.0
                     Text(
                         text = "(LKR ${String.format("%.2f", baseLkr)})",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = TextSecondaryMuted
                     )
                 }
 
                 Row {
                     TextButton(onClick = onEdit) {
-                        Text("Edit")
+                        Text("Edit", color = PrimaryDarkGreen, fontWeight = FontWeight.Bold)
                     }
                     TextButton(onClick = onDelete) {
-                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                        Text("Delete", color = MutedCoral, fontWeight = FontWeight.Bold)
                     }
                 }
             }
