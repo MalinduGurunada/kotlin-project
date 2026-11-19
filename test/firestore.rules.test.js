@@ -102,6 +102,22 @@ function fcmTokenDocument(uid, overrides = {}) {
   };
 }
 
+function onboardingProfile(uid, overrides = {}) {
+  return {
+    onboardingSchemaVersion: 1,
+    userId: uid,
+    baseCurrency: "LKR",
+    incomeSources: ["SALARY", "FREELANCE"],
+    salaryPayday: 25,
+    expectedMonthlyIncomeMinor: 15000000,
+    expectedMonthlySpendingMinor: 9000000,
+    onboardingVersion: 1,
+    onboardingCompleted: true,
+    onboardingUpdatedAt: serverTimestamp(),
+    ...overrides,
+  };
+}
+
 function categoryReference(firestore, uid, categoryId) {
   return doc(firestore, "users", uid, "categories", categoryId);
 }
@@ -401,6 +417,74 @@ test("unverified owners can bootstrap their profile but cannot access financial 
     goalReference(firestore, "user-a", "goal-1"),
     goalDocument("goal-1"),
   ));
+});
+
+test("verified owners can save and read a valid onboarding profile", async () => {
+  const firestore = userFirestore("user-a");
+  const reference = doc(firestore, "users", "user-a");
+
+  await expectAllowed(setDoc(reference, onboardingProfile("user-a")));
+  await expectAllowed(getDoc(reference));
+  await expectAllowed(setDoc(
+    reference,
+    onboardingProfile("user-a", { expectedMonthlySpendingMinor: 9500000 }),
+  ));
+});
+
+test("completed onboarding profiles cannot be downgraded to registration-only data", async () => {
+  const verified = userFirestore("user-a");
+  const unverified = unverifiedUserFirestore("user-a");
+  const reference = doc(verified, "users", "user-a");
+
+  await expectAllowed(setDoc(reference, onboardingProfile("user-a")));
+  await expectDenied(setDoc(reference, { displayName: "Verified Owner" }));
+  await expectDenied(setDoc(doc(unverified, "users", "user-a"), {
+    displayName: "Unverified Owner",
+  }));
+  await expectAllowed(setDoc(
+    reference,
+    onboardingProfile("user-a", { displayName: "Verified Owner" }),
+  ));
+});
+
+test("onboarding profiles reject cross-user and unverified writes", async () => {
+  const owner = userFirestore("user-a");
+  const unverified = unverifiedUserFirestore("user-a");
+
+  await expectDenied(setDoc(
+    doc(owner, "users", "user-b"),
+    onboardingProfile("user-b"),
+  ));
+  await expectDenied(setDoc(
+    doc(unverified, "users", "user-a"),
+    onboardingProfile("user-a"),
+  ));
+});
+
+test("onboarding profiles reject invalid ownership, values, and fields", async () => {
+  const firestore = userFirestore("user-a");
+  const reference = doc(firestore, "users", "user-a");
+
+  await expectDenied(setDoc(reference, onboardingProfile("user-b")));
+  await expectDenied(setDoc(reference, onboardingProfile("user-a", {
+    incomeSources: [],
+  })));
+  await expectDenied(setDoc(reference, onboardingProfile("user-a", {
+    salaryPayday: 32,
+  })));
+  await expectDenied(setDoc(reference, onboardingProfile("user-a", {
+    salaryPayday: null,
+  })));
+  await expectDenied(setDoc(reference, onboardingProfile("user-a", {
+    incomeSources: ["FREELANCE"],
+    salaryPayday: 25,
+  })));
+  await expectDenied(setDoc(reference, onboardingProfile("user-a", {
+    baseCurrency: "USD",
+  })));
+  await expectDenied(setDoc(reference, onboardingProfile("user-a", {
+    unexpectedField: true,
+  })));
 });
 
 test("owners can create, read, list, update, and transactionally delete income", async () => {

@@ -56,6 +56,9 @@ import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigati
 import com.example.personalfinanceapp.feature.notification.FinanceReviewNavigationResolver
 import com.example.personalfinanceapp.feature.notification.FinanceReviewPayload
 import com.example.personalfinanceapp.feature.notification.NotificationPreferencesViewModel
+import com.example.personalfinanceapp.feature.onboarding.ui.OnboardingGateState
+import com.example.personalfinanceapp.feature.onboarding.ui.OnboardingScreen
+import com.example.personalfinanceapp.feature.onboarding.ui.OnboardingViewModel
 import com.example.personalfinanceapp.feature.recurring.ui.DueItemsScreen
 import com.example.personalfinanceapp.feature.recurring.ui.RecurringCommitmentsScreen
 import com.example.personalfinanceapp.feature.reminder.daily.DailyCaptureNotificationTarget
@@ -77,6 +80,7 @@ internal enum class AppNavigationTarget {
     LOGIN,
     REGISTRATION_SETUP,
     EMAIL_VERIFICATION,
+    ONBOARDING,
     OVERVIEW,
     ACTIVITY,
     GOALS,
@@ -149,6 +153,9 @@ private fun NavHostController.navigateTo(
         AppNavigationTarget.EMAIL_VERIFICATION -> navigate(EmailVerification) {
             replaceBackStackIfNeeded(replaceBackStack)
         }
+        AppNavigationTarget.ONBOARDING -> navigate(Onboarding) {
+            replaceBackStackIfNeeded(replaceBackStack)
+        }
         AppNavigationTarget.OVERVIEW -> navigate(Overview) {
             replaceBackStackIfNeeded(replaceBackStack)
         }
@@ -185,6 +192,7 @@ private fun NavHostController.navigateTo(
 @Composable
 fun AppNavHost(
     authViewModel: AuthViewModel = hiltViewModel(),
+    onboardingViewModel: OnboardingViewModel = hiltViewModel(),
     notificationTarget: FinanceReviewPayload? = null,
     onNotificationTargetConsumed: () -> Unit = {},
     dailyCaptureTarget: DailyCaptureNotificationTarget? = null,
@@ -199,6 +207,8 @@ fun AppNavHost(
     val resetUiState by authViewModel.passwordResetUiState.collectAsState()
     val verificationUiState by authViewModel.emailVerificationUiState.collectAsState()
     val signOutErrorMessage by authViewModel.signOutErrorMessage.collectAsState()
+    val onboardingGateState by onboardingViewModel.gateState.collectAsState()
+    val onboardingUiState by onboardingViewModel.uiState.collectAsState()
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
@@ -206,7 +216,12 @@ fun AppNavHost(
     var authenticatedStartupComplete by remember { mutableStateOf(false) }
     var activeAuthenticatedUserId by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(navigationState, notificationTarget, dailyCaptureTarget) {
+    LaunchedEffect(
+        navigationState,
+        onboardingGateState,
+        notificationTarget,
+        dailyCaptureTarget
+    ) {
         when (navigationState) {
             AuthNavigationState.Resolving -> Unit
             AuthNavigationState.Unauthenticated -> {
@@ -242,6 +257,20 @@ fun AppNavHost(
                     showRecordExpenseDialog = false
                 }
                 activeAuthenticatedUserId = authenticatedUserId
+                if (onboardingGateState !is OnboardingGateState.Complete) {
+                    authenticatedStartupComplete = false
+                    showRecordExpenseDialog = false
+                    when (onboardingGateState) {
+                        OnboardingGateState.Resolving -> Unit
+                        OnboardingGateState.Required,
+                        is OnboardingGateState.Error -> navController.navigateTo(
+                            AppNavigationTarget.ONBOARDING,
+                            replaceBackStack = true
+                        )
+                        OnboardingGateState.Complete -> Unit
+                    }
+                    return@LaunchedEffect
+                }
                 val pendingDailyCapture = dailyCaptureTarget
                 val pendingNotification = notificationTarget
                 if (pendingDailyCapture != null) {
@@ -375,6 +404,29 @@ fun AppNavHost(
                 onResendClicked = authViewModel::resendVerificationEmail,
                 onCheckStatusClicked = authViewModel::checkVerificationStatus,
                 onSignOutClicked = authViewModel::signOut
+            )
+        }
+
+        composable<Onboarding> {
+            OnboardingScreen(
+                gateState = onboardingGateState,
+                uiState = onboardingUiState,
+                onIncomeSourceToggled = onboardingViewModel::toggleIncomeSource,
+                onSalaryPaydayChanged = onboardingViewModel::onSalaryPaydayChanged,
+                onExpectedMonthlyIncomeChanged =
+                    onboardingViewModel::onExpectedMonthlyIncomeChanged,
+                onExpectedMonthlySpendingChanged =
+                    onboardingViewModel::onExpectedMonthlySpendingChanged,
+                onIncludeFirstGoalChanged = onboardingViewModel::onIncludeFirstGoalChanged,
+                onGoalNameChanged = onboardingViewModel::onGoalNameChanged,
+                onGoalTargetChanged = onboardingViewModel::onGoalTargetChanged,
+                onGoalSavedChanged = onboardingViewModel::onGoalSavedChanged,
+                onGoalTargetDateChanged = onboardingViewModel::onGoalTargetDateChanged,
+                onBack = onboardingViewModel::previousStep,
+                onNext = onboardingViewModel::nextStep,
+                onFinish = onboardingViewModel::finishOnboarding,
+                onRetryAccess = onboardingViewModel::retryAccess,
+                onSignOut = authViewModel::signOut
             )
         }
 

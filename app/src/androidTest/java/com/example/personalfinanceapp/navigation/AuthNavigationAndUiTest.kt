@@ -32,6 +32,9 @@ import com.example.personalfinanceapp.feature.auth.PendingRegistrationState
 import com.example.personalfinanceapp.feature.auth.PendingRegistrationStore
 import com.example.personalfinanceapp.feature.auth.ui.AuthViewModel
 import com.example.personalfinanceapp.feature.dashboard.ui.MoreScreen
+import com.example.personalfinanceapp.feature.goal.FakeGoalRepository
+import com.example.personalfinanceapp.feature.onboarding.FakeOnboardingRepository
+import com.example.personalfinanceapp.feature.onboarding.ui.OnboardingViewModel
 import com.example.personalfinanceapp.ui.theme.PersonalFinanceAppTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -48,14 +51,23 @@ class AuthNavigationAndUiTest {
 
     @Test
     fun completeAppNavHostCreatesEveryTypedDestinationWithoutSerializationFailure() {
+        val authRepository = FakeAuthRepository()
         val authViewModel = AuthViewModel(
-            FakeAuthRepository(),
+            authRepository,
             EmptyPendingRegistrationStore
+        )
+        val onboardingViewModel = OnboardingViewModel(
+            authRepository,
+            FakeOnboardingRepository(),
+            FakeGoalRepository()
         )
 
         composeRule.setContent {
             PersonalFinanceAppTheme(dynamicColor = false) {
-                AppNavHost(authViewModel = authViewModel)
+                AppNavHost(
+                    authViewModel = authViewModel,
+                    onboardingViewModel = onboardingViewModel
+                )
             }
         }
 
@@ -220,6 +232,7 @@ class AuthNavigationAndUiTest {
                 composable<Register> { Text("Register") }
                 composable<PasswordReset> { Text("Password reset") }
                 composable<EmailVerification> { Text("Email verification") }
+                composable<Onboarding> { Text("Onboarding") }
                 composable<Home> { Text("More") }
                 composable<Overview> { Text("Overview") }
                 composable<ActivityRoute> { Text("Activity") }

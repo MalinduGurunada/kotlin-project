@@ -70,6 +70,12 @@ The observation snapshot carries an immutable owner ID. Edit and delete accept t
 
 `IncomeViewModel` also tracks an authentication generation. A user change clears owner-specific list, form, delete, and message state, and stale asynchronous observation, rate, save, or delete results cannot be applied to the new session. Repository writes independently compare the expected owner with the latest authenticated UID before using a Firestore path.
 
+### First-login onboarding gate
+
+After authentication and email verification, `OnboardingViewModel` resolves the UID-scoped profile at `users/{uid}`. A missing profile or an onboarding version below the current version routes to the four-step Compose setup instead of a finance destination. A completed profile opens normal dashboard navigation. Account changes reset the form and resolution state so one user's setup cannot be displayed or written for another user.
+
+The flow collects the LKR reporting currency, supported income sources, salary payday when applicable, expected monthly income and spending, and an optional first savings goal. Monetary inputs are converted exactly to minor units. The optional Goal and `OPENING` Contribution use the existing owner-bound `GoalRepository`; stable onboarding IDs make a same-input retry idempotent. The profile completion marker is saved last, so navigation cannot open after only part of the requested setup succeeds.
+
 ### Repository relationships
 
 The shared repository contracts remain storage-independent. Current implementations are shown explicitly; a missing Firestore implementation is not implied by the existence of a proposed schema.

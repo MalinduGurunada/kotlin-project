@@ -255,12 +255,23 @@ The following sections preserve the model-aligned design for features without Fi
 
 ### `users/{uid}`
 
-**Status: INFRASTRUCTURE PATH; application document shape UNVERIFIED.** The path is the parent ownership boundary. There is no Kotlin `User` model or repository, and current feature code does not require a root document to exist. Checked-in rules allow an owner to access their root document but do not enforce the illustrative fields below.
+**Status: IMPLEMENTED FOR ONBOARDING.** The root document stores the authenticated user's completed financial setup. A missing or older onboarding version keeps the navigation gate closed until setup succeeds. Registration may temporarily use the separate, strictly validated `displayName`-only shape before email verification.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `uid` | string | Proposed | Would equal the document ID and authenticated UID |
-| `createdAt` | timestamp | Proposed | Prefer a trusted server timestamp if introduced |
+| `onboardingSchemaVersion` | integer | Yes | Current persisted schema version is `1` |
+| `userId` | string | Yes | Must equal `{uid}` and the authenticated UID |
+| `baseCurrency` | string | Yes | Currently `LKR`, matching the reporting model |
+| `incomeSources` | list of strings | Yes | Non-empty subset of `SALARY`, `FREELANCE`, `ADSENSE`, `CRYPTO` |
+| `salaryPayday` | integer/null | Yes | `1..31` when configured |
+| `expectedMonthlyIncomeMinor` | integer | Yes | Non-negative LKR minor units; a planning value, not a transaction |
+| `expectedMonthlySpendingMinor` | integer | Yes | Non-negative LKR minor units; a planning value, not a transaction |
+| `onboardingVersion` | integer | Yes | Current product flow version is `1` |
+| `onboardingCompleted` | boolean | Yes | Must be `true` before authenticated navigation opens |
+| `onboardingUpdatedAt` | timestamp | Yes | Must use the Firestore server timestamp |
+| `displayName` | string | No | Registration bootstrap value when present |
+
+The onboarding profile is written only after any requested initial Goal and opening Contribution have succeeded. Firestore rules require verified ownership for the completed onboarding shape, validate exact fields and values, and retain owner-only read/delete access.
 
 ### `users/{uid}/categories/{categoryId}`
 

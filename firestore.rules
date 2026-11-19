@@ -14,6 +14,55 @@ service cloud.firestore {
       return isOwner(userId) && request.auth.token.email_verified == true;
     }
 
+    function isValidRegistrationProfile(data) {
+      return data.keys().hasOnly(['displayName']) &&
+             data.displayName is string &&
+             data.displayName.size() > 0 &&
+             data.displayName.size() <= 120;
+    }
+
+    function isValidOnboardingProfile(data, userId) {
+      return data.keys().hasAll([
+               'onboardingSchemaVersion', 'userId', 'baseCurrency',
+               'incomeSources', 'salaryPayday', 'expectedMonthlyIncomeMinor',
+               'expectedMonthlySpendingMinor', 'onboardingVersion',
+               'onboardingCompleted', 'onboardingUpdatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'displayName', 'onboardingSchemaVersion', 'userId', 'baseCurrency',
+               'incomeSources', 'salaryPayday', 'expectedMonthlyIncomeMinor',
+               'expectedMonthlySpendingMinor', 'onboardingVersion',
+               'onboardingCompleted', 'onboardingUpdatedAt'
+             ]) &&
+             (!data.keys().hasAny(['displayName']) ||
+               (data.displayName is string &&
+                data.displayName.size() > 0 &&
+                data.displayName.size() <= 120)) &&
+             data.onboardingSchemaVersion is int &&
+             data.onboardingSchemaVersion == 1 &&
+             data.userId is string &&
+             data.userId == userId &&
+             data.baseCurrency == 'LKR' &&
+             data.incomeSources is list &&
+             data.incomeSources.size() > 0 &&
+             data.incomeSources.size() <= 4 &&
+             data.incomeSources.hasOnly(['SALARY', 'FREELANCE', 'ADSENSE', 'CRYPTO']) &&
+             ((data.incomeSources.hasAny(['SALARY']) &&
+               data.salaryPayday is int &&
+               data.salaryPayday >= 1 &&
+               data.salaryPayday <= 31) ||
+              (!data.incomeSources.hasAny(['SALARY']) &&
+               data.salaryPayday == null)) &&
+             data.expectedMonthlyIncomeMinor is int &&
+             data.expectedMonthlyIncomeMinor >= 0 &&
+             data.expectedMonthlySpendingMinor is int &&
+             data.expectedMonthlySpendingMinor >= 0 &&
+             data.onboardingVersion is int &&
+             data.onboardingVersion == 1 &&
+             data.onboardingCompleted == true &&
+             data.onboardingUpdatedAt == request.time;
+    }
+
     function isValidFcmRegistrationData(data, userId) {
       return data.keys().hasAll([
                'schemaVersion', 'userId', 'installationId', 'platform', 'updatedAt'
@@ -503,7 +552,17 @@ service cloud.firestore {
 
     // User document access
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) &&
+                       (isValidRegistrationProfile(request.resource.data) ||
+                         (isVerifiedOwner(userId) &&
+                           isValidOnboardingProfile(request.resource.data, userId)));
+      allow update: if isOwner(userId) &&
+                       ((isValidRegistrationProfile(resource.data) &&
+                         isValidRegistrationProfile(request.resource.data)) ||
+                         (isVerifiedOwner(userId) &&
+                           isValidOnboardingProfile(request.resource.data, userId)));
+      allow delete: if isOwner(userId);
 
       // FCM installation registrations are write-only to their authenticated owner. A trusted
       // backend uses Admin SDK access when sending and is not governed by these rules.
