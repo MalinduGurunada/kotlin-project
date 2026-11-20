@@ -15,6 +15,9 @@ data object PasswordReset
 data object EmailVerification
 
 @Serializable
+data object Onboarding
+
+@Serializable
 data object Home
 
 @Serializable
